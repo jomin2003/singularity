@@ -154,6 +154,7 @@ const check = (label, cond, detail) => {
 check('boot: menu layer visible', visible('menu'));
 check('boot: HUD hidden', !visible('hud'));
 check('boot: game-over hidden', !visible('over'));
+check('boot: no fatal error surface', !visible('fatal'));
 
 /* ---- 2. idle frames on the menu ---- */
 step(60);

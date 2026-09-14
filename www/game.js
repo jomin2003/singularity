@@ -56,7 +56,7 @@ let W = 0, H = 0, MIN = 0, DPR = 1;
 
 /* ---------- state ---------- */
 let state = 'menu';
-let p, ents, parts, waves, shots;
+let p, ents, parts, waves, shots, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
