@@ -2434,9 +2434,13 @@ function drawWaves() {
    HUD + LOOP
    ============================================================ */
 function updateHUD() {
-  shownScore = lerp(shownScore, score, 0.18);
-  if (Math.abs(shownScore - score) < 0.6) shownScore = score;
-  el.hudScore.textContent = fmt(Math.round(shownScore));
+  // Don't let the rolling counter keep easing while paused -- nothing should
+  // animate on screen when the game is stopped.
+  if (state !== 'paused') {
+    shownScore = lerp(shownScore, score, 0.18);
+    if (Math.abs(shownScore - score) < 0.6) shownScore = score;
+    el.hudScore.textContent = fmt(Math.round(shownScore));
+  }
   el.hudBest.textContent = fmt(best);
 
   const on = combo >= 3 && comboT > 0;
@@ -2550,8 +2554,10 @@ cvs.addEventListener('pointerdown', (e) => {
   try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
 
   if (controlMode === 'joystick') {
-    const zoneMax = Math.max(200, W * 0.36);
-    if (e.clientX >= zoneMax) return;          // outside joystick zone
+    // Floating joystick: it anchors wherever you actually touch. A fixed
+    // left-hand zone meant any tap in the middle of the screen did nothing
+    // at all, which just reads as "the game is broken". There is no dead
+    // zone now -- anywhere you put a finger works.
     joy.active = true;
     joy.bx = e.clientX; joy.by = e.clientY;
     joy.kx = e.clientX; joy.ky = e.clientY;

@@ -170,9 +170,11 @@ const cvs = $('game');
 const send = (type, x, y) =>
   cvs.dispatchEvent(new window.MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
 
-// Activate the joystick well inside the left zone, then move the thumb in
-// a small circle so the black hole drifts across the field.
-const jx0 = 130, jy0 = 660;
+// Touch the MIDDLE of the screen on purpose. A fixed joystick zone silently
+// ignores this and the hole never moves -- which is exactly the bug that made
+// the game feel unplayable, so this is a deliberate regression guard.
+const jx0 = Math.round(window.innerWidth / 2);
+const jy0 = Math.round(window.innerHeight * 0.6);
 send('pointerdown', jx0, jy0);
 for (let i = 0; i < 40; i++) {
   send('pointermove', jx0 + Math.round(Math.cos(i / 4) * 40),
