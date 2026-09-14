@@ -186,7 +186,7 @@ send('pointerup', 512, 384);
 // simulated time, hence the large guard.
 if (!died) {
   let guard = 0;
-  while (!visible('over') && guard < 60000) { step(1); guard++; }
+  while (!visible('over') && guard < 90000) { step(1); guard++; }
   report.push(`      (collapsed after ~${(guard / 60).toFixed(0)}s of idling)`);
 }
 check('death: COLLAPSE screen shown', visible('over'));

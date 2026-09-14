@@ -226,3 +226,26 @@ html, body {
 }
 
 .hint.dim { color: rgba(150, 185, 215, .38); }
+
+/* ---------- Toast: era changes, star consumption ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  top: 36%;
+  z-index: 20;
+  pointer-events: none;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .3em;
+  white-space: nowrap;
+  color: #eaf6ff;
+  text-shadow: 0 0 22px rgba(79, 240, 255, .85);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.94);
+  transition: opacity .25s ease-out, transform .25s ease-out;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
