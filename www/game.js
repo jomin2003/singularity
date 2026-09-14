@@ -35,6 +35,14 @@ const COMBO_WINDOW = 1.35;           // seconds to keep a chain alive
 const CONSUME_YIELD = 0.34;          // how much of a body becomes your mass
 const STAR_BONUS = 3;                // score multiplier for eating a star
 
+// Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
+// hole shrinks faster the smaller it gets -- correct, but it also means the
+// early game is the deadliest, which is backwards for onboarding.
+// HAWKING_MAX is the dial to turn down if that feels too punishing.
+const HAWKING_BASE = 0.0015;
+const HAWKING_MIN = 0.25;
+const HAWKING_MAX = 2.0;
+
 // What hitting something too big costs you. A star should feel catastrophic
 // and rubble should barely register — one flat penalty made every collision
 // feel identical no matter what you flew into.
@@ -64,7 +72,7 @@ let W = 0, H = 0, MIN = 0, DPR = 1;
 
 /* ---------- state ---------- */
 let state = 'menu';
-let p, ents, parts, waves, shots, cam;
+let p, ents, parts, waves, shots, slugs, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
@@ -304,6 +312,17 @@ const LETHAL = ['star', 'giant', 'lava', 'rogue', 'rival'];
 const RARE = ['pulsar', 'wormhole'];
 // Neutron-star remnants with extreme fields, and active galactic nuclei.
 const EXTREME = ['magnetar', 'quasar'];
+// What an advanced civilisation builds once it realises the hole is coming.
+// Grounded in real proposed megastructures plus the classic sci-fi answers:
+//   shield     - planetary deflector dome (Star Wars / Dune house shields)
+//   repulsor   - gravity-well projector, run in reverse to shove you away
+//                (the Interdictor's gravity well generator, inverted)
+//   driver     - mass driver / railgun battery firing matter at you
+//   ark        - evacuation ship running for the edge of the map
+//   extractor  - a Penrose-process station siphoning your rotational energy
+const CIV = ['shield', 'repulsor', 'driver', 'ark', 'extractor'];
+const CIV_ALERT = 900;        // score at which they notice you exist
+const CIV_MAX = 5;            // never more than this many installations
 
 const PLANET_PAL = {
   rocky:   { hi: '#8a7659', mid: '#6b5b4a', lo: '#3a3128', spot: '#4a4034' },
@@ -709,6 +728,132 @@ function drawWormhole(g, rnd) {
   g.globalCompositeOperation = 'source-over';
 }
 
+// ---- Civilisation installations ---------------------------------------
+// Deliberately angular and emissive so they read as artificial at a glance
+// against every natural body in the field.
+
+function drawShield(g) {
+  g.strokeStyle = 'rgba(120,225,255,0.55)';
+  g.lineWidth = 2.5;
+  g.beginPath();
+  g.arc(SPR_R, SPR_R * 1.05, SPR_R * 0.72, Math.PI, TAU);
+  g.stroke();
+  g.strokeStyle = 'rgba(120,225,255,0.26)';
+  g.lineWidth = 1.3;
+  for (let k = 1; k <= 3; k++) {
+    g.beginPath();
+    g.arc(SPR_R, SPR_R * 1.05, SPR_R * 0.72 * (k / 4), Math.PI, TAU);
+    g.stroke();
+  }
+  g.fillStyle = '#2b3a48';
+  g.fillRect(SPR_R - SPR_R * 0.78, SPR_R * 1.02, SPR_R * 1.56, SPR_R * 0.30);
+  g.fillStyle = '#7fe0ff';
+  g.fillRect(SPR_R - SPR_R * 0.30, SPR_R * 0.94, SPR_R * 0.60, SPR_R * 0.11);
+  g.globalCompositeOperation = 'lighter';
+  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.2, SPR_R, SPR_R, SPR_R);
+  grd.addColorStop(0, 'rgba(90,200,255,0.22)');
+  grd.addColorStop(1, 'rgba(90,200,255,0)');
+  g.fillStyle = grd;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+}
+
+function drawRepulsor(g) {
+  g.fillStyle = '#2f3b46';
+  g.beginPath();
+  g.moveTo(SPR_R - SPR_R * 0.42, SPR);
+  g.lineTo(SPR_R - SPR_R * 0.16, SPR_R * 0.30);
+  g.lineTo(SPR_R + SPR_R * 0.16, SPR_R * 0.30);
+  g.lineTo(SPR_R + SPR_R * 0.42, SPR);
+  g.closePath(); g.fill();
+  g.strokeStyle = 'rgba(255,180,120,0.85)';
+  g.lineWidth = 3;
+  for (let k = 0; k < 3; k++) {
+    g.beginPath();
+    g.ellipse(SPR_R, SPR_R * (0.34 + k * 0.16),
+              SPR_R * (0.52 - k * 0.10), SPR_R * 0.10, 0, 0, TAU);
+    g.stroke();
+  }
+  g.globalCompositeOperation = 'lighter';
+  const grd = g.createRadialGradient(SPR_R, SPR_R * 0.35, SPR_R * 0.1,
+                                     SPR_R, SPR_R * 0.35, SPR_R * 0.9);
+  grd.addColorStop(0, 'rgba(255,170,110,0.35)');
+  grd.addColorStop(1, 'rgba(255,170,110,0)');
+  g.fillStyle = grd;
+  g.beginPath(); g.arc(SPR_R, SPR_R * 0.35, SPR_R * 0.9, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+}
+
+function drawDriver(g) {
+  g.fillStyle = '#333a42';
+  g.fillRect(SPR_R - SPR_R * 0.62, SPR_R * 0.72, SPR_R * 1.24, SPR_R * 0.34);
+  g.save();
+  g.translate(SPR_R, SPR_R * 0.70);
+  g.rotate(-0.5);
+  g.fillStyle = '#4a535d';
+  g.fillRect(-SPR_R * 0.10, -SPR_R * 0.72, SPR_R * 0.20, SPR_R * 0.90);
+  g.fillStyle = '#ffd08a';
+  g.fillRect(-SPR_R * 0.055, -SPR_R * 0.72, SPR_R * 0.11, SPR_R * 0.24);
+  g.restore();
+  g.fillStyle = '#7fd8ff';
+  g.beginPath(); g.arc(SPR_R, SPR_R * 0.86, SPR_R * 0.10, 0, TAU); g.fill();
+}
+
+function drawArk(g) {
+  g.fillStyle = '#5a6470';
+  g.beginPath();
+  g.moveTo(SPR_R + SPR_R * 0.86, SPR_R);
+  g.lineTo(SPR_R - SPR_R * 0.20, SPR_R - SPR_R * 0.30);
+  g.lineTo(SPR_R - SPR_R * 0.72, SPR_R - SPR_R * 0.22);
+  g.lineTo(SPR_R - SPR_R * 0.72, SPR_R + SPR_R * 0.22);
+  g.lineTo(SPR_R - SPR_R * 0.20, SPR_R + SPR_R * 0.30);
+  g.closePath(); g.fill();
+  g.fillStyle = 'rgba(150,220,255,0.9)';
+  for (let k = 0; k < 4; k++) {
+    g.fillRect(SPR_R - SPR_R * 0.50 + k * SPR_R * 0.24,
+               SPR_R - SPR_R * 0.07, SPR_R * 0.12, SPR_R * 0.14);
+  }
+  g.globalCompositeOperation = 'lighter';
+  const grd = g.createLinearGradient(SPR_R - SPR_R * 0.70, SPR_R,
+                                     SPR_R - SPR_R * 1.00, SPR_R);
+  grd.addColorStop(0, 'rgba(150,210,255,0.75)');
+  grd.addColorStop(1, 'rgba(150,210,255,0)');
+  g.fillStyle = grd;
+  g.beginPath();
+  g.moveTo(SPR_R - SPR_R * 0.70, SPR_R - SPR_R * 0.14);
+  g.lineTo(SPR_R - SPR_R * 1.00, SPR_R);
+  g.lineTo(SPR_R - SPR_R * 0.70, SPR_R + SPR_R * 0.14);
+  g.closePath(); g.fill();
+  g.globalCompositeOperation = 'source-over';
+}
+
+// A Penrose-process station. It mines your ergosphere for rotational
+// energy, so being near one actually costs you mass.
+function drawExtractor(g) {
+  g.strokeStyle = 'rgba(190,150,255,0.85)';
+  g.lineWidth = 7;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.62, 0, TAU); g.stroke();
+  g.strokeStyle = 'rgba(240,225,255,0.90)';
+  g.lineWidth = 2;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.62, 0, TAU); g.stroke();
+  g.strokeStyle = 'rgba(190,150,255,0.60)';
+  g.lineWidth = 3;
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * TAU;
+    g.beginPath();
+    g.moveTo(SPR_R + Math.cos(a) * SPR_R * 0.62, SPR_R + Math.sin(a) * SPR_R * 0.62);
+    g.lineTo(SPR_R + Math.cos(a) * SPR_R * 0.92, SPR_R + Math.sin(a) * SPR_R * 0.92);
+    g.stroke();
+  }
+  g.globalCompositeOperation = 'lighter';
+  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.3, SPR_R, SPR_R, SPR_R);
+  grd.addColorStop(0, 'rgba(170,120,255,0.30)');
+  grd.addColorStop(1, 'rgba(170,120,255,0)');
+  g.fillStyle = grd;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+}
+
 // A rival singularity — a real black hole with its own accretion disk.
 // It is the most dangerous thing in the field and it pulls you in.
 function drawRival(g) {
@@ -743,6 +888,11 @@ function makeBodySprite(type, variant, sub) {
   else if (type === 'whiteDwarf') drawWhiteDwarf(g, rnd);
   else if (type === 'magnetar') drawMagnetar(g, rnd);
   else if (type === 'quasar') drawQuasar(g, rnd);
+  else if (type === 'shield') drawShield(g);
+  else if (type === 'repulsor') drawRepulsor(g);
+  else if (type === 'driver') drawDriver(g);
+  else if (type === 'ark') drawArk(g);
+  else if (type === 'extractor') drawExtractor(g);
   else drawPlanet(g, rnd, type);
   return c;
 }
@@ -983,9 +1133,38 @@ function spawnComet() {
   });
 }
 
+// Once you are big enough to be noticed, somebody starts building.
+function spawnCiv() {
+  let live = 0;
+  for (const e of ents) if (e.civ) live++;
+  if (live >= CIV_MAX) return;
+
+  const type = CIV[(Math.random() * CIV.length) | 0];
+  const v = viewWorldRadius();
+  const a = Math.random() * TAU;
+  const dist = rand(v * 0.55, v * 1.0);
+  const e = {
+    x: p.x + Math.cos(a) * dist,
+    y: p.y + Math.sin(a) * dist,
+    vx: 0, vy: 0,
+    r: p.r * (type === 'ark' ? rand(0.16, 0.26) : rand(0.30, 0.52)),
+    spin: 0, phase: 0,
+    civ: type,
+    body: { type, variant: 0, spin: 0, sub: null },
+    cool: rand(1.2, 3.0)
+  };
+  if (type === 'ark') {
+    // Arks burn directly away from the hole at whatever they can manage.
+    const sp = rand(2.2, 3.6) * p.r;
+    e.vx = Math.cos(a) * sp;
+    e.vy = Math.sin(a) * sp;
+  }
+  ents.push(e);
+}
+
 function reset() {
   p = { x: 0, y: 0, vx: 0, vy: 0, r: P0, area: P0 * P0 };
-  ents = []; parts = []; waves = []; shots = [];
+  ents = []; parts = []; waves = []; shots = []; slugs = [];
   cam = { x: 0, y: 0, zoom: 1 };
   score = 0; shownScore = 0; combo = 0; comboT = 0;
   elapsed = 0; era = 0; shakeMag = 0; hitstopT = 0; invuln = 0;
@@ -1083,6 +1262,7 @@ function consume(e, idx) {
   // Earth-sized volume, so it pays far better than its radius suggests.
   if (type === 'whiteDwarf') gained *= 4;
   if (type === 'brownDwarf') gained *= 2;
+  if (type === 'ark') gained *= 3;          // a whole ship full of people
   score += gained;
 
   absorbFx(e);
@@ -1124,6 +1304,9 @@ function consume(e, idx) {
     flashT = Math.max(flashT, 0.22);
     toast('MAGNETAR STARQUAKE');
     Snd.boom();
+  } else if (type === 'ark') {
+    toast('ARK CONSUMED  +' + fmt(gained), 1.8);
+    burstFx(e.x, e.y, 26, e.r, 1.2);
   } else if (combo % 20 === 0) {
     pendingWave = true;
   }
@@ -1310,7 +1493,13 @@ function update(dt) {
     p.x += p.vx * dt;
     p.y += p.vy * dt;
 
-    const decay = 0.0015 + 0.0026 * clamp((p.r / P0 - 1) / 8, 0, 1);
+    // Hawking radiation. A black hole's temperature goes as 1/M and its power
+// as 1/M^2, so the FRACTIONAL mass-loss rate scales as 1/M^3 -- and since
+// Schwarzschild radius is proportional to mass, as 1/r^3. Small holes
+// evaporate furiously and large ones are nearly stable. The old curve was
+// backwards: it punished you for growing.
+const decay = HAWKING_BASE * clamp(Math.pow(P0 / p.r, 3),
+                                       HAWKING_MIN, HAWKING_MAX);
     p.area = Math.max(1, p.area - p.area * decay * dt);
     p.r = Math.sqrt(p.area);
 
@@ -1322,6 +1511,19 @@ function update(dt) {
       const ddx = e.x - p.x, ddy = e.y - p.y;
       const reach = p.r + e.r * 0.5;
       if (ddx * ddx + ddy * ddy < reach * reach) {
+        // Civilisation hardware is neither food nor a body to collide with.
+        // A deflector dome simply throws you back off it.
+        if (e.civ === 'shield') {
+          const dd = Math.hypot(ddx, ddy) || 1;
+          p.vx = -ddx / dd * 7 * p.r;
+          p.vy = -ddy / dd * 7 * p.r;
+          combo = 0; comboT = 0;
+          shakeMag = Math.max(shakeMag, 10);
+          toast('DEFLECTOR SHIELD', 1.2);
+          if (Snd.ac) Snd.tone(300, 'sine', 0.16, 0.005, 0.18);
+          continue;
+        }
+        if (e.civ && e.civ !== 'ark') continue;   // arks can be caught
         if (e.r <= p.r * 0.95) consume(e, i);
         else if (invuln <= 0) hurt(e);
       }
@@ -1334,6 +1536,7 @@ function update(dt) {
   updateParts(dt);
   updateWaves(dt);
   updateShots(dt);
+  updateSlugs(dt);
 
   if (shakeMag > 0) shakeMag = Math.max(0, shakeMag - shakeMag * 7 * dt - 0.5 * dt);
 }
@@ -1349,6 +1552,12 @@ function updateEnts(dt) {
     }
   }
 
+  // The civilisation starts deploying countermeasures once you are big
+  // enough for someone to have noticed.
+  // Roughly one installation every 7 seconds, so they trickle in and escalate
+// rather than all appearing the instant you cross the threshold.
+  if (state === 'play' && score > CIV_ALERT && Math.random() < 0.0025) spawnCiv();
+
   const v = viewWorldRadius();
   const despawnR = v * 1.95;
   const pullR = p.r * 7;
@@ -1358,7 +1567,57 @@ function updateEnts(dt) {
     const e = ents[i];
     const dx = p.x - e.x, dy = p.y - e.y;
     const d2 = dx * dx + dy * dy;
-    if (d2 > despawnR * despawnR) { ents.splice(i, 1); continue; }
+    if (d2 > despawnR * despawnR) {
+      if (e.civ === 'ark') toast('ARK ESCAPED', 1.4);
+      ents.splice(i, 1); continue;
+    }
+
+    // ---- Civilisation countermeasures --------------------------------
+    if (e.civ && state === 'play') {
+      const d = Math.sqrt(d2) || 1;
+      if (e.civ === 'ark') {
+        // Arks keep their burn; only mild drag.
+        const kd = Math.pow(0.85, dt);
+        e.vx *= kd; e.vy *= kd;
+      } else if (e.civ === 'repulsor') {
+        // Gravity-well projector run in reverse: it shoves you away.
+        const reach = p.r * 7;
+        if (d < reach) {
+          const s = (1 - d / reach) * 7.5 * p.r * dt;
+          p.vx += (dx / d) * s;              // dx points structure -> hole
+          p.vy += (dy / d) * s;
+        }
+      } else if (e.civ === 'extractor') {
+        // Penrose process: they skim your rotational energy. This is a
+        // real proposed way to extract energy from a Kerr black hole.
+        const reach = p.r * 5.5;
+        if (d < reach) {
+          // ~3.5%/s at point blank -- meaningful pressure, not instant death.
+          p.area = Math.max(1, p.area * (1 - (1 - d / reach) * 0.035 * dt));
+          p.r = Math.sqrt(p.area);
+          if (Math.random() < 0.25) {
+            addPart({
+              x: e.x, y: e.y,
+              vx: -dx / d * p.r * 2, vy: -dy / d * p.r * 2,
+              life: 0, max: 0.5,
+              r: rand(0.05, 0.12) * p.r + 0.8, hue: 275, mode: 1
+            });
+          }
+        }
+      } else if (e.civ === 'driver') {
+        e.cool -= dt;
+        if (e.cool <= 0 && d < p.r * 12) {
+          e.cool = rand(1.6, 3.2);
+          const sp = rand(3.5, 6.0) * p.r;
+          slugs.push({
+            x: e.x, y: e.y,
+            vx: -dx / d * sp, vy: -dy / d * sp,
+            r: p.r * 0.07, life: 0, max: 4
+          });
+          if (Snd.ac) Snd.tone(180, 'square', 0.10, 0.004, 0.10);
+        }
+      }
+    }
 
     // Rival singularities drag YOU in as well. That is what separates them
     // from every other big body: you cannot just drift past one.
@@ -1418,7 +1677,14 @@ function updateEnts(dt) {
         const d = Math.sqrt(d2) || 1;
         const edible = e.r <= p.r * 0.95;
         const mass = (e.r * e.r) / (p.r * p.r);
-        const s = (1 - d / pullR) * 3.2 * p.r * dt / (0.35 + mass * 2.2) * (edible ? 1 : 0.18);
+        // Newtonian gravity: pull falls off as 1/r^2, softened near the
+        // centre so nothing goes infinite. The old linear falloff let the
+        // hole vacuum the entire field evenly, which is not how gravity
+        // behaves -- now distant bodies barely drift and close ones get
+        // hauled in hard.
+        const soft = d + p.r * 0.85;
+        const falloff = (p.r * p.r) / (soft * soft);
+        const s = falloff * 4.6 * p.r * dt / (0.35 + mass * 2.2) * (edible ? 1 : 0.18);
         e.vx += dx / d * s;
         e.vy += dy / d * s;
       }
@@ -1475,6 +1741,34 @@ function updateShots(dt) {
   }
 }
 
+// Mass-driver rounds fired by the civilisation's railgun batteries.
+function updateSlugs(dt) {
+  for (let i = slugs.length - 1; i >= 0; i--) {
+    const s = slugs[i];
+    s.life += dt;
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    if (s.life >= s.max) { slugs.splice(i, 1); continue; }
+    if (state === 'play') {
+      const dx = s.x - p.x, dy = s.y - p.y;
+      const rr = p.r + s.r;
+      if (dx * dx + dy * dy < rr * rr) {
+        // Small chip of mass and a shove -- they are trying to deflect
+        // you, not kill you outright.
+        p.area = Math.max(1, p.area * 0.97);
+        p.r = Math.sqrt(p.area);
+        const d = Math.hypot(dx, dy) || 1;
+        p.vx += dx / d * 3 * p.r;
+        p.vy += dy / d * 3 * p.r;
+        burstFx(s.x, s.y, 8, s.r * 4, 0.7);
+        shakeMag = Math.max(shakeMag, 6);
+        slugs.splice(i, 1);
+        if (Snd.ac) Snd.tone(120, 'square', 0.14, 0.004, 0.12);
+      }
+    }
+  }
+}
+
 /* ============================================================
    RENDER
    ============================================================ */
@@ -1502,6 +1796,7 @@ function render() {
 
   drawEnts();
   drawWaves();
+  drawSlugs();
   drawParts();
   if (state !== 'dead') drawPlayer();
 
@@ -1586,7 +1881,9 @@ function drawJoystick() {
 function drawEnts() {
   for (const e of ents) {
     const ratio = e.r / p.r;
-    const hue = entHue(ratio);
+    // Civilisation hardware is artificial, so it gets a cold tech tint
+    // instead of the edible/lethal colour language of natural bodies.
+    const hue = e.civ ? 200 : entHue(ratio);
     const scr = e.r * cam.zoom;          // on-screen radius, CSS px
     const b = e.body;
 
@@ -1607,9 +1904,28 @@ function drawEnts() {
 
     if (e.comet) drawCometTail(e, hue);
 
+    // Tidal stretching. The near side of an infalling body is pulled harder
+// than the far side, so it elongates toward the hole before being torn
+// apart. This is real spaghettification, not a squash-and-stretch cartoon.
+    let sx = 1, sAng = 0;
+    if (state !== 'dead') {
+      const td = Math.hypot(e.x - p.x, e.y - p.y);
+      const tide = p.r * 2.8;
+      if (td < tide) {
+        const t = 1 - td / tide;
+        sx = 1 + t * t * 2.4;
+        sAng = Math.atan2(p.y - e.y, p.x - e.x);
+      }
+    }
+
     // Surface: pre-rendered once, blitted with rotation.
     ctx.save();
     ctx.translate(e.x, e.y);
+    if (sx > 1.02) {
+      ctx.rotate(sAng);
+      ctx.scale(sx, 1 / Math.sqrt(sx));        // roughly preserves volume
+      ctx.rotate(-sAng);
+    }
     ctx.rotate(e.phase);
     ctx.drawImage(bodySprite(b.type, b.variant, b.sub), -e.r, -e.r, e.r * 2, e.r * 2);
     ctx.restore();
@@ -1758,6 +2074,37 @@ function drawCometTail(e, hue) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+// Mass-driver rounds in flight, drawn as short bright tracers.
+function drawSlugs() {
+  if (!slugs.length) return;
+  ctx.globalCompositeOperation = 'lighter';
+  for (const s of slugs) {
+    const d = Math.hypot(s.vx, s.vy) || 1;
+    const ux = -s.vx / d, uy = -s.vy / d;
+    const len = s.r * 9;
+    const g = ctx.createLinearGradient(s.x, s.y, s.x + ux * len, s.y + uy * len);
+    g.addColorStop(0, 'rgba(255,218,155,0.90)');
+    g.addColorStop(1, 'rgba(255,190,120,0)');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = Math.max(1, s.r * 1.8);
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(s.x + ux * len, s.y + uy * len);
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// Relativistic Doppler beaming factor for a point on a ring. The side of
+// the ring rotating toward the observer is boosted steeply while the
+// receding side dims. ((1+cos)/2)^2 is a cheap stand-in for the true
+// D^(3+alpha) boost, and it is what gives every real black-hole image
+// (M87*, Sgr A*) its characteristic one-sided brightness.
+function doppler(angle, beamDir) {
+  const c = Math.cos(angle - beamDir);
+  return Math.pow(Math.max(0, (1 + c) / 2), 2);
+}
+
 function drawPlayer() {
   const r = p.r;
 
@@ -1811,41 +2158,85 @@ function drawPlayer() {
   ctx.fillStyle = '#000';
   ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fill();
 
-  // Photon ring with relativistic Doppler beaming. The side of the ring
-  // rotating toward us is boosted and the receding side is dimmed -- that
-  // asymmetry is the signature feature of every real black-hole image
-  // (M87*, Sgr A*).
-  ctx.globalCompositeOperation = 'lighter';
   const beamDir = Math.atan2(LIGHT.y, LIGHT.x);
-  const ringR = r * 1.08;
-  const lw = Math.max(1, r * 0.075);
-  const SEG = 28;
+  ctx.globalCompositeOperation = 'lighter';
+
+  // ---- Photon ring ---------------------------------------------------
+  // Light that has orbited the hole and escaped. Very thin, hugging the
+  // shadow edge. Segmented so it can carry relativistic Doppler beaming:
+  // the side rotating toward us is boosted, the receding side is dimmed.
+  const SEG = 30;
+  const ringR = r * 1.045;
+  const ringW = Math.max(1, r * 0.055);
   for (let i = 0; i < SEG; i++) {
     const a0 = (i / SEG) * TAU;
     const a1 = ((i + 1) / SEG) * TAU + 0.02;      // slight overlap, no seams
     const mid = (a0 + a1) / 2;
-    const c = Math.cos(mid - beamDir);
-    // Beaming boosts steeply; ((1+cos)/2)^2 is a good cheap approximation.
-    const boost = Math.pow(Math.max(0, (1 + c) / 2), 2);
-    const alpha = 0.18 + 0.80 * boost;
-    if (invuln > 0 && Math.floor(invuln * 18) % 2 === 0) {
-      ctx.strokeStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
-    } else {
-      // Approaching side runs hot white, receding side cools to orange.
-      const gg = Math.round(180 + 70 * boost);
-      const bb = Math.round(120 + 120 * boost);
-      ctx.strokeStyle = `rgba(255,${gg},${bb},${alpha.toFixed(3)})`;
-    }
-    ctx.lineWidth = lw;
+    const boost = doppler(mid, beamDir);
+    const alpha = 0.20 + 0.78 * boost;
+    const gg = Math.round(226 + 26 * boost);
+    const bb = Math.round(212 + 42 * boost);
+    ctx.strokeStyle = `rgba(255,${gg},${bb},${alpha.toFixed(3)})`;
+    ctx.lineWidth = ringW;
     ctx.beginPath();
     ctx.arc(p.x, p.y, ringR, a0, a1);
     ctx.stroke();
   }
 
-  // A barely-there outer lensing ring.
-  ctx.strokeStyle = 'rgba(255,210,180,0.50)';
-  ctx.lineWidth = Math.max(0.8, r * 0.03);
-  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.28, 0, TAU); ctx.stroke();
+  // ---- Lensed accretion disk: the light-wrapping effect ---------------
+  // Gravity bends the far side of the disk up over the top of the hole and
+  // down under the bottom, so the disk appears to wrap right around the
+  // sphere instead of stopping at the edges. This is the Gargantua /
+  // Interstellar look and it is what real lensing actually does.
+  const wrapR = r * 1.34;
+  const wrapW = Math.max(1.5, r * 0.20);
+  const ARCS = 30;
+  for (let i = 0; i < ARCS; i++) {
+    const a0 = (i / ARCS) * TAU;
+    const a1 = ((i + 1) / ARCS) * TAU + 0.02;
+    const mid = (a0 + a1) / 2;
+    // Brightest at top and bottom, where the lensed image piles up.
+    const wrap = Math.pow(Math.abs(Math.sin(mid)), 1.4);
+    const boost = doppler(mid, beamDir);
+    const alpha = (0.10 + 0.62 * wrap) * (0.35 + 0.75 * boost);
+    if (alpha < 0.012) continue;
+    const gg = Math.round(198 + 48 * boost);
+    const bb = Math.round(188 + 62 * boost);
+    ctx.strokeStyle = `rgba(255,${gg},${bb},${alpha.toFixed(3)})`;
+    ctx.lineWidth = wrapW;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, wrapR, a0, a1);
+    ctx.stroke();
+  }
+
+  // ---- Near side of the disk, crossing in FRONT of the shadow ---------
+  // In a real image the near edge of the disk passes between us and the
+  // hole, so it is drawn on top of the black sphere.
+  const bandW = r * 2.9;
+  const bandH = Math.max(1.2, r * 0.15);
+  const bg = ctx.createLinearGradient(p.x - bandW / 2, 0, p.x + bandW / 2, 0);
+  bg.addColorStop(0.00, 'rgba(255,238,220,0)');
+  bg.addColorStop(0.30, 'rgba(255,244,232,0.50)');
+  bg.addColorStop(0.50, 'rgba(255,251,242,0.72)');
+  bg.addColorStop(0.70, 'rgba(255,244,232,0.42)');
+  bg.addColorStop(1.00, 'rgba(255,238,220,0)');
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.ellipse(p.x, p.y, bandW / 2, bandH, 0, 0, TAU);
+  ctx.fill();
+
+  // ---- Faint outer lensing halo --------------------------------------
+  ctx.strokeStyle = 'rgba(228,240,255,0.30)';
+  ctx.lineWidth = Math.max(0.8, r * 0.022);
+  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.64, 0, TAU); ctx.stroke();
+
+  // Invulnerability flash overrides the whole assembly.
+  if (invuln > 0 && Math.floor(invuln * 18) % 2 === 0) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = Math.max(1, r * 0.06);
+    ctx.beginPath(); ctx.arc(p.x, p.y, ringR, 0, TAU); ctx.stroke();
+  }
+
   ctx.globalCompositeOperation = 'source-over';
 }
 

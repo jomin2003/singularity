@@ -205,6 +205,16 @@ if (!died) {
   check('resume: pause panel hidden', !visible('pause'));
   step(60);
   check('resume: frames run again without throwing', errors.length === 0);
+
+  // Civilisation defences normally need mass 900 to trigger, which a 20s
+  // test never reaches. Force them so the shield / repulsor / driver /
+  // ark / extractor paths and the mass-driver slugs actually execute.
+  if (typeof window.spawnCiv === 'function') {
+    for (let k = 0; k < 5; k++) window.spawnCiv();
+    step(300);
+    check('civ: installations and slugs run without throwing',
+      errors.length === 0);
+  }
 }
 
 send('pointerup', 512, 384);
