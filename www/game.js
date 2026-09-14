@@ -62,9 +62,18 @@ let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
 let pendingWave = false, toastT = 0, shotT = 0;
 let panel = null;   // null | 'pause' | 'settings'
+let camRoll = 0;    // Kerr-style frame-dragging wobble near big bodies
+let shield = 0;     // one-hit protection from eating a pulsar
 
 const pointer = { x: 0, y: 0, active: false };
 const keys = { up: false, down: false, left: false, right: false };
+
+// Virtual joystick on the lower-left. Touch-and-drag anywhere in the left
+// third of the screen drives the black hole. Mouse and keyboard still work
+// outside that zone (desktop users get WASD).
+const JOY_R = 78;
+const JOY_KNOB = 28;
+const joy = { active: false, bx: 0, by: 0, kx: 0, ky: 0, dx: 0, dy: 0 };
 
 // Fixed light direction so every world is lit consistently.
 const LIGHT = { x: -0.52, y: -0.58 };
@@ -276,6 +285,8 @@ const VARIANTS = 4;
 const EDIBLE = ['rocky', 'ice', 'ocean', 'desert', 'barren', 'asteroid'];
 // Things that will kill you.
 const LETHAL = ['star', 'giant', 'lava', 'rogue', 'rival'];
+// Rare astronomical anomalies. All edible; each behaves specially.
+const RARE = ['pulsar', 'wormhole'];
 
 const PLANET_PAL = {
   rocky:  { hi: '#8a7659', mid: '#6b5b4a', lo: '#3a3128', spot: '#4a4034' },
@@ -460,6 +471,60 @@ function drawPlanet(g, rnd, type) {
   g.restore();
 }
 
+// A pulsar — a rapidly rotating neutron star with two crossing emission
+// beams. Eating one gives a one-hit shield (next impact is ignored).
+function drawPulsar(g, rnd) {
+  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.04, SPR_R, SPR_R, SPR_R);
+  grd.addColorStop(0.00, '#ffffff');
+  grd.addColorStop(0.18, '#eaf4ff');
+  grd.addColorStop(0.55, '#9ed1ff');
+  grd.addColorStop(1.00, 'rgba(140,200,255,0)');
+  g.fillStyle = grd;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  // Two crossed beams. They sweep in `drawEnts`, this paints the static sprite.
+  g.globalCompositeOperation = 'lighter';
+  g.save();
+  g.translate(SPR_R, SPR_R);
+  for (let i = 0; i < 2; i++) {
+    g.rotate(i * Math.PI / 2);
+    const lg = g.createLinearGradient(0, 0, SPR, 0);
+    lg.addColorStop(0.00, 'rgba(255,255,255,0.85)');
+    lg.addColorStop(0.55, 'rgba(180,220,255,0.45)');
+    lg.addColorStop(1.00, 'rgba(180,220,255,0)');
+    g.fillStyle = lg;
+    g.fillRect(0, -2.5, SPR, 5);
+  }
+  g.restore();
+  g.globalCompositeOperation = 'source-over';
+}
+
+// A wormhole — a violet ring with a dark throat. The paired exit is
+// stored on the entity; we just draw the entrance here.
+function drawWormhole(g, rnd) {
+  // Soft outer halo
+  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.45, SPR_R, SPR_R, SPR_R);
+  grd.addColorStop(0.00, 'rgba(220,180,255,0.7)');
+  grd.addColorStop(0.50, 'rgba(180,140,255,0.35)');
+  grd.addColorStop(1.00, 'rgba(140,100,220,0)');
+  g.fillStyle = grd;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  // Bright ring
+  g.strokeStyle = 'rgba(255,240,255,0.95)';
+  g.lineWidth = 6;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.54, 0, TAU); g.stroke();
+  g.strokeStyle = 'rgba(200,160,255,0.6)';
+  g.lineWidth = 3;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.40, 0, TAU); g.stroke();
+  // Dark throat
+  g.fillStyle = '#000';
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.34, 0, TAU); g.fill();
+  // Faint inner sparkle
+  g.globalCompositeOperation = 'lighter';
+  g.fillStyle = 'rgba(255,240,255,0.6)';
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.10, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+}
+
 // A rival singularity — a real black hole with its own accretion disk.
 // It is the most dangerous thing in the field and it pulls you in.
 function drawRival(g) {
@@ -488,6 +553,8 @@ function makeBodySprite(type, variant) {
   if (type === 'asteroid') drawAsteroid(g, rnd);
   else if (type === 'star') drawStar(g, rnd);
   else if (type === 'rival') drawRival(g);
+  else if (type === 'pulsar') drawPulsar(g, rnd);
+  else if (type === 'wormhole') drawWormhole(g, rnd);
   else drawPlanet(g, rnd, type);
   return c;
 }
@@ -631,15 +698,40 @@ function assignBody(e) {
   const q = Math.random();
   let type, spin;
 
-  if (!lethal && q < 0.30) { type = 'asteroid'; spin = rand(-2.6, 2.6); }
-  else if (lethal && q < 0.42) { type = 'star'; spin = rand(-0.22, 0.22); }
-  else {
-    const pool = lethal ? LETHAL : EDIBLE;
-    type = pool[(Math.random() * pool.length) | 0];
-    if (type === 'asteroid') type = 'barren';      // belt handled separately
-    spin = rand(-0.75, 0.75);
+  if (!lethal) {
+    if (q < 0.05) {                                  // rare astronomical anomaly
+      type = RARE[(Math.random() * RARE.length) | 0];
+      spin = rand(-0.3, 0.3);
+    } else if (q < 0.05 + 0.30) {                   // asteroid (also in belts)
+      type = 'asteroid';
+      spin = rand(-2.6, 2.6);
+    } else {
+      const pool = EDIBLE;
+      type = pool[(Math.random() * pool.length) | 0];
+      spin = rand(-0.75, 0.75);
+    }
+  } else {
+    if (q < 0.42) { type = 'star'; spin = rand(-0.22, 0.22); }
+    else {
+      const pool = LETHAL;
+      type = pool[(Math.random() * pool.length) | 0];
+      spin = rand(-0.75, 0.75);
+    }
   }
   e.body = { type, variant: (Math.random() * VARIANTS) | 0, spin };
+  initRare(e);
+}
+
+// Extra state for the rare bodies that need it.
+function initRare(e) {
+  if (e.body.type === 'pulsar') {
+    e.pulseT = rand(0.4, 1.6);
+    e.beatMax = rand(1.6, 2.2);
+  } else if (e.body.type === 'wormhole') {
+    // Paired exit: a random offset the player teleports along on impact.
+    e.pairAng = rand(0, TAU);
+    e.pairDist = rand(140, 220);
+  }
 }
 
 // Asteroids travel in families.
@@ -691,7 +783,9 @@ function reset() {
   score = 0; shownScore = 0; combo = 0; comboT = 0;
   elapsed = 0; era = 0; shakeMag = 0; hitstopT = 0; invuln = 0;
   flashT = 0; toastT = 0; shotT = 5;
+  camRoll = 0; shield = 0;
   pointer.active = false; pointer.x = W / 2; pointer.y = H / 2;
+  joy.active = false; joy.dx = 0; joy.dy = 0;
   for (let i = 0; i < ENT_TARGET; i++) spawn(Math.random() < 0.5 ? 1.15 : 1.7);
   cam.zoom = desiredZoom();
 }
@@ -765,7 +859,10 @@ function toast(msg, dur) {
 }
 
 function consume(e, idx) {
-  const wasStar = e.body && e.body.type === 'star';
+  const type = e.body && e.body.type;
+  const wasStar = type === 'star';
+  const wasPulsar = type === 'pulsar';
+  const wasWormhole = type === 'wormhole';
 
   p.area += e.r * e.r * CONSUME_YIELD;
   p.r = Math.sqrt(p.area);
@@ -774,10 +871,11 @@ function consume(e, idx) {
 
   let gained = Math.max(1, Math.round(e.r * 0.42 * comboMult()));
   if (wasStar) gained *= STAR_BONUS;
+  if (wasPulsar) gained *= 3;
   score += gained;
 
   absorbFx(e);
-  if (e.body && e.body.type === 'asteroid') Snd.crunch();
+  if (type === 'asteroid') Snd.crunch();
   else Snd.blip(combo - 1);
   Snd.setDrone(true, combo);
   ents.splice(idx, 1);
@@ -785,6 +883,20 @@ function consume(e, idx) {
   if (wasStar) {
     supernova(e.x, e.y, e.r);
     toast('STAR CONSUMED  +' + fmt(gained));
+  } else if (wasPulsar) {
+    shield = 1;
+    toast('PULSAR ABSORBED - next impact shielded', 2.2);
+    burstFx(e.x, e.y, 24, e.r, 1.4);
+  } else if (wasWormhole) {
+    // Teleport along the stored pair vector. Move the player AND the camera
+    // so the world scrolls instead of jumping under the finger.
+    const tx = Math.cos(e.pairAng) * e.pairDist;
+    const ty = Math.sin(e.pairAng) * e.pairDist;
+    p.x += tx; p.y += ty;
+    cam.x += tx; cam.y += ty;
+    burstFx(e.x, e.y, 30, e.r, 1);
+    burstFx(p.x, p.y, 18, p.r * 0.6, 0.8);
+    toast('WORMHOLE');
   } else if (combo % 20 === 0) {
     pendingWave = true;
   }
@@ -811,6 +923,14 @@ function supernova(x, y, r) {
 }
 
 function hurt(e) {
+  // Pulsar shield absorbs the next impact entirely, then is consumed.
+  if (shield > 0) {
+    shield = 0;
+    toast('PULSAR SHIELD', 1.4);
+    if (Snd.ac) Snd.tone(520, 'sine', 0.18, 0.005, 0.16);
+    burstFx(p.x, p.y, 22, p.r * 0.5, 1.2);
+    return;
+  }
   const type = e.body && e.body.type;
   const prof = (type && IMPACT[type]) || IMPACT_DEFAULT;
 
@@ -876,17 +996,17 @@ function die() {
 }
 
 function currentTarget() {
-  if (pointer.active) {
-    return {
-      x: (pointer.x - W / 2) / cam.zoom + cam.x,
-      y: (pointer.y - H / 2) / cam.zoom + cam.y
-    };
+  // Joystick drives touch input.
+  if (joy.active && (joy.dx !== 0 || joy.dy !== 0)) {
+    const m = Math.hypot(joy.dx, joy.dy) || 1;
+    return { x: p.x + (joy.dx / m) * 260, y: p.y + (joy.dy / m) * 260 };
   }
+  // Keyboard fallback -- desktop, or Android with a hardware keyboard.
   const dx = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
   const dy = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
   if (dx || dy) {
     const m = Math.hypot(dx, dy) || 1;
-    return { x: p.x + dx / m * 220, y: p.y + dy / m * 220 };
+    return { x: p.x + dx / m * 260, y: p.y + dy / m * 260 };
   }
   return { x: p.x, y: p.y };
 }
@@ -903,6 +1023,23 @@ function update(dt) {
     if (toastT <= 0 && el.toast) el.toast.classList.remove('show');
   }
   if (flashT > 0) flashT = Math.max(0, flashT - dt * 2.2);
+  if (shield > 0) shield = Math.max(0, shield - dt * 0.6);
+
+  // Frame-dragging: large bodies tilt the world subtly when close. Real
+  // Kerr black holes drag spacetime around them; this is the cheap version.
+  let drag = 0;
+  for (const e of ents) {
+    const t = e.body && e.body.type;
+    if (t !== 'star' && t !== 'giant' && t !== 'rival') continue;
+    const dx = e.x - p.x, dy = e.y - p.y;
+    const d = Math.hypot(dx, dy);
+    const reach = p.r * 5;
+    if (d < reach) {
+      const sign = (dx > 0) ? 1 : -1;
+      drag += sign * (1 - d / reach) * 0.14;
+    }
+  }
+  camRoll = lerp(camRoll, clamp(drag, -0.22, 0.22), smooth(0.6, dt));
 
   cam.zoom = lerp(cam.zoom, desiredZoom(), smooth(0.02, dt));
   const follow = smooth(0.0008, dt);
@@ -982,6 +1119,17 @@ function updateEnts(dt) {
         const s = (1 - d / reachR) * 6.5 * p.r * dt;
         p.vx += (-dx / d) * s;      // dx points player -> rival, so negate
         p.vy += (-dy / d) * s;
+      }
+    }
+
+    // Pulsars broadcast periodic gravity shockwaves -- the spin of a
+    // neutron star pushing the field outward.
+    if (e.body && e.body.type === 'pulsar' && state === 'play') {
+      e.pulseT -= dt;
+      if (e.pulseT <= 0) {
+        e.pulseT = e.beatMax;
+        waves.push({ x: e.x, y: e.y, r: e.r * 0.6, max: e.r * 9, t: 0, hue: 210 });
+        burstFx(e.x, e.y, 6, e.r * 0.5, 0.5);
       }
     }
 
@@ -1079,6 +1227,7 @@ function render() {
 
   ctx.save();
   ctx.translate(W / 2 + sx, H / 2 + sy);
+  ctx.rotate(camRoll);                     // frame-dragging tilt
   ctx.scale(cam.zoom, cam.zoom);
   ctx.translate(-cam.x, -cam.y);
 
@@ -1088,6 +1237,8 @@ function render() {
   if (state !== 'dead') drawPlayer();
 
   ctx.restore();
+
+  drawJoystick();                         // joystick is screen-space, not world
 
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, W, H);
@@ -1130,6 +1281,39 @@ function drawShots() {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+// Virtual joystick drawn in screen space. The base lives in the lower-left
+// when idle and slides under the finger when active.
+function drawJoystick() {
+  const homeX = JOY_R + 28;
+  const homeY = H - JOY_R - 36;
+  const cx = joy.active ? joy.bx : homeX;
+  const cy = joy.active ? joy.by : homeY;
+  const kx = joy.active ? joy.kx : cx;
+  const ky = joy.active ? joy.ky : cy;
+
+  ctx.globalCompositeOperation = 'lighter';
+
+  // Outer base ring + faint inner guide ring.
+  ctx.strokeStyle = joy.active ? 'rgba(79,240,255,0.42)' : 'rgba(150,200,230,0.18)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.arc(cx, cy, JOY_R, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(150,200,230,0.10)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, JOY_R * 0.55, 0, TAU); ctx.stroke();
+
+  // Knob.
+  const live = joy.active ? (0.85 + 0.15 * Math.sin(elapsed * 6)) : 0.65;
+  ctx.globalAlpha = live;
+  ctx.fillStyle = 'rgba(79,240,255,0.55)';
+  ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB, 0, TAU); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.globalCompositeOperation = 'source-over';
+}
+
 function drawEnts() {
   for (const e of ents) {
     const ratio = e.r / p.r;
@@ -1164,6 +1348,25 @@ function drawEnts() {
     // Fixed light direction; stars are self-lit so they skip this.
     if (b.type !== 'star' && scr > 3) {
       ctx.drawImage(shadeSprite, e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
+    }
+
+    // Pulsars: the sprite is static, the beam sweep is live.
+    if (b.type === 'pulsar') {
+      ctx.globalCompositeOperation = 'lighter';
+      const pulse = 0.5 + 0.4 * Math.sin(elapsed * 4 + e.phase);
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(elapsed * 1.5);                       // lighthouse sweep
+      const lg = ctx.createLinearGradient(0, 0, e.r * 2.2, 0);
+      lg.addColorStop(0.00, `rgba(220,240,255,${(0.85 * pulse).toFixed(3)})`);
+      lg.addColorStop(0.55, `rgba(160,210,255,${(0.45 * pulse).toFixed(3)})`);
+      lg.addColorStop(1.00, 'rgba(160,210,255,0)');
+      ctx.fillStyle = lg;
+      ctx.fillRect(0, -e.r * 0.06, e.r * 2.2, e.r * 0.12);
+      ctx.rotate(Math.PI / 2);
+      ctx.fillRect(0, -e.r * 0.06, e.r * 2.2, e.r * 0.12);
+      ctx.restore();
+      ctx.globalCompositeOperation = 'source-over';
     }
 
     // Atmospheric rim — the authoritative edibility cue.
@@ -1202,49 +1405,42 @@ function drawCometTail(e, hue) {
 
 function drawPlayer() {
   const r = p.r;
-  const t = elapsed;
-  const hue = (192 + era * 24) % 360;
 
-  // Halo swells with the combo.
+  // A warm, faint outer halo -- the gravitational lensing glow that the
+  // background starfield produces around a real black hole.
   ctx.globalCompositeOperation = 'lighter';
-  const gs = r * 5.2;
-  ctx.globalAlpha = 0.5 + Math.min(combo, 30) * 0.012;
-  ctx.drawImage(glowSprite(hue), p.x - gs, p.y - gs, gs * 2, gs * 2);
-  ctx.globalAlpha = 1;
-
-  // Accretion arcs spin faster and brighter the hotter the chain is.
-  const heat = clamp(combo / 40, 0, 1);
-  for (let i = 0; i < 3; i++) {
-    const rr = r * (1.35 + i * 0.34);
-    const a0 = t * (1.4 - i * 0.32) * (1 + heat * 1.6) + i * 2.1;
-    ctx.strokeStyle = `hsla(${(hue + i * 26) % 360}, 100%, ${68 - i * 6}%, ${0.5 - i * 0.11 + heat * 0.25})`;
-    ctx.lineWidth = Math.max(1, r * 0.14);
-    ctx.beginPath(); ctx.arc(p.x, p.y, rr, a0, a0 + 2.2 + i * 0.5); ctx.stroke();
-    ctx.beginPath(); ctx.arc(p.x, p.y, rr, a0 + Math.PI, a0 + Math.PI + 1.5); ctx.stroke();
-  }
-  for (let i = 0; i < 7; i++) {          // orbiting sparks
-    const a = t * 2.1 + i * TAU / 7;
-    const rr = r * (1.5 + (i % 3) * 0.22);
-    ctx.fillStyle = `hsla(${(hue + 40) % 360}, 100%, 78%, 0.8)`;
-    ctx.beginPath();
-    ctx.arc(p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, Math.max(0.8, r * 0.07), 0, TAU);
-    ctx.fill();
-  }
+  const halo = ctx.createRadialGradient(p.x, p.y, r * 1.0, p.x, p.y, r * 1.7);
+  halo.addColorStop(0.00, 'rgba(255,200,170,0.40)');
+  halo.addColorStop(0.55, 'rgba(255,160,130,0.16)');
+  halo.addColorStop(1.00, 'rgba(255,140,110,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.7, 0, TAU); ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
 
-  ctx.fillStyle = '#000';                // event horizon
+  // Pulsar-shield ring, when active.
+  if (shield > 0) {
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = `rgba(255,236,205,${(0.45 + 0.35 * Math.sin(elapsed * 14)).toFixed(3)})`;
+    ctx.lineWidth = Math.max(1, r * 0.16);
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.55, 0, TAU); ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // The event horizon -- pure black.
+  ctx.fillStyle = '#000';
   ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fill();
 
+  // A single bright thin photon ring just outside the horizon.
   ctx.globalCompositeOperation = 'lighter';
-  ctx.strokeStyle = `hsla(${(hue + 20) % 360}, 100%, 88%, ${0.35 + heat * 0.4})`;
-  ctx.lineWidth = Math.max(0.8, r * 0.05);
-  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.13, 0, TAU); ctx.stroke();  // lensing
-
   ctx.strokeStyle = (invuln > 0 && Math.floor(invuln * 18) % 2 === 0)
     ? 'rgba(255,255,255,0.95)'
-    : `hsla(${hue}, 100%, 76%, 0.9)`;
-  ctx.lineWidth = Math.max(1, r * 0.10);
-  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.02, 0, TAU); ctx.stroke();
+    : 'rgba(255,235,215,0.92)';
+  ctx.lineWidth = Math.max(1, r * 0.06);
+  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.08, 0, TAU); ctx.stroke();
+  // A barely-there outer lensing ring.
+  ctx.strokeStyle = 'rgba(255,210,180,0.50)';
+  ctx.lineWidth = Math.max(0.8, r * 0.03);
+  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.28, 0, TAU); ctx.stroke();
   ctx.globalCompositeOperation = 'source-over';
 }
 
@@ -1264,7 +1460,8 @@ function drawWaves() {
   ctx.globalCompositeOperation = 'lighter';
   for (const w of waves) {
     const k = 1 - w.t / 0.85;
-    ctx.strokeStyle = `hsla(190, 100%, 74%, ${k * 0.7})`;
+    const hue = w.hue == null ? 190 : w.hue;
+    ctx.strokeStyle = `hsla(${hue}, 100%, 74%, ${k * 0.7})`;
     ctx.lineWidth = Math.max(1.5, w.max * 0.03 * k);
     ctx.beginPath(); ctx.arc(w.x, w.y, w.r, 0, TAU); ctx.stroke();
   }
@@ -1365,23 +1562,40 @@ function syncSettingsUI() {
 /* ============================================================
    INPUT
    ============================================================ */
-let dragging = false;
-function setPointer(e) {
-  const r = cvs.getBoundingClientRect();
-  pointer.x = e.clientX - r.left;
-  pointer.y = e.clientY - r.top;
-  pointer.active = true;
-}
-
+// Virtual joystick handlers. Touch anywhere in the left third of the canvas
+// anchors the joystick; the thumb follows the finger inside a circle of
+// JOY_R, and the normalised vector drives the black hole. Touch outside that
+// zone is ignored (so taps on menu/pause/mute buttons still work).
 cvs.addEventListener('pointerdown', (e) => {
-  dragging = true;
-  setPointer(e);
+  const zoneMax = Math.max(200, W * 0.36);
+  if (e.clientX >= zoneMax) return;          // outside joystick zone
+  joy.active = true;
+  joy.bx = e.clientX;
+  joy.by = e.clientY;
+  joy.kx = e.clientX;
+  joy.ky = e.clientY;
+  joy.dx = 0; joy.dy = 0;
   ensureAudio();
   try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
 });
-cvs.addEventListener('pointermove', (e) => { if (dragging) setPointer(e); });
-cvs.addEventListener('pointerup', () => { dragging = false; pointer.active = false; });
-cvs.addEventListener('pointercancel', () => { dragging = false; pointer.active = false; });
+cvs.addEventListener('pointermove', (e) => {
+  if (!joy.active) return;
+  joy.kx = e.clientX;
+  joy.ky = e.clientY;
+  let dx = (joy.kx - joy.bx) / JOY_R;
+  let dy = (joy.ky - joy.by) / JOY_R;
+  const m = Math.hypot(dx, dy);
+  if (m > 1) { dx /= m; dy /= m; }
+  joy.dx = dx;
+  joy.dy = dy;
+});
+function joystickRelease() {
+  joy.active = false;
+  joy.dx = 0;
+  joy.dy = 0;
+}
+cvs.addEventListener('pointerup', joystickRelease);
+cvs.addEventListener('pointercancel', joystickRelease);
 
 document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());

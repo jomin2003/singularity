@@ -165,14 +165,18 @@ $('playBtn').click();
 check('start: menu hidden after TAP TO BEGIN', !visible('menu'));
 check('start: HUD visible', visible('hud'));
 
-/* ---- 4. play with the pointer held down, drifting around ---- */
+/* ---- 4. play via the virtual joystick (lower-left of screen) ---- */
 const cvs = $('game');
 const send = (type, x, y) =>
   cvs.dispatchEvent(new window.MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
 
-send('pointerdown', 512, 384);
+// Activate the joystick well inside the left zone, then move the thumb in
+// a small circle so the black hole drifts across the field.
+const jx0 = 130, jy0 = 660;
+send('pointerdown', jx0, jy0);
 for (let i = 0; i < 40; i++) {
-  send('pointermove', 512 + Math.round(Math.cos(i / 4) * 240), 384 + Math.round(Math.sin(i / 4) * 180));
+  send('pointermove', jx0 + Math.round(Math.cos(i / 4) * 40),
+                     jy0 + Math.round(Math.sin(i / 4) * 40));
   step(30);                       // ~0.5 s per leg => ~20 s total
 }
 const scoreAfterPlay = num('hudScore');
