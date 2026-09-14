@@ -1257,7 +1257,9 @@ function reset() {
 function spawn(scaleMul) {
   const v = viewWorldRadius();
   const a = Math.random() * TAU;
-  const dist = rand(v * 1.14, v * (scaleMul || 1.7));
+  // Spawn just inside the visible ring so the field is never empty around
+  // the player. The old 1.14-1.7 range put everything just out of view.
+  const dist = rand(v * 0.85, v * (scaleMul || 1.25));
   const e = {
     x: p.x + Math.cos(a) * dist,
     y: p.y + Math.sin(a) * dist,
@@ -1569,9 +1571,12 @@ function update(dt) {
   camRoll = lerp(camRoll, clamp(drag, -0.22, 0.22), smooth(0.6, dt));
 
   cam.zoom = lerp(cam.zoom, desiredZoom(), smooth(0.02, dt));
-  const follow = smooth(0.0008, dt);
-  cam.x = lerp(cam.x, p.x, follow);
-  cam.y = lerp(cam.y, p.y, follow);
+  // Snap the camera to the player. The old "smooth" follow lagged badly -- a few
+  // quick moves and the player was drawn in the corner with the whole field
+  // off-screen, which read as "the game is empty". 0.35 is snappy without
+  // being jittery at 60 fps.
+  cam.x = lerp(cam.x, p.x, 0.35);
+  cam.y = lerp(cam.y, p.y, 0.35);
 
   if (state === 'play') {
     const t = currentTarget();
