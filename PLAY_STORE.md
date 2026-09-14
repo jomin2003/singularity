@@ -3,6 +3,13 @@
 Everything below is in the order you actually have to do it. The build itself
 runs on GitHub Actions — you never need the Android SDK on this laptop.
 
+> **Before any of this: get the game on your phone.**
+> `.github/workflows/build-apk.yml` produces an installable **debug APK** that
+> needs no keystore and no secrets. Push the repo, run the *Build Debug APK*
+> workflow, download `singularity-debug-apk`, install it. Play it properly
+> before you spend $25 on a Play account — if the game doesn't feel good, none
+> of the rest of this matters.
+
 **Requirements already satisfied by the code in this repo**
 
 | Play requirement | Status |
