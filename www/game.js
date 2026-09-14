@@ -39,13 +39,21 @@ const STAR_BONUS = 3;                // score multiplier for eating a star
 // and rubble should barely register — one flat penalty made every collision
 // feel identical no matter what you flew into.
 const IMPACT = {
-  star:     { frac: 0.55, knock: 13, burn: true,  msg: 'BURNED BY A STAR' },
-  giant:    { frac: 0.32, knock: 12, gas: true,   msg: 'SLAMMED INTO A GIANT' },
-  lava:     { frac: 0.40, knock: 9,  burn: true,  msg: null },
-  rogue:    { frac: 0.34, knock: 11, msg: null },
-  rival:    { frac: 0.60, knock: 16, flash: true, msg: 'RIVAL SINGULARITY' },
-  asteroid: { frac: 0.12, knock: 6,  msg: null },
-  comet:    { frac: 0.18, knock: 8,  msg: null }
+  // Lethal 'star' types are evolved giants, so this reads "giant", not "sun".
+  star:       { frac: 0.55, knock: 13, burn: true,  msg: 'BURNED BY A GIANT' },
+  giant:      { frac: 0.32, knock: 12, gas: true,   msg: 'SLAMMED INTO A GIANT' },
+  uranus:     { frac: 0.30, knock: 12, gas: true,   msg: null },
+  neptune:    { frac: 0.30, knock: 12, gas: true,   msg: null },
+  lava:       { frac: 0.40, knock: 9,  burn: true,  msg: null },
+  rogue:      { frac: 0.34, knock: 11, msg: null },
+  rival:      { frac: 0.60, knock: 16, flash: true, msg: 'RIVAL SINGULARITY' },
+  asteroid:   { frac: 0.12, knock: 6,  msg: null },
+  comet:      { frac: 0.18, knock: 8,  msg: null },
+  brownDwarf: { frac: 0.28, knock: 9,  msg: null },
+  // A white dwarf is Sun-mass in an Earth volume: it hits far above its size.
+  whiteDwarf: { frac: 0.45, knock: 10, flash: true, msg: 'DEGENERATE MATTER' },
+  magnetar:   { frac: 0.50, knock: 14, flash: true, msg: 'MAGNETAR FIELD' },
+  quasar:     { frac: 0.65, knock: 18, flash: true, msg: 'QUASAR JET' }
 };
 const IMPACT_DEFAULT = { frac: 0.25, knock: 9, msg: null };
 
@@ -64,6 +72,7 @@ let pendingWave = false, toastT = 0, shotT = 0;
 let panel = null;   // null | 'pause' | 'settings'
 let camRoll = 0;    // Kerr-style frame-dragging wobble near big bodies
 let shield = 0;     // one-hit protection from eating a pulsar
+let kilonovaT = 0;  // countdown to the next neutron-star merger event
 
 const pointer = { x: 0, y: 0, active: false };
 const keys = { up: false, down: false, left: false, right: false };
@@ -282,22 +291,59 @@ const SPR = 128, SPR_R = SPR / 2;
 const VARIANTS = 4;
 
 // Edible worlds and rubble.
-const EDIBLE = ['rocky', 'ice', 'ocean', 'desert', 'barren', 'asteroid'];
-// Things that will kill you.
+// Edible worlds, rubble, and sub-stellar objects. Brown dwarfs ("failed
+// stars") and white dwarfs are included because they genuinely sit between
+// planet and star in mass -- you could plausibly swallow one.
+const EDIBLE = ['rocky', 'ice', 'ocean', 'desert', 'barren', 'asteroid',
+                'uranus', 'neptune'];
+// Things that will kill you. 'star' is always rendered as an evolved giant
+// (red giant / supergiant / blue giant) since a main-sequence star you
+// outgrow is really just... a bigger star.
 const LETHAL = ['star', 'giant', 'lava', 'rogue', 'rival'];
-// Rare astronomical anomalies. All edible; each behaves specially.
+// Rare astronomical anomalies, each with its own behaviour.
 const RARE = ['pulsar', 'wormhole'];
+// Neutron-star remnants with extreme fields, and active galactic nuclei.
+const EXTREME = ['magnetar', 'quasar'];
 
 const PLANET_PAL = {
-  rocky:  { hi: '#8a7659', mid: '#6b5b4a', lo: '#3a3128', spot: '#4a4034' },
-  ice:    { hi: '#eaf7ff', mid: '#bfe6f5', lo: '#6d9db5', spot: '#ffffff' },
-  ocean:  { hi: '#3f9ad1', mid: '#1c5f9e', lo: '#0d3a68', spot: '#2f7a45' },
-  desert: { hi: '#d9905f', mid: '#b5643c', lo: '#6b3620', spot: '#8c4a2b' },
-  barren: { hi: '#9a9a95', mid: '#71716c', lo: '#43433f', spot: '#5a5a55' },
-  lava:   { hi: '#ff8a3a', mid: '#5a2418', lo: '#1a0a08', spot: '#ff5a1a' },
-  giant:  { hi: '#e8d3ae', mid: '#c9a678', lo: '#8d6f4e', spot: '#a8543a' },
-  rogue:  { hi: '#6b5f7a', mid: '#463c52', lo: '#241d2c', spot: '#372f42' }
+  rocky:   { hi: '#8a7659', mid: '#6b5b4a', lo: '#3a3128', spot: '#4a4034' },
+  // Europa-style: the "lineae" cracks are brown/red from salt and sulphur,
+  // not white. A white-cracked ice moon is the classic get-it-wrong detail.
+  ice:     { hi: '#eaf7ff', mid: '#c3dcea', lo: '#7ba3b8', spot: '#a8705a' },
+  ocean:   { hi: '#3f9ad1', mid: '#1c5f9e', lo: '#0d3a68', spot: '#2f7a45' },
+  desert:  { hi: '#d9905f', mid: '#b5643c', lo: '#6b3620', spot: '#8c4a2b' },
+  barren:  { hi: '#9a9a95', mid: '#71716c', lo: '#43433f', spot: '#5a5a55' },
+  lava:    { hi: '#ff8a3a', mid: '#5a2418', lo: '#1a0a08', spot: '#ff5a1a' },
+  giant:   { hi: '#e8d3ae', mid: '#c9a678', lo: '#8d6f4e', spot: '#a8543a' },
+  // Ice giants were simply missing. Uranus is nearly featureless pale cyan
+  // (and is tipped 98 deg, so its bands run nearly pole-to-pole); Neptune is
+  // deep blue with dark storm spots and faint banding.
+  uranus:  { hi: '#dff6f3', mid: '#a9dce1', lo: '#77aeb8', spot: '#c9eff0' },
+  neptune: { hi: '#5f93e3', mid: '#2c58bb', lo: '#15307c', spot: '#14255c' },
+  // A rogue planet has no star. It should be cold, dark and barely lit --
+  // not a purple world basking in a nonexistent sun.
+  rogue:   { hi: '#4c4c55', mid: '#2c2c35', lo: '#101015', spot: '#23232b' }
 };
+
+// Real main-sequence spectral classes with their true colours and their
+// actual frequency in the galaxy. M dwarfs are ~76% of all stars, so most
+// stars you meet should be red -- which is the opposite of what most games
+// draw.
+const SPECTRAL = [
+  { cls: 'M', w: 0.765,  hi: '#ffd2ad', mid: '#ff9a66', lo: '#e2603a' },
+  { cls: 'K', w: 0.121,  hi: '#ffe3b8', mid: '#ffbb70', lo: '#f0913f' },
+  { cls: 'G', w: 0.076,  hi: '#fff8e6', mid: '#ffdb85', lo: '#ffb64c' },
+  { cls: 'F', w: 0.030,  hi: '#fffcf4', mid: '#fff3cc', lo: '#ffe596' },
+  { cls: 'A', w: 0.006,  hi: '#ffffff', mid: '#eef2ff', lo: '#ccd9ff' },
+  { cls: 'B', w: 0.0013, hi: '#eef3ff', mid: '#bcd4ff', lo: '#8fb4ff' },
+  { cls: 'O', w: 0.000003, hi: '#dde8ff', mid: '#a8c0ff', lo: '#7f9dff' }
+];
+
+function pickSpectral(rnd) {
+  let r = rnd(), acc = 0;
+  for (const s of SPECTRAL) { acc += s.w; if (r < acc) return s; }
+  return SPECTRAL[0];
+}
 
 function blobs(g, rnd, col, n, rmin, rmax, alpha) {
   g.globalAlpha = alpha;
@@ -387,39 +433,158 @@ function drawAsteroid(g, rnd) {
     g.quadraticCurveTo(px, py, (x + px) / 2, (y + py) / 2);
   }
   g.closePath();
+  // Real asteroids are darker than charcoal -- typical albedo is 0.05-0.15,
+// which is why they are so hard to see against space.
   const grd = g.createLinearGradient(0, 0, SPR, SPR);
-  grd.addColorStop(0, '#8b8175');
-  grd.addColorStop(0.5, '#5f574d');
-  grd.addColorStop(1, '#37322c');
+  grd.addColorStop(0, '#6b6259');
+  grd.addColorStop(0.5, '#423c35');
+  grd.addColorStop(1, '#201d19');
   g.fillStyle = grd; g.fill();
   g.save(); g.clip();
   craters(g, rnd, 7 + ((rnd() * 6) | 0), SPR_R * 0.16);
-  blobs(g, rnd, '#000000', 5, 2, 7, 0.14);
+  blobs(g, rnd, '#000000', 7, 2, 7, 0.20);
   g.restore();
 }
 
-function drawStar(g, rnd) {
-  // Self-luminous: limb-darkened core, granulation, a couple of spots.
-  const warm = rnd() < 0.5;
-  const c1 = warm ? '#fff6d8' : '#eaf4ff';
-  const c2 = warm ? '#ffcf5c' : '#bcd8ff';
-  const c3 = warm ? '#ff7a1e' : '#6f9dff';
-  const grd = g.createRadialGradient(SPR_R * 0.82, SPR_R * 0.78, SPR_R * 0.05,
-                                     SPR_R, SPR_R, SPR_R);
-  grd.addColorStop(0, c1);
-  grd.addColorStop(0.45, c2);
-  grd.addColorStop(0.86, c3);
-  grd.addColorStop(1, warm ? '#c04a08' : '#2c47a8');
+// Main-sequence stars and evolved giants. Colour comes from the real
+// spectral sequence (O B A F G K M) weighted by true galactic frequency, so
+// most stars you meet are red dwarfs -- the opposite of what most games
+// draw. Includes limb darkening and a granulation texture. Giants are
+// distended and have much larger convection cells.
+function drawStar(g, rnd, sub) {
+  const giant = sub === 'redgiant' || sub === 'supergiant' || sub === 'bluegiant';
+  let spec;
+  if (sub === 'bluegiant') spec = SPECTRAL[5];        // B: hot, blue-white
+  else if (sub === 'redgiant') spec = SPECTRAL[1];    // K: orange
+  else if (sub === 'supergiant') spec = SPECTRAL[0];  // M: Betelgeuse red
+  else spec = pickSpectral(rnd);
+
+  const R = giant ? SPR_R * 0.98 : SPR_R * 0.86;
+  const grd = g.createRadialGradient(SPR_R, SPR_R, R * 0.05, SPR_R, SPR_R, R);
+  grd.addColorStop(0.00, spec.hi);
+  grd.addColorStop(0.42, spec.mid);
+  grd.addColorStop(0.88, spec.lo);
+  grd.addColorStop(1.00, spec.lo);
   g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
 
   g.save();
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.clip();
+  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.clip();
   g.globalCompositeOperation = 'lighter';
-  blobs(g, rnd, c1, 26, 2, 8, 0.22);
+  blobs(g, rnd, spec.hi, 26, 2, 8, 0.22);            // granulation
   g.globalCompositeOperation = 'source-over';
-  blobs(g, rnd, '#7a2f06', 4, 2.5, 6, 0.34);
+  if (giant) {
+    blobs(g, rnd, 'rgba(120,30,10,0.30)', 6, 6, 16, 0.34);   // huge cells
+  } else {
+    blobs(g, rnd, 'rgba(90,30,8,0.45)', 4, 2, 5, 0.38);      // starspots
+  }
   g.restore();
+
+  // Corona. Giants have large, tenuous, cooler envelopes.
+  g.globalCompositeOperation = 'lighter';
+  const cg = g.createRadialGradient(SPR_R, SPR_R, R * 0.9, SPR_R, SPR_R, SPR_R);
+  cg.addColorStop(0, giant ? 'rgba(255,180,120,0.30)' : 'rgba(255,220,170,0.22)');
+  cg.addColorStop(1, 'rgba(255,180,120,0)');
+  g.fillStyle = cg;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+}
+
+// A brown dwarf -- a "failed star" too small to sustain hydrogen fusion.
+// Dim, magenta-brown, with patchy methane/ammonia cloud bands.
+function drawBrownDwarf(g, rnd) {
+  const R = SPR_R * 0.82;
+  const grd = g.createRadialGradient(SPR_R, SPR_R, R * 0.05, SPR_R, SPR_R, R);
+  grd.addColorStop(0.00, '#c89a86');
+  grd.addColorStop(0.45, '#8a5a4a');
+  grd.addColorStop(1.00, '#3a2018');
+  g.fillStyle = grd;
+  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
+  g.save();
+  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.clip();
+  bands(g, rnd, ['#a06a55', '#7a4a3c', '#5c342a'], 0.22);
+  g.restore();
+  // Very faint glow -- these barely shine in visible light.
+  g.globalCompositeOperation = 'lighter';
+  const cg = g.createRadialGradient(SPR_R, SPR_R, R * 0.8, SPR_R, SPR_R, SPR_R);
+  cg.addColorStop(0, 'rgba(180,90,60,0.18)');
+  cg.addColorStop(1, 'rgba(180,90,60,0)');
+  g.fillStyle = cg;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+}
+
+// A white dwarf -- Earth-sized and immensely dense, so it renders as a tiny
+// brilliant blue-white point. Very high mass for its size.
+function drawWhiteDwarf(g, rnd) {
+  const R = SPR_R * 0.34;
+  g.globalCompositeOperation = 'lighter';
+  const cg = g.createRadialGradient(SPR_R, SPR_R, R * 0.2, SPR_R, SPR_R, SPR_R);
+  cg.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+  cg.addColorStop(0.30, 'rgba(200,225,255,0.42)');
+  cg.addColorStop(1.00, 'rgba(160,200,255,0)');
+  g.fillStyle = cg;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#ffffff';
+  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
+  g.fillStyle = '#dbe9ff';
+  g.beginPath(); g.arc(SPR_R, SPR_R, R * 0.7, 0, TAU); g.fill();
+}
+
+// A magnetar -- a neutron star with a magnetic field around 10^15 gauss,
+// strong enough to distort atoms. Rendered with dipole field loops.
+function drawMagnetar(g, rnd) {
+  const R = SPR_R * 0.30;
+  g.globalCompositeOperation = 'lighter';
+  const cg = g.createRadialGradient(SPR_R, SPR_R, R * 0.2, SPR_R, SPR_R, SPR_R * 0.92);
+  cg.addColorStop(0.00, 'rgba(230,245,255,0.95)');
+  cg.addColorStop(0.35, 'rgba(120,190,255,0.35)');
+  cg.addColorStop(1.00, 'rgba(90,150,255,0)');
+  g.fillStyle = cg;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.92, 0, TAU); g.fill();
+  // Dipole field loops.
+  g.strokeStyle = 'rgba(150,205,255,0.50)';
+  g.lineWidth = 1.4;
+  for (let k = 1; k <= 3; k++) {
+    g.beginPath();
+    g.ellipse(SPR_R, SPR_R, SPR_R * 0.26 * k, SPR_R * 0.76, 0, 0, TAU);
+    g.stroke();
+  }
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#eaf6ff';
+  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
+}
+
+// A quasar -- an active galactic nucleus. A supermassive black hole with a
+// hot accretion torus and two relativistic polar jets.
+function drawQuasar(g, rnd) {
+  g.globalCompositeOperation = 'lighter';
+  for (let s = -1; s <= 1; s += 2) {
+    const jg = g.createLinearGradient(SPR_R, SPR_R, SPR_R, SPR_R + s * SPR_R);
+    jg.addColorStop(0.00, 'rgba(215,238,255,0.95)');
+    jg.addColorStop(0.35, 'rgba(150,200,255,0.55)');
+    jg.addColorStop(1.00, 'rgba(120,180,255,0)');
+    g.fillStyle = jg;
+    g.beginPath();
+    g.moveTo(SPR_R - SPR_R * 0.10, SPR_R);
+    g.lineTo(SPR_R + SPR_R * 0.10, SPR_R);
+    g.lineTo(SPR_R + SPR_R * 0.32, SPR_R + s * SPR_R);
+    g.lineTo(SPR_R - SPR_R * 0.32, SPR_R + s * SPR_R);
+    g.closePath(); g.fill();
+  }
+  const tg = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.1, SPR_R, SPR_R, SPR_R * 0.8);
+  tg.addColorStop(0.00, 'rgba(255,245,220,0.95)');
+  tg.addColorStop(0.40, 'rgba(255,190,120,0.45)');
+  tg.addColorStop(1.00, 'rgba(255,150,90,0)');
+  g.fillStyle = tg;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.8, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#120a06';
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.26, 0, TAU); g.fill();
+  g.strokeStyle = 'rgba(255,240,210,0.95)';
+  g.lineWidth = 2;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.31, 0, TAU); g.stroke();
 }
 
 function drawPlanet(g, rnd, type) {
@@ -444,9 +609,28 @@ function drawPlanet(g, rnd, type) {
       g.fill(); g.globalAlpha = 1;
     }
   } else if (type === 'ice') {
+    // Europa-like: a bright ice shell scored by brown/red lineae -- salt and
+    // sulphur dragged up from the ocean beneath. White cracks are wrong.
     blobs(g, rnd, pal.hi, 14, 4, 16, 0.4);
-    fissures(g, rnd, 10, 'rgba(255,255,255,0.55)', false);
+    fissures(g, rnd, 14, 'rgba(168,112,90,0.55)', false);
+    fissures(g, rnd, 6, 'rgba(120,70,52,0.45)', false);
     polarCaps(g, rnd, '#f2fbff');
+  } else if (type === 'uranus') {
+    // Tipped ~98 deg, so its banding runs nearly pole-to-pole instead of
+    // along the equator like every other giant.
+    blobs(g, rnd, pal.hi, 8, 6, 18, 0.30);
+    g.save();
+    g.translate(SPR_R, SPR_R);
+    g.rotate(Math.PI / 2);
+    g.translate(-SPR_R, -SPR_R);
+    bands(g, rnd, [pal.hi, pal.mid, pal.lo], 0.16);
+    g.restore();
+  } else if (type === 'neptune') {
+    // Deep blue, faint banding, dark storm spots, and methane cloud streaks.
+    // Windiest planet in the Solar System (up to 2,100 km/h).
+    bands(g, rnd, [pal.hi, pal.mid, pal.lo], 0.30);
+    blobs(g, rnd, pal.spot, 3, 5, 12, 0.55);
+    blobs(g, rnd, '#ffffff', 5, 3, 7, 0.28);
   } else if (type === 'lava') {
     blobs(g, rnd, pal.lo, 16, 5, 18, 0.5);
     fissures(g, rnd, 16, pal.spot, true);
@@ -544,29 +728,33 @@ function drawRival(g) {
   g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.63, 0, TAU); g.stroke();
 }
 
-function makeBodySprite(type, variant) {
+function makeBodySprite(type, variant, sub) {
   const c = document.createElement('canvas');
   c.width = c.height = SPR;
   const g = c.getContext('2d');
   const rnd = mulberry32(type.length * 7919 + type.charCodeAt(0) * 331 +
-                         variant * 104729 + 17);
+                         variant * 104729 + 17 + (sub ? sub.length * 131 : 0));
   if (type === 'asteroid') drawAsteroid(g, rnd);
-  else if (type === 'star') drawStar(g, rnd);
+  else if (type === 'star') drawStar(g, rnd, sub);
   else if (type === 'rival') drawRival(g);
   else if (type === 'pulsar') drawPulsar(g, rnd);
   else if (type === 'wormhole') drawWormhole(g, rnd);
+  else if (type === 'brownDwarf') drawBrownDwarf(g, rnd);
+  else if (type === 'whiteDwarf') drawWhiteDwarf(g, rnd);
+  else if (type === 'magnetar') drawMagnetar(g, rnd);
+  else if (type === 'quasar') drawQuasar(g, rnd);
   else drawPlanet(g, rnd, type);
   return c;
 }
 
 const bodySprites = new Map();
-function bodySprite(type, variant) {
-  const k = type + '#' + variant;
+function bodySprite(type, variant, sub) {
+  const k = type + '#' + variant + '#' + (sub || '');
   let s = bodySprites.get(k);
   if (!s) {
-    s = makeBodySprite(type, variant);
-    // Hard ceiling: ~48 sprites at 128px is about 3 MB of canvas.
-    if (bodySprites.size > 48) bodySprites.clear();
+    s = makeBodySprite(type, variant, sub);
+    // Hard ceiling: ~56 sprites at 128px is about 3.5 MB of canvas.
+    if (bodySprites.size > 56) bodySprites.clear();
     bodySprites.set(k, s);
   }
   return s;
@@ -696,29 +884,44 @@ function entHue(ratio) {
 function assignBody(e) {
   const lethal = e.r > p.r * 0.95;
   const q = Math.random();
-  let type, spin;
+  let type, sub = null;
+  let spin = rand(-0.75, 0.75);
 
   if (!lethal) {
-    if (q < 0.05) {                                  // rare astronomical anomaly
+    if (q < 0.04) {                                   // rare anomaly
       type = RARE[(Math.random() * RARE.length) | 0];
       spin = rand(-0.3, 0.3);
-    } else if (q < 0.05 + 0.30) {                   // asteroid (also in belts)
+    } else if (q < 0.06) {                            // failed star
+      type = 'brownDwarf';
+      spin = rand(-0.5, 0.5);
+    } else if (q < 0.08) {                            // stellar remnant
+      type = 'whiteDwarf';
+      spin = rand(-0.2, 0.2);
+    } else if (q < 0.08 + 0.30) {                     // asteroid
       type = 'asteroid';
       spin = rand(-2.6, 2.6);
     } else {
-      const pool = EDIBLE;
-      type = pool[(Math.random() * pool.length) | 0];
-      spin = rand(-0.75, 0.75);
+      type = EDIBLE[(Math.random() * EDIBLE.length) | 0];
     }
   } else {
-    if (q < 0.42) { type = 'star'; spin = rand(-0.22, 0.22); }
-    else {
-      const pool = LETHAL;
-      type = pool[(Math.random() * pool.length) | 0];
-      spin = rand(-0.75, 0.75);
+    if (q < 0.40) {
+      // A star you cannot yet swallow is an evolved giant, weighted toward
+      // red giants the way real stellar populations are.
+      type = 'star';
+      const g = Math.random();
+      sub = g < 0.62 ? 'redgiant' : (g < 0.88 ? 'supergiant' : 'bluegiant');
+      spin = rand(-0.18, 0.18);
+    } else if (q < 0.45) {                            // magnetar
+      type = 'magnetar';
+      spin = rand(-0.4, 0.4);
+    } else if (q < 0.49) {                            // quasar
+      type = 'quasar';
+      spin = 0;
+    } else {
+      type = LETHAL[(Math.random() * LETHAL.length) | 0];
     }
   }
-  e.body = { type, variant: (Math.random() * VARIANTS) | 0, spin };
+  e.body = { type, variant: (Math.random() * VARIANTS) | 0, spin, sub };
   initRare(e);
 }
 
@@ -731,6 +934,10 @@ function initRare(e) {
     // Paired exit: a random offset the player teleports along on impact.
     e.pairAng = rand(0, TAU);
     e.pairDist = rand(140, 220);
+  } else if (e.body.type === 'quasar') {
+    // Jets slowly sweep; touching one is catastrophic.
+    e.jetA = rand(0, TAU);
+    e.jetSpin = rand(-0.45, 0.45);
   }
 }
 
@@ -783,7 +990,7 @@ function reset() {
   score = 0; shownScore = 0; combo = 0; comboT = 0;
   elapsed = 0; era = 0; shakeMag = 0; hitstopT = 0; invuln = 0;
   flashT = 0; toastT = 0; shotT = 5;
-  camRoll = 0; shield = 0;
+  camRoll = 0; shield = 0; kilonovaT = rand(35, 70);
   pointer.active = false; pointer.x = W / 2; pointer.y = H / 2;
   joy.active = false; joy.dx = 0; joy.dy = 0;
   for (let i = 0; i < ENT_TARGET; i++) spawn(Math.random() < 0.5 ? 1.15 : 1.7);
@@ -872,6 +1079,10 @@ function consume(e, idx) {
   let gained = Math.max(1, Math.round(e.r * 0.42 * comboMult()));
   if (wasStar) gained *= STAR_BONUS;
   if (wasPulsar) gained *= 3;
+  // Degenerate matter: a white dwarf packs roughly a Sun's mass into an
+  // Earth-sized volume, so it pays far better than its radius suggests.
+  if (type === 'whiteDwarf') gained *= 4;
+  if (type === 'brownDwarf') gained *= 2;
   score += gained;
 
   absorbFx(e);
@@ -897,6 +1108,22 @@ function consume(e, idx) {
     burstFx(e.x, e.y, 30, e.r, 1);
     burstFx(p.x, p.y, 18, p.r * 0.6, 0.8);
     toast('WORMHOLE');
+  } else if (type === 'magnetar') {
+    // A starquake: the crust cracks and releases a burst that clears the
+    // field of anything dangerous nearby.
+    const R = p.r * 11;
+    for (let i = ents.length - 1; i >= 0; i--) {
+      const o = ents[i];
+      const ddx = o.x - p.x, ddy = o.y - p.y;
+      if (ddx * ddx + ddy * ddy < R * R && o.r > p.r * 0.95) {
+        burstFx(o.x, o.y, 8, o.r, 1);
+        ents.splice(i, 1);
+      }
+    }
+    waves.push({ x: p.x, y: p.y, r: p.r, max: R, t: 0, hue: 205 });
+    flashT = Math.max(flashT, 0.22);
+    toast('MAGNETAR STARQUAKE');
+    Snd.boom();
   } else if (combo % 20 === 0) {
     pendingWave = true;
   }
@@ -1025,6 +1252,31 @@ function update(dt) {
   if (flashT > 0) flashT = Math.max(0, flashT - dt * 2.2);
   if (shield > 0) shield = Math.max(0, shield - dt * 0.6);
 
+  // Kilonova: a neutron-star merger going off somewhere in the field. Real
+  // ones forge the heavy elements (gold, platinum, uranium) and flash hard
+  // across the spectrum. This one pays out and clears danger nearby.
+  if (state === 'play') {
+    kilonovaT -= dt;
+    if (kilonovaT <= 0) {
+      kilonovaT = rand(45, 85);
+      const R = p.r * 16;
+      waves.push({ x: p.x, y: p.y, r: p.r, max: R, t: 0, hue: 45 });
+      for (let i = ents.length - 1; i >= 0; i--) {
+        const o = ents[i];
+        const ddx = o.x - p.x, ddy = o.y - p.y;
+        if (ddx * ddx + ddy * ddy < R * R && o.r > p.r * 0.95) {
+          score += Math.round(o.r * 0.6 * comboMult());
+          burstFx(o.x, o.y, 10, o.r, 1);
+          ents.splice(i, 1);
+        }
+      }
+      flashT = Math.max(flashT, 0.45);
+      shakeMag = Math.max(shakeMag, 18);
+      toast('KILONOVA - heavy elements forged', 2.4);
+      Snd.boom();
+    }
+  }
+
   // Frame-dragging: large bodies tilt the world subtly when close. Real
   // Kerr black holes drag spacetime around them; this is the cheap version.
   let drag = 0;
@@ -1130,6 +1382,23 @@ function updateEnts(dt) {
         e.pulseT = e.beatMax;
         waves.push({ x: e.x, y: e.y, r: e.r * 0.6, max: e.r * 9, t: 0, hue: 210 });
         burstFx(e.x, e.y, 6, e.r * 0.5, 0.5);
+      }
+    }
+
+    // Quasar jets sweep. Magnetars deflect you sideways -- the field is
+    // strong enough that steering near one is genuinely hard, which is the
+    // whole hazard.
+    if (e.body && state === 'play') {
+      if (e.body.type === 'quasar') {
+        e.jetA = (e.jetA || 0) + (e.jetSpin || 0) * dt;
+      } else if (e.body.type === 'magnetar') {
+        const d = Math.sqrt(d2) || 1;
+        const reach = p.r * 6;
+        if (d < reach) {
+          const s = (1 - d / reach) * 5.5 * p.r * dt;
+          p.vx += (-dy / d) * s;                 // perpendicular to approach
+          p.vy += (dx / d) * s;
+        }
       }
     }
 
@@ -1342,7 +1611,7 @@ function drawEnts() {
     ctx.save();
     ctx.translate(e.x, e.y);
     ctx.rotate(e.phase);
-    ctx.drawImage(bodySprite(b.type, b.variant), -e.r, -e.r, e.r * 2, e.r * 2);
+    ctx.drawImage(bodySprite(b.type, b.variant, b.sub), -e.r, -e.r, e.r * 2, e.r * 2);
     ctx.restore();
 
     // Fixed light direction; stars are self-lit so they skip this.
@@ -1369,6 +1638,49 @@ function drawEnts() {
       ctx.globalCompositeOperation = 'source-over';
     }
 
+    // Quasar: two relativistic polar jets sweeping around the core. These are
+    // the business end -- the jets are what actually kills you.
+    if (b.type === 'quasar') {
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(e.jetA || 0);
+      const jl = e.r * 5.5;
+      for (let s = -1; s <= 1; s += 2) {
+        const jg = ctx.createLinearGradient(0, 0, 0, s * jl);
+        jg.addColorStop(0.00, 'rgba(220,240,255,0.80)');
+        jg.addColorStop(0.40, 'rgba(150,200,255,0.42)');
+        jg.addColorStop(1.00, 'rgba(120,180,255,0)');
+        ctx.fillStyle = jg;
+        ctx.beginPath();
+        ctx.moveTo(-e.r * 0.10, 0);
+        ctx.lineTo(e.r * 0.10, 0);
+        ctx.lineTo(e.r * 0.30, s * jl);
+        ctx.lineTo(-e.r * 0.30, s * jl);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // Magnetar: dipole field loops pulsing with the spin period.
+    if (b.type === 'magnetar') {
+      ctx.globalCompositeOperation = 'lighter';
+      const beat = 0.35 + 0.30 * Math.sin(elapsed * 5 + e.phase);
+      ctx.strokeStyle = `rgba(150,205,255,${(beat * 0.7).toFixed(3)})`;
+      ctx.lineWidth = Math.max(0.8, e.r * 0.06);
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(e.phase * 0.5);
+      for (let k = 1; k <= 3; k++) {
+        ctx.beginPath();
+        ctx.ellipse(0, 0, e.r * 0.55 * k, e.r * 1.55, 0, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.restore();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
     // Atmospheric rim — the authoritative edibility cue.
     ctx.globalCompositeOperation = 'lighter';
     ctx.strokeStyle = `hsla(${hue}, 100%, ${ratio > 0.95 ? 66 : 84}%, 0.85)`;
@@ -1386,28 +1698,96 @@ function drawEnts() {
   }
 }
 
+// A real comet has TWO tails and neither points along its velocity -- both
+// are pushed anti-sunward by radiation pressure and the solar wind.
+//   * Ion (plasma) tail: blue, narrow, nearly straight. The solar wind is
+//     far faster than the comet, so it barely curves.
+//   * Dust tail: pale yellow-white, broader and curved, because the heavier
+//     dust lags behind along the orbit.
+// The nucleus is one of the darkest objects known (albedo ~0.04); the bright
+// blur around it is the coma, not the nucleus itself.
 function drawCometTail(e, hue) {
+  // Anti-solar direction: away from the fixed scene light source.
+  const sm = Math.hypot(LIGHT.x, LIGHT.y) || 1;
+  const ax = -LIGHT.x / sm, ay = -LIGHT.y / sm;
   const d = Math.hypot(e.vx, e.vy) || 1;
-  const ux = -e.vx / d, uy = -e.vy / d;
-  const len = e.r * (7 + Math.sin(elapsed * 3 + e.phase) * 1.5);
+  const vx = e.vx / d, vy = e.vy / d;
+
   ctx.globalCompositeOperation = 'lighter';
-  const g = ctx.createLinearGradient(e.x, e.y, e.x + ux * len, e.y + uy * len);
-  g.addColorStop(0, `hsla(${hue}, 100%, 82%, 0.55)`);
-  g.addColorStop(1, `hsla(${hue}, 100%, 70%, 0)`);
-  ctx.fillStyle = g;
+
+  // --- Ion tail: blue and straight ---
+  const ilen = e.r * (7 + Math.sin(elapsed * 3 + e.phase) * 1.2);
+  const tx = e.x + ax * ilen, ty = e.y + ay * ilen;
+  const ig = ctx.createLinearGradient(e.x, e.y, tx, ty);
+  ig.addColorStop(0.00, 'rgba(150,205,255,0.62)');
+  ig.addColorStop(0.45, 'rgba(110,175,255,0.28)');
+  ig.addColorStop(1.00, 'rgba(90,150,255,0)');
+  ctx.fillStyle = ig;
   ctx.beginPath();
-  ctx.moveTo(e.x - uy * e.r * 0.5, e.y + ux * e.r * 0.5);
-  ctx.lineTo(e.x + ux * len, e.y + uy * len);
-  ctx.lineTo(e.x + uy * e.r * 0.5, e.y - ux * e.r * 0.5);
+  ctx.moveTo(e.x - ay * e.r * 0.28, e.y + ax * e.r * 0.28);
+  ctx.lineTo(tx - ay * e.r * 0.85, ty + ax * e.r * 0.85);
+  ctx.lineTo(tx + ay * e.r * 0.85, ty - ax * e.r * 0.85);
+  ctx.lineTo(e.x + ay * e.r * 0.28, e.y - ax * e.r * 0.28);
   ctx.closePath(); ctx.fill();
+
+  // --- Dust tail: pale, broad, curved by orbital lag ---
+  const dlen = e.r * 4.8;
+  const tipX = e.x + (ax * 0.72 - vx * 0.45) * dlen;
+  const tipY = e.y + (ay * 0.72 - vy * 0.45) * dlen;
+  const bulgeX = (e.x + tipX) / 2 + ay * e.r * 0.9;
+  const bulgeY = (e.y + tipY) / 2 - ax * e.r * 0.9;
+  const dg = ctx.createLinearGradient(e.x, e.y, tipX, tipY);
+  dg.addColorStop(0.00, 'rgba(255,246,214,0.52)');
+  dg.addColorStop(0.50, 'rgba(255,232,180,0.24)');
+  dg.addColorStop(1.00, 'rgba(255,220,150,0)');
+  ctx.fillStyle = dg;
+  ctx.beginPath();
+  ctx.moveTo(e.x - ay * e.r * 0.80, e.y + ax * e.r * 0.80);
+  ctx.quadraticCurveTo(bulgeX, bulgeY, tipX, tipY);
+  ctx.lineTo(e.x + ay * e.r * 0.80, e.y - ax * e.r * 0.80);
+  ctx.closePath(); ctx.fill();
+
+  // Coma: the bright gas halo around the (very dark) nucleus.
+  const comaR = e.r * 2.1;
+  const cg = ctx.createRadialGradient(e.x, e.y, e.r * 0.3, e.x, e.y, comaR);
+  cg.addColorStop(0.00, 'rgba(225,245,255,0.55)');
+  cg.addColorStop(1.00, 'rgba(180,220,255,0)');
+  ctx.fillStyle = cg;
+  ctx.beginPath(); ctx.arc(e.x, e.y, comaR, 0, TAU); ctx.fill();
+
   ctx.globalCompositeOperation = 'source-over';
 }
 
 function drawPlayer() {
   const r = p.r;
 
-  // A warm, faint outer halo -- the gravitational lensing glow that the
-  // background starfield produces around a real black hole.
+  // Relativistic polar jets once the hole is accreting hard enough to power
+  // an active galactic nucleus. Real supermassive black holes do exactly
+  // this, and it is the same structure as the quasar entity.
+  if (era >= 5) {
+    ctx.globalCompositeOperation = 'lighter';
+    const jl = r * 7;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(Math.sin(elapsed * 0.25) * 0.12);
+    for (let s = -1; s <= 1; s += 2) {
+      const jg = ctx.createLinearGradient(0, 0, 0, s * jl);
+      jg.addColorStop(0.00, 'rgba(215,238,255,0.52)');
+      jg.addColorStop(0.40, 'rgba(150,200,255,0.24)');
+      jg.addColorStop(1.00, 'rgba(120,180,255,0)');
+      ctx.fillStyle = jg;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.14, 0);
+      ctx.lineTo(r * 0.14, 0);
+      ctx.lineTo(r * 0.42, s * jl);
+      ctx.lineTo(-r * 0.42, s * jl);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // A warm, faint outer halo -- the lensed glow of the background starfield.
   ctx.globalCompositeOperation = 'lighter';
   const halo = ctx.createRadialGradient(p.x, p.y, r * 1.0, p.x, p.y, r * 1.7);
   halo.addColorStop(0.00, 'rgba(255,200,170,0.40)');
@@ -1426,17 +1806,42 @@ function drawPlayer() {
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  // The event horizon -- pure black.
+  // The shadow -- pure black. (The observable "shadow" is about 2.6x the
+  // Schwarzschild radius; we treat p.r as that shadow radius.)
   ctx.fillStyle = '#000';
   ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fill();
 
-  // A single bright thin photon ring just outside the horizon.
+  // Photon ring with relativistic Doppler beaming. The side of the ring
+  // rotating toward us is boosted and the receding side is dimmed -- that
+  // asymmetry is the signature feature of every real black-hole image
+  // (M87*, Sgr A*).
   ctx.globalCompositeOperation = 'lighter';
-  ctx.strokeStyle = (invuln > 0 && Math.floor(invuln * 18) % 2 === 0)
-    ? 'rgba(255,255,255,0.95)'
-    : 'rgba(255,235,215,0.92)';
-  ctx.lineWidth = Math.max(1, r * 0.06);
-  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.08, 0, TAU); ctx.stroke();
+  const beamDir = Math.atan2(LIGHT.y, LIGHT.x);
+  const ringR = r * 1.08;
+  const lw = Math.max(1, r * 0.075);
+  const SEG = 28;
+  for (let i = 0; i < SEG; i++) {
+    const a0 = (i / SEG) * TAU;
+    const a1 = ((i + 1) / SEG) * TAU + 0.02;      // slight overlap, no seams
+    const mid = (a0 + a1) / 2;
+    const c = Math.cos(mid - beamDir);
+    // Beaming boosts steeply; ((1+cos)/2)^2 is a good cheap approximation.
+    const boost = Math.pow(Math.max(0, (1 + c) / 2), 2);
+    const alpha = 0.18 + 0.80 * boost;
+    if (invuln > 0 && Math.floor(invuln * 18) % 2 === 0) {
+      ctx.strokeStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
+    } else {
+      // Approaching side runs hot white, receding side cools to orange.
+      const gg = Math.round(180 + 70 * boost);
+      const bb = Math.round(120 + 120 * boost);
+      ctx.strokeStyle = `rgba(255,${gg},${bb},${alpha.toFixed(3)})`;
+    }
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, ringR, a0, a1);
+    ctx.stroke();
+  }
+
   // A barely-there outer lensing ring.
   ctx.strokeStyle = 'rgba(255,210,180,0.50)';
   ctx.lineWidth = Math.max(0.8, r * 0.03);
