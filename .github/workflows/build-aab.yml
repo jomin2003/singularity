@@ -27,9 +27,14 @@ jobs:
       - name: Install Capacitor dependencies
         run: npm ci
 
-      # Copies www/ -> android/app/src/main/assets/public and refreshes
-      # capacitor.plugins.json. This directory is gitignored (it is generated),
-      # so it has to be produced here.
+      # MUST stay before the Gradle step. Three things it produces are
+      # gitignored but required for the build to configure at all:
+      #   1. app/src/main/assets/public            -- the actual game
+      #   2. capacitor-cordova-android-plugins/    -- Capacitor's own
+      #      android/.gitignore excludes it, yet settings.gradle includes
+      #      ':capacitor-cordova-android-plugins' unconditionally. Verified:
+      #      `cap sync` does recreate it, but only because it runs first.
+      #   3. capacitor.config.json / capacitor.plugins.json
       - name: Sync web assets into the Android project
         run: npx cap sync android
 
