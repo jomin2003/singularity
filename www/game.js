@@ -72,7 +72,7 @@ let W = 0, H = 0, MIN = 0, DPR = 1;
 
 /* ---------- state ---------- */
 let state = 'menu';
-let p, ents, parts, waves, shots, slugs, cam;
+let p, ents, parts, waves, shots, slugs, floats, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
@@ -124,6 +124,8 @@ const el = {
   settings: document.getElementById('settings'),
   soundBtn: document.getElementById('soundBtn'),
   motionBtn: document.getElementById('motionBtn'),
+  cbBtn: document.getElementById('cbBtn'),
+  ctrlBtn: document.getElementById('ctrlBtn'),
   settingsBackBtn: document.getElementById('settingsBackBtn')
 };
 
@@ -131,17 +133,69 @@ const show = (n) => n.classList.remove('hidden');
 const hide = (n) => n.classList.add('hidden');
 const fmt = (n) => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (_) { return d; } };
-const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+/* ---------- persistence ---------- */
+// One versioned JSON blob. A corrupt, truncated or foreign-shaped save must
+// silently degrade to defaults -- it must never take the game down on boot,
+// which is exactly what an unguarded JSON.parse would do.
+const SAVE_KEY = 'singularity.save';
+const SAVE_VER = 1;
+
+function loadSave() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return {};
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== 'object' || Array.isArray(o) || o.v !== SAVE_VER) return {};
+    return o;
+  } catch (_) {
+    return {};                       // corrupt JSON -> defaults, keep playing
+  }
+}
+
+let save = loadSave();
+
+function saveSet(key, value) {
+  save[key] = value;
+  save.v = SAVE_VER;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (_) {}
+}
+
+// Pull an old single-key value across once, then remove it.
+function migrateLegacy(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === null) return fallback;
+    localStorage.removeItem(key);
+    return v;
+  } catch (_) { return fallback; }
+}
+
+const lsGet = (k, d) => {
+  const v = save[k];
+  return (v === undefined || v === null) ? d : v;
+};
+const lsSet = saveSet;
+
+// Migrate the pre-v1 single-key saves.
+if (save.best === undefined) {
+  const lb = parseInt(migrateLegacy('singularity.best', ''), 10);
+  if (!isNaN(lb)) saveSet('best', lb);
+}
+if (save.muted === undefined) {
+  saveSet('muted', migrateLegacy('singularity.muted', '0') === '1' ? '1' : '0');
+}
+if (save.motion === undefined) {
+  saveSet('motion', migrateLegacy('singularity.motion', '1') === '1' ? '1' : '0');
+}
 
 // Best score is committed whenever a run could end, not only on death --
 // quitting or backgrounding mid-run used to throw the score away entirely.
 function commitBest() {
-  if (score > best) { best = score; lsSet('singularity.best', String(best)); return true; }
+  if (score > best) { best = score; saveSet('best', best); return true; }
   return false;
 }
 
-let motion = lsGet('singularity.motion', '1') === '1';
+let motion = lsGet('motion', '1') === '1';
 
 const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform &&
                      window.Capacitor.isNativePlatform());
@@ -151,7 +205,7 @@ const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform &&
    ============================================================ */
 const Snd = {
   ac: null, master: null, droneGain: null, droneFilter: null, noise: null,
-  muted: lsGet('singularity.muted', '0') === '1',
+  muted: lsGet('muted', '0') === '1',
 
   ensure() {
     if (this.ac) { if (this.ac.state === 'suspended') this.ac.resume(); return; }
@@ -1022,10 +1076,28 @@ function pickRadius() {
   return p.r * rand(1.05, 1.55 + 1.15 * d);
 }
 
-// Colour IS the difficulty language: cool = edible, warm = lethal.
+// Colour is the fast cue for edibility, but it must NEVER be the only one --
+// drawEnts also gives lethal bodies hazard spikes. Roughly 8% of men have
+// some colour-vision deficiency, and a colour-only threat signal is simply
+// unusable for them.
+// These palettes keep the two ends separable under each common CVD:
+//   deutan / protan (red-green) -> separate BLUE from ORANGE
+//   tritan (blue-yellow)        -> separate MAGENTA from GREEN
+const CB_PALETTES = {
+  normal: { e0: 188, e1: 270, l0: 44,  l1: 0   },
+  deutan: { e0: 205, e1: 235, l0: 32,  l1: 16  },
+  protan: { e0: 205, e1: 235, l0: 32,  l1: 16  },
+  tritan: { e0: 300, e1: 332, l0: 150, l1: 168 }
+};
+const CB_ORDER = ['normal', 'deutan', 'protan', 'tritan'];
+const CB_LABEL = { normal: 'NORMAL', deutan: 'DEUTAN', protan: 'PROTAN', tritan: 'TRITAN' };
+let cbMode = lsGet('cb', 'normal');
+if (!CB_PALETTES[cbMode]) cbMode = 'normal';
+
 function entHue(ratio) {
-  if (ratio <= 0.95) return 188 + clamp(ratio / 0.95, 0, 1) * 82;
-  return 44 - clamp((ratio - 0.95) / 0.9, 0, 1) * 44;
+  const p = CB_PALETTES[cbMode] || CB_PALETTES.normal;
+  if (ratio <= 0.95) return p.e0 + clamp(ratio / 0.95, 0, 1) * (p.e1 - p.e0);
+  return p.l0 - clamp((ratio - 0.95) / 0.9, 0, 1) * (p.l0 - p.l1);
 }
 
 // Type follows edibility so the fantasy stays coherent: worlds and rubble are
@@ -1164,7 +1236,7 @@ function spawnCiv() {
 
 function reset() {
   p = { x: 0, y: 0, vx: 0, vy: 0, r: P0, area: P0 * P0 };
-  ents = []; parts = []; waves = []; shots = []; slugs = [];
+  ents = []; parts = []; waves = []; shots = []; slugs = []; floats = [];
   cam = { x: 0, y: 0, zoom: 1 };
   score = 0; shownScore = 0; combo = 0; comboT = 0;
   elapsed = 0; era = 0; shakeMag = 0; hitstopT = 0; invuln = 0;
@@ -1264,6 +1336,16 @@ function consume(e, idx) {
   if (type === 'brownDwarf') gained *= 2;
   if (type === 'ark') gained *= 3;          // a whole ship full of people
   score += gained;
+
+  // Floating number, so a big eat lands without having to watch the HUD.
+  if (floats.length < 24) {
+    floats.push({
+      x: e.x, y: e.y,
+      text: '+' + fmt(gained),
+      life: 0, max: 0.9,
+      big: gained >= 40
+    });
+  }
 
   absorbFx(e);
   if (type === 'asteroid') Snd.crunch();
@@ -1406,8 +1488,12 @@ function die() {
 }
 
 function currentTarget() {
+  // The drag schemes steer toward an explicit point in the world.
+  if (controlMode !== 'joystick' && drag.active) {
+    return { x: drag.wx, y: drag.wy };
+  }
   // Joystick drives touch input.
-  if (joy.active && (joy.dx !== 0 || joy.dy !== 0)) {
+  if (controlMode === 'joystick' && joy.active && (joy.dx !== 0 || joy.dy !== 0)) {
     const m = Math.hypot(joy.dx, joy.dy) || 1;
     return { x: p.x + (joy.dx / m) * 260, y: p.y + (joy.dy / m) * 260 };
   }
@@ -1537,6 +1623,7 @@ const decay = HAWKING_BASE * clamp(Math.pow(P0 / p.r, 3),
   updateWaves(dt);
   updateShots(dt);
   updateSlugs(dt);
+  updateFloats(dt);
 
   if (shakeMag > 0) shakeMag = Math.max(0, shakeMag - shakeMag * 7 * dt - 0.5 * dt);
 }
@@ -1769,6 +1856,15 @@ function updateSlugs(dt) {
   }
 }
 
+function updateFloats(dt) {
+  for (let i = floats.length - 1; i >= 0; i--) {
+    const f = floats[i];
+    f.life += dt;
+    f.y -= p.r * 0.55 * dt;              // drift upward, in world units
+    if (f.life >= f.max) floats.splice(i, 1);
+  }
+}
+
 /* ============================================================
    RENDER
    ============================================================ */
@@ -1802,6 +1898,8 @@ function render() {
 
   ctx.restore();
 
+  drawDangerArrows();                     // screen space
+  drawFloats();                           // screen space
   drawJoystick();                         // joystick is screen-space, not world
 
   ctx.fillStyle = vignette;
@@ -1848,6 +1946,7 @@ function drawShots() {
 // Virtual joystick drawn in screen space. The base lives in the lower-left
 // when idle and slides under the finger when active.
 function drawJoystick() {
+  if (controlMode !== 'joystick') return;     // nothing to draw in drag modes
   const homeX = JOY_R + 28;
   const homeY = H - JOY_R - 36;
   const cx = joy.active ? joy.bx : homeX;
@@ -1875,6 +1974,58 @@ function drawJoystick() {
   ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB, 0, TAU); ctx.stroke();
   ctx.globalAlpha = 1;
 
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// Floating "+1,240" numbers. Drawn in screen space so the type stays a
+// constant size no matter how far the camera has zoomed out.
+function drawFloats() {
+  if (!floats.length) return;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const f of floats) {
+    const k = 1 - f.life / f.max;
+    const sx = (f.x - cam.x) * cam.zoom + W / 2;
+    const sy = (f.y - cam.y) * cam.zoom + H / 2;
+    if (sx < -60 || sx > W + 60 || sy < -40 || sy > H + 40) continue;
+    const size = (f.big ? 17 : 12) * (0.9 + k * 0.3);
+    ctx.globalAlpha = Math.min(1, k * 1.6);
+    ctx.font = `700 ${size.toFixed(1)}px ui-monospace, monospace`;
+    ctx.fillStyle = f.big ? 'rgba(255,236,190,0.95)' : 'rgba(200,238,255,0.92)';
+    ctx.fillText(f.text, sx, sy);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+}
+
+// Arrows pointing at lethal bodies that are off-screen. Partly juice, partly
+// accessibility: knowing where the danger is should not depend on being able
+// to see its colour.
+function drawDangerArrows() {
+  if (state === 'dead') return;
+  const cx = W / 2, cy = H / 2;
+  const rad = Math.min(W, H) * 0.5 - 26;
+  ctx.globalCompositeOperation = 'lighter';
+  for (const e of ents) {
+    if (e.r <= p.r * 0.95) continue;                 // edible ones are fine
+    const sx = (e.x - cam.x) * cam.zoom + cx;
+    const sy = (e.y - cam.y) * cam.zoom + cy;
+    if (sx >= 0 && sx <= W && sy >= 0 && sy <= H) continue;   // visible already
+    const dx = sx - cx, dy = sy - cy;
+    const d = Math.hypot(dx, dy) || 1;
+    ctx.save();
+    ctx.translate(cx + dx / d * rad, cy + dy / d * rad);
+    ctx.rotate(Math.atan2(dy, dx));
+    ctx.fillStyle = 'rgba(255,150,110,0.55)';
+    ctx.beginPath();
+    ctx.moveTo(9, 0);
+    ctx.lineTo(-6, -6);
+    ctx.lineTo(-6, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
   ctx.globalCompositeOperation = 'source-over';
 }
 
@@ -2003,12 +2154,27 @@ function drawEnts() {
     ctx.lineWidth = Math.max(0.6, e.r * 0.09);
     ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 0.99, 0, TAU); ctx.stroke();
 
-    // Lethal bodies get a second, pulsing warning ring.
-    if (ratio > 0.95) {
+    // Lethal bodies get a pulsing ring AND outward hazard spikes. The spikes are
+// a SHAPE cue, so threat stays readable for anyone who cannot separate the
+// two colours -- colour alone would make this unplayable for them.
+    if (ratio > 0.95 && !e.civ) {
       const pulse = 0.35 + 0.35 * Math.sin(elapsed * 5 + e.phase);
       ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${pulse.toFixed(3)})`;
       ctx.lineWidth = Math.max(0.8, e.r * 0.05);
       ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 1.16, 0, TAU); ctx.stroke();
+
+      const spikes = 8;
+      const inner = e.r * 1.30;
+      const outer = e.r * 1.62;
+      ctx.lineWidth = Math.max(1, e.r * 0.07);
+      ctx.strokeStyle = `hsla(${hue}, 100%, 80%, ${(0.45 + pulse * 0.5).toFixed(3)})`;
+      ctx.beginPath();
+      for (let k = 0; k < spikes; k++) {
+        const a = (k / spikes) * TAU + e.phase * 0.4;
+        ctx.moveTo(e.x + Math.cos(a) * inner, e.y + Math.sin(a) * inner);
+        ctx.lineTo(e.x + Math.cos(a) * outer, e.y + Math.sin(a) * outer);
+      }
+      ctx.stroke();
     }
     ctx.globalCompositeOperation = 'source-over';
   }
@@ -2353,45 +2519,91 @@ function closeSettings() {
 function syncSettingsUI() {
   if (el.soundBtn) el.soundBtn.textContent = 'SOUND: ' + (Snd.muted ? 'OFF' : 'ON');
   if (el.motionBtn) el.motionBtn.textContent = 'MOTION: ' + (motion ? 'ON' : 'OFF');
+  if (el.cbBtn) el.cbBtn.textContent = 'COLOUR: ' + (CB_LABEL[cbMode] || 'NORMAL');
+  if (el.ctrlBtn) {
+    el.ctrlBtn.textContent = 'CONTROL: ' + (CTRL_LABEL[controlMode] || 'JOYSTICK');
+  }
 }
 
 /* ============================================================
    INPUT
    ============================================================ */
-// Virtual joystick handlers. Touch anywhere in the left third of the canvas
-// anchors the joystick; the thumb follows the finger inside a circle of
-// JOY_R, and the normalised vector drives the black hole. Touch outside that
-// zone is ignored (so taps on menu/pause/mute buttons still work).
+// Three control schemes. The README described drag-to-move while the code
+// only ever had a joystick -- both now exist and are selectable in Settings.
+const CTRL_ORDER = ['joystick', 'follow', 'relative'];
+const CTRL_LABEL = { joystick: 'JOYSTICK', follow: 'FOLLOW', relative: 'RELATIVE' };
+let controlMode = lsGet('control', 'joystick');
+if (CTRL_ORDER.indexOf(controlMode) < 0) controlMode = 'joystick';
+
+// Screen-space anchor used by the two drag schemes.
+const drag = { active: false, sx: 0, sy: 0, ax: 0, ay: 0, wx: 0, wy: 0 };
+
+function screenToWorld(cx, cy) {
+  return {
+    x: (cx - W / 2) / cam.zoom + cam.x,
+    y: (cy - H / 2) / cam.zoom + cam.y
+  };
+}
+
 cvs.addEventListener('pointerdown', (e) => {
-  const zoneMax = Math.max(200, W * 0.36);
-  if (e.clientX >= zoneMax) return;          // outside joystick zone
-  joy.active = true;
-  joy.bx = e.clientX;
-  joy.by = e.clientY;
-  joy.kx = e.clientX;
-  joy.ky = e.clientY;
-  joy.dx = 0; joy.dy = 0;
   ensureAudio();
   try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
+
+  if (controlMode === 'joystick') {
+    const zoneMax = Math.max(200, W * 0.36);
+    if (e.clientX >= zoneMax) return;          // outside joystick zone
+    joy.active = true;
+    joy.bx = e.clientX; joy.by = e.clientY;
+    joy.kx = e.clientX; joy.ky = e.clientY;
+    joy.dx = 0; joy.dy = 0;
+    return;
+  }
+
+  drag.active = true;
+  drag.sx = e.clientX; drag.sy = e.clientY;
+  drag.ax = p.x;       drag.ay = p.y;
+  if (controlMode === 'follow') {
+    const w = screenToWorld(e.clientX, e.clientY);
+    drag.wx = w.x; drag.wy = w.y;
+  } else {
+    drag.wx = p.x;   drag.wy = p.y;
+  }
 });
+
 cvs.addEventListener('pointermove', (e) => {
-  if (!joy.active) return;
-  joy.kx = e.clientX;
-  joy.ky = e.clientY;
-  let dx = (joy.kx - joy.bx) / JOY_R;
-  let dy = (joy.ky - joy.by) / JOY_R;
-  const m = Math.hypot(dx, dy);
-  if (m > 1) { dx /= m; dy /= m; }
-  joy.dx = dx;
-  joy.dy = dy;
+  if (controlMode === 'joystick') {
+    if (!joy.active) return;
+    joy.kx = e.clientX;
+    joy.ky = e.clientY;
+    let dx = (joy.kx - joy.bx) / JOY_R;
+    let dy = (joy.ky - joy.by) / JOY_R;
+    const m = Math.hypot(dx, dy);
+    if (m > 1) { dx /= m; dy /= m; }
+    joy.dx = dx;
+    joy.dy = dy;
+    return;
+  }
+  if (!drag.active) return;
+  if (controlMode === 'follow') {
+    // The hole steers to wherever your finger is standing.
+    const w = screenToWorld(e.clientX, e.clientY);
+    drag.wx = w.x; drag.wy = w.y;
+  } else {
+    // Relative: the hole shifts by how far your thumb has travelled since it
+    // landed, so it tracks the gesture instead of snapping to the fingertip.
+    drag.wx = drag.ax + (e.clientX - drag.sx) / cam.zoom;
+    drag.wy = drag.ay + (e.clientY - drag.sy) / cam.zoom;
+  }
 });
-function joystickRelease() {
+
+function pointerRelease() {
   joy.active = false;
   joy.dx = 0;
   joy.dy = 0;
+  drag.active = false;
 }
-cvs.addEventListener('pointerup', joystickRelease);
-cvs.addEventListener('pointercancel', joystickRelease);
+cvs.addEventListener('pointerup', pointerRelease);
+cvs.addEventListener('pointercancel', pointerRelease);
 
 document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -2436,7 +2648,7 @@ el.settingsBackBtn.addEventListener('click', (e) => { e.stopPropagation(); close
 function toggleMute() {
   ensureAudio();
   Snd.muted = !Snd.muted;
-  lsSet('singularity.muted', Snd.muted ? '1' : '0');
+  lsSet('muted', Snd.muted ? '1' : '0');
   if (Snd.master) Snd.master.gain.setTargetAtTime(Snd.muted ? 0 : 0.85, Snd.ac.currentTime, 0.05);
   el.muteBtn.classList.toggle('off', Snd.muted);
   syncSettingsUI();
@@ -2448,8 +2660,27 @@ el.soundBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMute()
 el.motionBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   motion = !motion;
-  lsSet('singularity.motion', motion ? '1' : '0');
-  if (!motion) shakeMag = 0;
+  lsSet('motion', motion ? '1' : '0');
+  if (!motion) { shakeMag = 0; camRoll = 0; }     // also kills the tilt
+  syncSettingsUI();
+});
+
+el.cbBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const i = CB_ORDER.indexOf(cbMode);
+  cbMode = CB_ORDER[(i + 1) % CB_ORDER.length];
+  lsSet('cb', cbMode);
+  syncSettingsUI();
+});
+
+el.ctrlBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const i = CTRL_ORDER.indexOf(controlMode);
+  controlMode = CTRL_ORDER[(i + 1) % CTRL_ORDER.length];
+  lsSet('control', controlMode);
+  // Drop any in-flight input so the schemes cannot fight each other.
+  joy.active = false; joy.dx = 0; joy.dy = 0;
+  drag.active = false;
   syncSettingsUI();
 });
 
@@ -2481,7 +2712,7 @@ function fatal(msg) {
 }
 window.addEventListener('error', (e) => fatal((e.error && e.error.stack) || e.message));
 
-best = parseInt(lsGet('singularity.best', '0'), 10) || 0;
+best = parseInt(lsGet('best', 0), 10) || 0;
 el.muteBtn.classList.toggle('off', Snd.muted);
 syncSettingsUI();
 

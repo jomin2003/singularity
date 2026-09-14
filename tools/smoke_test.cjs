@@ -197,6 +197,15 @@ if (!died) {
   check('settings: panel shown, pause hidden',
     visible('settings') && !visible('pause'));
 
+  // Cycle the accessibility and control options, then confirm the game
+  // still runs -- a mode switch that leaves stale input state would throw.
+  $('cbBtn').click();
+  check('settings: colour mode cycles', /COLOUR:/.test($('cbBtn').textContent),
+    $('cbBtn').textContent);
+  $('ctrlBtn').click();
+  check('settings: control mode cycles', /CONTROL:/.test($('ctrlBtn').textContent),
+    $('ctrlBtn').textContent);
+
   $('settingsBackBtn').click();
   check('settings: BACK returns to pause',
     visible('pause') && !visible('settings'));

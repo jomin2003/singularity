@@ -260,6 +260,10 @@ html, body {
   gap: 12px;
   width: 100%;
   max-width: 330px;
+  /* Settings has grown; keep it reachable on short screens. */
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 4px;
 }
 
 .panel-title {
