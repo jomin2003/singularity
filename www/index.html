@@ -31,6 +31,7 @@
     <div id="comboValue"></div>
     <div id="comboBar"><i></i></div>
   </div>
+  <button id="pauseBtn" class="icon-btn pause-btn" aria-label="Pause">&#10074;&#10074;</button>
   <button id="muteBtn" class="icon-btn" aria-label="Toggle sound">&#9834;</button>
 </div>
 
@@ -48,10 +49,32 @@
   <div class="newbest hidden" id="newBest">NEW PERSONAL BEST</div>
   <div class="hint" id="overBest"></div>
   <button id="againBtn" class="btn">RUN AGAIN</button>
+  <button id="overHomeBtn" class="btn ghost">HOME</button>
   <div class="hint dim">or tap anywhere</div>
 </div>
 
+<div id="pause" class="layer center overlay hidden">
+  <div class="panel">
+    <div class="panel-title">PAUSED</div>
+    <div class="hint dim" id="pauseScore"></div>
+    <button id="resumeBtn" class="btn">PLAY</button>
+    <button id="restartBtn" class="btn ghost">RESTART</button>
+    <button id="settingsBtn" class="btn ghost">SETTINGS</button>
+    <button id="homeBtn" class="btn ghost">HOME</button>
+  </div>
+</div>
+
+<div id="settings" class="layer center overlay hidden">
+  <div class="panel">
+    <div class="panel-title">SETTINGS</div>
+    <button id="soundBtn" class="btn ghost">SOUND: ON</button>
+    <button id="motionBtn" class="btn ghost">MOTION: ON</button>
+    <button id="settingsBackBtn" class="btn">BACK</button>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
+<div id="fatal" class="fatal hidden"></div>
 
 <script src="game.js"></script>
 </body>

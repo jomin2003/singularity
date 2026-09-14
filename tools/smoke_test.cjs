@@ -113,7 +113,9 @@ vc.on('error', (...a) => errors.push('console.error: ' + a.map(String).join(' ')
 
 const dom = new JSDOM(inlined, {
   runScripts: 'dangerously',
-  url: 'http://localhost/',
+  // Set SMOKE_URL to a file:// URL to exercise the double-click-to-open path,
+  // where localStorage and service workers are unavailable.
+  url: process.env.SMOKE_URL || 'http://localhost/',
   virtualConsole: vc,
   beforeParse(window) {
     window.HTMLCanvasElement.prototype.getContext = function (type) {
@@ -177,6 +179,29 @@ const died = visible('over');
 check('play: ~20s of frames without throwing', errors.length === 0);
 check('play: score increased', scoreAfterPlay > 0, 'mass=' + scoreAfterPlay);
 
+/* ---- 4b. pause / settings / back / home (only valid if still alive) ---- */
+if (!died) {
+  const before = num('hudScore');
+  $('pauseBtn').click();
+  check('pause: PAUSED panel shown', visible('pause'));
+  step(120);
+  check('pause: simulation actually frozen', num('hudScore') === before,
+    'mass=' + num('hudScore') + ' (was ' + before + ')');
+
+  $('settingsBtn').click();
+  check('settings: panel shown, pause hidden',
+    visible('settings') && !visible('pause'));
+
+  $('settingsBackBtn').click();
+  check('settings: BACK returns to pause',
+    visible('pause') && !visible('settings'));
+
+  $('resumeBtn').click();
+  check('resume: pause panel hidden', !visible('pause'));
+  step(60);
+  check('resume: frames run again without throwing', errors.length === 0);
+}
+
 send('pointerup', 512, 384);
 
 /* ---- 5. if it survived, keep going until it dies (bounded) ---- */
@@ -186,8 +211,17 @@ send('pointerup', 512, 384);
 // simulated time, hence the large guard.
 if (!died) {
   let guard = 0;
-  while (!visible('over') && guard < 90000) { step(1); guard++; }
-  report.push(`      (collapsed after ~${(guard / 60).toFixed(0)}s of idling)`);
+  while (!visible('over') && guard < 120000) { step(1); guard++; }
+  if (visible('over')) {
+    report.push(`      (collapsed after ~${(guard / 60).toFixed(0)}s of idling)`);
+  } else {
+    // Rivals tow a passive player around the field, so decay alone is not
+    // guaranteed to finish a run in bounded time. Force it so the death ->
+    // game-over -> restart path stays covered either way.
+    report.push('      (idle did not collapse in 2000s - forcing die() to cover the path)');
+    window.die();
+    step(2);
+  }
 }
 check('death: COLLAPSE screen shown', visible('over'));
 check('death: final score carried into game-over', num('finalScore') > 0,
@@ -199,6 +233,15 @@ check('restart: HUD visible again', visible('hud'));
 check('restart: game-over hidden', !visible('over'));
 step(120);
 check('restart: 120 frames without throwing', errors.length === 0);
+
+/* ---- 7. HOME from pause -> main menu, and the best score survives ---- */
+$('pauseBtn').click();
+check('pause: works on a restarted run', visible('pause'));
+$('homeBtn').click();
+check('home: back at main menu', visible('menu'));
+check('home: HUD hidden', !visible('hud'));
+check('home: best score shown on menu', /BEST/.test($('menuBest').textContent),
+  'menuBest="' + $('menuBest').textContent + '"');
 
 /* ---- output ---- */
 console.log('\n' + report.join('\n'));

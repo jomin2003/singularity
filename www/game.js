@@ -35,6 +35,20 @@ const COMBO_WINDOW = 1.35;           // seconds to keep a chain alive
 const CONSUME_YIELD = 0.34;          // how much of a body becomes your mass
 const STAR_BONUS = 3;                // score multiplier for eating a star
 
+// What hitting something too big costs you. A star should feel catastrophic
+// and rubble should barely register — one flat penalty made every collision
+// feel identical no matter what you flew into.
+const IMPACT = {
+  star:     { frac: 0.55, knock: 13, burn: true,  msg: 'BURNED BY A STAR' },
+  giant:    { frac: 0.32, knock: 12, gas: true,   msg: 'SLAMMED INTO A GIANT' },
+  lava:     { frac: 0.40, knock: 9,  burn: true,  msg: null },
+  rogue:    { frac: 0.34, knock: 11, msg: null },
+  rival:    { frac: 0.60, knock: 16, flash: true, msg: 'RIVAL SINGULARITY' },
+  asteroid: { frac: 0.12, knock: 6,  msg: null },
+  comet:    { frac: 0.18, knock: 8,  msg: null }
+};
+const IMPACT_DEFAULT = { frac: 0.25, knock: 9, msg: null };
+
 /* ---------- canvas ---------- */
 const cvs = document.getElementById('game');
 const ctx = cvs.getContext('2d', { alpha: false });
@@ -47,6 +61,7 @@ let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
 let pendingWave = false, toastT = 0, shotT = 0;
+let panel = null;   // null | 'pause' | 'settings'
 
 const pointer = { x: 0, y: 0, active: false };
 const keys = { up: false, down: false, left: false, right: false };
@@ -71,7 +86,19 @@ const el = {
   newBest: document.getElementById('newBest'),
   againBtn: document.getElementById('againBtn'),
   muteBtn: document.getElementById('muteBtn'),
-  toast: document.getElementById('toast')
+  toast: document.getElementById('toast'),
+  pauseBtn: document.getElementById('pauseBtn'),
+  pause: document.getElementById('pause'),
+  pauseScore: document.getElementById('pauseScore'),
+  resumeBtn: document.getElementById('resumeBtn'),
+  restartBtn: document.getElementById('restartBtn'),
+  settingsBtn: document.getElementById('settingsBtn'),
+  homeBtn: document.getElementById('homeBtn'),
+  overHomeBtn: document.getElementById('overHomeBtn'),
+  settings: document.getElementById('settings'),
+  soundBtn: document.getElementById('soundBtn'),
+  motionBtn: document.getElementById('motionBtn'),
+  settingsBackBtn: document.getElementById('settingsBackBtn')
 };
 
 const show = (n) => n.classList.remove('hidden');
@@ -80,6 +107,15 @@ const fmt = (n) => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','
 
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (_) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+
+// Best score is committed whenever a run could end, not only on death --
+// quitting or backgrounding mid-run used to throw the score away entirely.
+function commitBest() {
+  if (score > best) { best = score; lsSet('singularity.best', String(best)); return true; }
+  return false;
+}
+
+let motion = lsGet('singularity.motion', '1') === '1';
 
 const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform &&
                      window.Capacitor.isNativePlatform());
@@ -239,7 +275,7 @@ const VARIANTS = 4;
 // Edible worlds and rubble.
 const EDIBLE = ['rocky', 'ice', 'ocean', 'desert', 'barren', 'asteroid'];
 // Things that will kill you.
-const LETHAL = ['star', 'giant', 'lava', 'rogue'];
+const LETHAL = ['star', 'giant', 'lava', 'rogue', 'rival'];
 
 const PLANET_PAL = {
   rocky:  { hi: '#8a7659', mid: '#6b5b4a', lo: '#3a3128', spot: '#4a4034' },
@@ -424,6 +460,25 @@ function drawPlanet(g, rnd, type) {
   g.restore();
 }
 
+// A rival singularity — a real black hole with its own accretion disk.
+// It is the most dangerous thing in the field and it pulls you in.
+function drawRival(g) {
+  g.fillStyle = '#000';
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.60, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'lighter';
+  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.58, SPR_R, SPR_R, SPR_R);
+  grd.addColorStop(0.00, 'rgba(255,214,150,0.95)');
+  grd.addColorStop(0.22, 'rgba(255,140,70,0.70)');
+  grd.addColorStop(0.62, 'rgba(210,80,50,0.22)');
+  grd.addColorStop(1.00, 'rgba(180,60,40,0)');
+  g.fillStyle = grd;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+  g.strokeStyle = 'rgba(255,236,205,0.95)';
+  g.lineWidth = 2.2;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.63, 0, TAU); g.stroke();
+}
+
 function makeBodySprite(type, variant) {
   const c = document.createElement('canvas');
   c.width = c.height = SPR;
@@ -432,6 +487,7 @@ function makeBodySprite(type, variant) {
                          variant * 104729 + 17);
   if (type === 'asteroid') drawAsteroid(g, rnd);
   else if (type === 'star') drawStar(g, rnd);
+  else if (type === 'rival') drawRival(g);
   else drawPlanet(g, rnd, type);
   return c;
 }
@@ -755,21 +811,35 @@ function supernova(x, y, r) {
 }
 
 function hurt(e) {
-  p.area *= 0.68;
+  const type = e.body && e.body.type;
+  const prof = (type && IMPACT[type]) || IMPACT_DEFAULT;
+
+  p.area *= (1 - prof.frac);
   p.r = Math.sqrt(p.area);
+
   const dx = p.x - e.x, dy = p.y - e.y;
   const d = Math.hypot(dx, dy) || 1;
-  p.vx = dx / d * 9 * p.r;
-  p.vy = dy / d * 9 * p.r;
+  p.vx = dx / d * prof.knock * p.r;
+  p.vy = dy / d * prof.knock * p.r;
   e.vx -= dx / d * p.r * 1.6;
   e.vy -= dy / d * p.r * 1.6;
-  invuln = 1.15;
+
+  // A rival swallows light and time: longer invulnerability or you would be
+  // shredded inside its well.
+  invuln = prof.flash ? 1.9 : 1.15;
   combo = 0; comboT = 0;
-  shakeMag = Math.max(shakeMag, 20);
+  shakeMag = Math.max(shakeMag, 12 + prof.frac * 46);
   hitstopT = Math.max(hitstopT, 0.09);
+  if (prof.flash) flashT = Math.max(flashT, 0.30);
+  if (prof.burn) flashT = Math.max(flashT, 0.16);
+
+  if (prof.burn) burstFx(e.x, e.y, 36, e.r * 0.8, 1.2);
+  else if (prof.gas) burstFx(e.x, e.y, 30, e.r * 0.9, 1.1);
+  else burstFx(p.x, p.y, 26, p.r, 1);
+
   Snd.thud();
   Snd.setDrone(true, 0);
-  burstFx(p.x, p.y, 26, p.r, 1);
+  if (prof.msg) toast(prof.msg, 1.6);
 }
 
 function shockwave() {
@@ -796,11 +866,7 @@ function die() {
   flashT = Math.max(flashT, 0.25);
   burstFx(p.x, p.y, 70, p.r, 1.6);
 
-  newBest = score > best;
-  if (newBest) {
-    best = score;
-    lsSet('singularity.best', String(best));
-  }
+  newBest = commitBest();
   hide(el.hud);
   el.finalScore.textContent = fmt(score);
   el.overBest.textContent = 'BEST ' + fmt(best);
@@ -826,6 +892,7 @@ function currentTarget() {
 }
 
 function update(dt) {
+  if (state === 'paused') return;      // frozen; render still draws the frame
   elapsed += dt;
   const prevEra = era;
   era = Math.floor(score / 1200);
@@ -903,6 +970,20 @@ function updateEnts(dt) {
     const dx = p.x - e.x, dy = p.y - e.y;
     const d2 = dx * dx + dy * dy;
     if (d2 > despawnR * despawnR) { ents.splice(i, 1); continue; }
+
+    // Rival singularities drag YOU in as well. That is what separates them
+    // from every other big body: you cannot just drift past one.
+    if (e.body && e.body.type === 'rival' && state === 'play') {
+      const d = Math.sqrt(d2) || 1;
+      // Kept deliberately local. Any wider and a rival becomes a field-wide
+      // tractor beam that tows a passive player around the map.
+      const reachR = p.r * 10;
+      if (d < reachR) {
+        const s = (1 - d / reachR) * 6.5 * p.r * dt;
+        p.vx += (-dx / d) * s;      // dx points player -> rival, so negate
+        p.vy += (-dy / d) * s;
+      }
+    }
 
     if (e.comet) {
       // Comets keep their momentum; gravity barely bends them.
@@ -994,7 +1075,7 @@ function render() {
   drawShots();
 
   let sx = 0, sy = 0;
-  if (shakeMag > 0.2) { sx = rand(-shakeMag, shakeMag); sy = rand(-shakeMag, shakeMag); }
+  if (motion && shakeMag > 0.2) { sx = rand(-shakeMag, shakeMag); sy = rand(-shakeMag, shakeMag); }
 
   ctx.save();
   ctx.translate(W / 2 + sx, H / 2 + sy);
@@ -1223,18 +1304,62 @@ function frame(now) {
 /* ============================================================
    FLOW
    ============================================================ */
+// Some browsers throw on AudioContext construction (autoplay policy, or a
+// locked-down webview). Losing sound is fine; losing the game is not.
+function ensureAudio() { try { Snd.ensure(); } catch (_) {} }
+
 function start() {
-  Snd.ensure();
+  ensureAudio();
   reset();
   state = 'play';
-  hide(el.menu); hide(el.over); show(el.hud);
+  panel = null;
+  hide(el.menu); hide(el.over); hide(el.pause); hide(el.settings); show(el.hud);
   Snd.setDrone(true, 0);
 }
 
 function toMenu() {
+  commitBest();
   state = 'menu';
-  hide(el.over); hide(el.hud); show(el.menu);
+  panel = null;
+  hide(el.over); hide(el.hud); hide(el.pause); hide(el.settings); show(el.menu);
   el.menuBest.textContent = best > 0 ? 'BEST ' + fmt(best) : '';
+  Snd.setDrone(false, 0);
+  if (el.toast) el.toast.classList.remove('show');
+}
+
+function pauseGame() {
+  if (state !== 'play') return;
+  state = 'paused';
+  panel = 'pause';
+  commitBest();
+  if (el.pauseScore) el.pauseScore.textContent = 'MASS ' + fmt(score) + '   BEST ' + fmt(best);
+  show(el.pause); hide(el.settings);
+  Snd.setDrone(false, 0);
+}
+
+function resumeGame() {
+  if (state !== 'paused') return;
+  panel = null;
+  state = 'play';
+  hide(el.pause); hide(el.settings);
+  last = performance.now();          // don't hand the sim one giant dt
+  Snd.setDrone(true, combo);
+}
+
+function openSettings() {
+  panel = 'settings';
+  hide(el.pause); show(el.settings);
+  syncSettingsUI();
+}
+
+function closeSettings() {
+  panel = 'pause';
+  hide(el.settings); show(el.pause);
+}
+
+function syncSettingsUI() {
+  if (el.soundBtn) el.soundBtn.textContent = 'SOUND: ' + (Snd.muted ? 'OFF' : 'ON');
+  if (el.motionBtn) el.motionBtn.textContent = 'MOTION: ' + (motion ? 'ON' : 'OFF');
 }
 
 /* ============================================================
@@ -1251,7 +1376,7 @@ function setPointer(e) {
 cvs.addEventListener('pointerdown', (e) => {
   dragging = true;
   setPointer(e);
-  Snd.ensure();
+  ensureAudio();
   try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
 });
 cvs.addEventListener('pointermove', (e) => { if (dragging) setPointer(e); });
@@ -1270,6 +1395,12 @@ window.addEventListener('keydown', (e) => {
   if (k === ' ' || k === 'enter') {
     if (state !== 'play') { e.preventDefault(); start(); }
   }
+  if (k === 'escape' || k === 'p') {
+    if (state === 'play') pauseGame();
+    else if (state === 'paused') {
+      if (panel === 'settings') closeSettings(); else resumeGame();
+    }
+  }
   if (k === 'm') el.muteBtn.click();
 });
 window.addEventListener('keyup', (e) => {
@@ -1284,33 +1415,75 @@ el.playBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
 el.againBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
 el.over.addEventListener('click', () => start());
 
-el.muteBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  Snd.ensure();
+el.pauseBtn.addEventListener('click', (e) => { e.stopPropagation(); pauseGame(); });
+el.resumeBtn.addEventListener('click', (e) => { e.stopPropagation(); resumeGame(); });
+el.restartBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
+el.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); openSettings(); });
+el.homeBtn.addEventListener('click', (e) => { e.stopPropagation(); toMenu(); });
+el.overHomeBtn.addEventListener('click', (e) => { e.stopPropagation(); toMenu(); });
+el.settingsBackBtn.addEventListener('click', (e) => { e.stopPropagation(); closeSettings(); });
+
+function toggleMute() {
+  ensureAudio();
   Snd.muted = !Snd.muted;
   lsSet('singularity.muted', Snd.muted ? '1' : '0');
   if (Snd.master) Snd.master.gain.setTargetAtTime(Snd.muted ? 0 : 0.85, Snd.ac.currentTime, 0.05);
   el.muteBtn.classList.toggle('off', Snd.muted);
+  syncSettingsUI();
+}
+
+el.muteBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMute(); });
+el.soundBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMute(); });
+
+el.motionBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  motion = !motion;
+  lsSet('singularity.motion', motion ? '1' : '0');
+  if (!motion) shakeMag = 0;
+  syncSettingsUI();
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) Snd.setDrone(false, 0);
-  else { last = performance.now(); if (state === 'play') Snd.setDrone(true, combo); }
+  if (document.hidden) {
+    commitBest();
+    Snd.setDrone(false, 0);
+    if (state === 'play') pauseGame();     // backgrounding must not cost you
+  } else {
+    last = performance.now();
+    if (state === 'play') Snd.setDrone(true, combo);
+  }
 });
+// Last-ditch save if the tab or the app disappears entirely.
+window.addEventListener('pagehide', commitBest);
 
 window.addEventListener('resize', resize);
 
 /* ============================================================
    BOOT
    ============================================================ */
+// A blank black screen is the worst possible failure mode. If anything throws
+// during boot, say so on screen rather than leaving the player guessing.
+function fatal(msg) {
+  const n = document.getElementById('fatal');
+  if (!n) return;
+  n.textContent = 'SINGULARITY failed to start\n\n' + msg;
+  n.classList.remove('hidden');
+}
+window.addEventListener('error', (e) => fatal((e.error && e.error.stack) || e.message));
+
 best = parseInt(lsGet('singularity.best', '0'), 10) || 0;
 el.muteBtn.classList.toggle('off', Snd.muted);
+syncSettingsUI();
 
-buildShade();
-resize();
-reset();
-toMenu();
-requestAnimationFrame((t) => { last = t; frame(t); });
+try {
+  buildShade();
+  resize();
+  reset();
+  toMenu();
+  requestAnimationFrame((t) => { last = t; frame(t); });
+} catch (err) {
+  fatal((err && err.stack) || String(err));
+}
 
 if ('serviceWorker' in navigator && !IS_NATIVE) {
   window.addEventListener('load', () => {

@@ -249,3 +249,56 @@ html, body {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
 }
+
+/* ---------- Pause / settings panels ---------- */
+.overlay { z-index: 30; }
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 330px;
+}
+
+.panel-title {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: .3em;
+  margin-right: -.3em;
+  color: var(--cyan);
+  text-shadow: 0 0 24px rgba(79, 240, 255, .55);
+}
+
+.btn.ghost {
+  background: transparent;
+  border: 1px solid rgba(150, 200, 230, .26);
+  color: #cfe6f7;
+  box-shadow: none;
+  padding: 13px 34px;
+  margin-top: 0;
+}
+
+.btn.ghost:active { box-shadow: none; }
+
+.icon-btn.pause-btn {
+  top: calc(env(safe-area-inset-top, 0px) + 20px);
+  bottom: auto;
+  right: 20px;
+  font-size: 11px;
+  letter-spacing: .12em;
+}
+
+/* ---------- Fatal error surface, so a blank screen is never silent ---------- */
+.fatal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  padding: 24px;
+  background: #14080a;
+  color: #ffb4b4;
+  font: 12px/1.6 ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow: auto;
+}

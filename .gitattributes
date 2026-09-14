@@ -5,6 +5,11 @@
 # release AAB never gets produced. Windows checkouts keep working fine.
 * text=auto eol=lf
 
+# Windows batch scripts genuinely break on LF (goto/label parsing), so unlike
+# everything else these must keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 # Never convert these.
 *.png binary
 *.jpg binary
