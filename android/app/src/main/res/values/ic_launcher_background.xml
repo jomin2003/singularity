@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive icon background: deep space, same as the game background. -->
+    <color name="ic_launcher_background">#05060F</color>
+</resources>

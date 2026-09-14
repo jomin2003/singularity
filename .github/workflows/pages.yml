@@ -1,0 +1,43 @@
+name: Deploy Privacy Policy
+
+# Hosts privacy.html on GitHub Pages. Play Console requires a live URL for the
+# privacy policy, and this is the cheapest way to get one for free.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'privacy.html'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage only the privacy policy
+        run: |
+          mkdir -p _site
+          cp privacy.html _site/index.html
+          cp privacy.html _site/privacy.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

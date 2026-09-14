@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>SINGULARITY</title>
+<meta name="description" content="An endless gravity-well game. Consume. Grow. Survive.">
+<meta name="theme-color" content="#05060f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud" class="layer hidden">
+  <div class="hud-top">
+    <div class="hud-block">
+      <div class="hud-label">MASS</div>
+      <div class="hud-value" id="hudScore">0</div>
+    </div>
+    <div class="hud-block right">
+      <div class="hud-label">BEST</div>
+      <div class="hud-value" id="hudBest">0</div>
+    </div>
+  </div>
+  <div id="comboWrap">
+    <div id="comboValue"></div>
+    <div id="comboBar"><i></i></div>
+  </div>
+  <button id="muteBtn" class="icon-btn" aria-label="Toggle sound">&#9834;</button>
+</div>
+
+<div id="menu" class="layer center">
+  <div class="title">SINGULARITY</div>
+  <div class="subtitle">Consume. Grow. Survive.</div>
+  <button id="playBtn" class="btn">TAP TO BEGIN</button>
+  <div class="hint">Drag to move &nbsp;&bull;&nbsp; swallow what's smaller &nbsp;&bull;&nbsp; flee what isn't</div>
+  <div class="hint dim" id="menuBest"></div>
+</div>
+
+<div id="over" class="layer center hidden">
+  <div class="over-title">COLLAPSE</div>
+  <div class="score-big" id="finalScore">0</div>
+  <div class="newbest hidden" id="newBest">NEW PERSONAL BEST</div>
+  <div class="hint" id="overBest"></div>
+  <button id="againBtn" class="btn">RUN AGAIN</button>
+  <div class="hint dim">or tap anywhere</div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>

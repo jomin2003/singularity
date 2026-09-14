@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Palette mirrors www/style.css so the brief native flash before the
+         WebView paints matches the game instead of showing white. -->
+    <color name="colorPrimary">#05060F</color>
+    <color name="colorPrimaryDark">#05060F</color>
+    <color name="colorAccent">#4FF0FF</color>
+</resources>

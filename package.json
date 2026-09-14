@@ -1,0 +1,19 @@
+{
+  "name": "singularity",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SINGULARITY - an endless gravity-well game for Android.",
+  "scripts": {
+    "sync": "cap sync android",
+    "open:android": "cap open android",
+    "assets:store": "python tools/make_store_assets.py",
+    "assets:android": "python tools/make_android_icons.py"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/cli": "8.5.2"
+  }
+}

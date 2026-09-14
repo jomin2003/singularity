@@ -1,0 +1,14 @@
+# Normalise everything to LF in the repository.
+#
+# This project is built on Linux (GitHub Actions). A Gradle wrapper committed
+# with CRLF fails there outright -- "/bin/sh^M: bad interpreter" -- and the
+# release AAB never gets produced. Windows checkouts keep working fine.
+* text=auto eol=lf
+
+# Never convert these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.jks binary
+*.keystore binary
+*.ttf binary

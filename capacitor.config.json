@@ -1,0 +1,13 @@
+{
+  "appId": "com.jomin.singularity",
+  "appName": "SINGULARITY",
+  "webDir": "www",
+  "loggingBehavior": "none",
+  "android": {
+    "androidScheme": "https",
+    "allowMixedContent": false,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {}
+}
