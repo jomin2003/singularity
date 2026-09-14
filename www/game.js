@@ -35,6 +35,11 @@ const COMBO_WINDOW = 1.35;           // seconds to keep a chain alive
 const CONSUME_YIELD = 0.34;          // how much of a body becomes your mass
 const STAR_BONUS = 3;                // score multiplier for eating a star
 
+// Bumped on each change and shown on the menu. Stale caches have already cost
+// a whole round of "your changes didn't work", so make the running build
+// visible rather than guessable.
+const BUILD_ID = 'b8';
+
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
 // early game is the deadliest, which is backwards for onboarding.
@@ -126,7 +131,8 @@ const el = {
   motionBtn: document.getElementById('motionBtn'),
   cbBtn: document.getElementById('cbBtn'),
   ctrlBtn: document.getElementById('ctrlBtn'),
-  settingsBackBtn: document.getElementById('settingsBackBtn')
+  settingsBackBtn: document.getElementById('settingsBackBtn'),
+  buildTag: document.getElementById('buildTag')
 };
 
 const show = (n) => n.classList.remove('hidden');
@@ -2453,14 +2459,30 @@ function updateHUD() {
 }
 
 let last = 0;
+let crashed = false;
 function frame(now) {
-  const real = Math.min((now - last) / 1000, 0.05);
-  last = now;
-  let dt = real;
-  if (hitstopT > 0) { hitstopT -= real; dt = real * 0.18; }
-  update(dt);
-  render();
-  updateHUD();
+  if (crashed) return;
+  try {
+    const real = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    let dt = real;
+    if (hitstopT > 0) { hitstopT -= real; dt = real * 0.18; }
+    update(dt);
+    render();
+    updateHUD();
+  } catch (err) {
+    // A throw inside the loop used to leave a silent black canvas with the
+    // menu already hidden -- completely indistinguishable from "the game is
+    // broken". Surface the error and restore the menu so the player can see
+    // what happened and try again.
+    crashed = true;
+    fatal('The game hit an error while running.\n\n' +
+          ((err && err.stack) || String(err)));
+    state = 'menu';
+    hide(el.hud); hide(el.pause); hide(el.settings); hide(el.over);
+    show(el.menu);
+    return;
+  }
   requestAnimationFrame(frame);
 }
 
@@ -2721,6 +2743,7 @@ window.addEventListener('error', (e) => fatal((e.error && e.error.stack) || e.me
 best = parseInt(lsGet('best', 0), 10) || 0;
 el.muteBtn.classList.toggle('off', Snd.muted);
 syncSettingsUI();
+if (el.buildTag) el.buildTag.textContent = 'build ' + BUILD_ID;
 
 try {
   buildShade();
@@ -2732,8 +2755,13 @@ try {
   fatal((err && err.stack) || String(err));
 }
 
-if ('serviceWorker' in navigator && !IS_NATIVE) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  });
+// The service worker has now caused more confusion than it ever solved. It
+// kept serving stale JS after fixes, which is exactly what produced "your
+// changes didn't work" and "nothing is visible". Unregister it so the browser
+// always loads the build actually on disk. Nothing is lost: the Android app
+// never used it -- Capacitor bundles the assets into the APK directly.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then((regs) => { for (const r of regs) r.unregister(); })
+    .catch(() => {});
 }
