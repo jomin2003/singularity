@@ -54,23 +54,38 @@ size responds identically. `SPEED_REF` is the one to touch for overall pace.
 
 ## UI design system
 
-Four rules, applied to the menu shell. They live as tokens at the top of
-`style.css` so they are enforceable rather than aspirational:
+The rules live as tokens at the top of `style.css` so they are enforceable
+rather than aspirational. Everything below is a token, and no rule should
+introduce a raw value outside the scale.
 
-- **8px grid.** Every margin, padding and gap is a multiple of `--s-1: 8px`.
-  The `--s-1..--s-4` scale is the only source of spacing.
-- **60-30-10.** 60% neutral (the dark scrim over the live scene), 30% secondary
-  (glass panel fills, `--c-panel`), 10% accent (`--cyan`, used for the primary
-  action and the selection pill).
-- **Two typefaces, four sizes.** Orbitron Black for display, the system mono for
-  everything else; `--t-display / --t-heading / --t-body / --t-caption`.
-- **Primary action wins.** The CTA is the only element with an outer glow, is
-  last in the card so it lands in the thumb zone rather than screen centre, and
-  is the only thing that breathes.
+- **8px grid.** Every margin, padding and gap is a multiple of `--s-1..--s-4`.
+- **Two faces, never three.** Orbitron Black for the wordmark and nothing else;
+  the system UI face for everything including numerals. Numerals use
+  `font-variant-numeric: tabular-nums` for alignment — mono was tried and
+  rejected, because its slashed zero renders a score of zero as "Ø", which
+  reads as a null marker rather than a number.
+- **Six type sizes** (`--t-display / hero / readout / heading / body / label /
+  micro`) and **three tracking values** (`--ls-display / label / tight`).
+  Over-tracked uppercase at `.2em+` on every element is the single most
+  recognisable tell of a sci-fi UI built by feel; `.16em` is now reserved for
+  the wordmark alone.
+- **One glow per screen.** Glow marks the primary thing and nothing else. The
+  only exceptions are semantic — the low-mass warning glows because the glow
+  *means* "you are about to die". This was the biggest change: the stylesheet
+  previously carried 19 glow declarations, and when everything glows nothing is
+  emphasised. It now carries four, each justified.
+- **A radius scale**, so shape carries hierarchy. Exactly one element is a pill
+  (the segmented track); everything else picks a step. Previously nearly every
+  surface was a 100px pill, so shape communicated nothing.
+- **Weight carries emphasis, not glow.** `--w-body / label / strong / display`.
 
-The display size is capped at 40px, not 60: the wordmark now sits inside a
-400px card, and at eleven characters Orbitron Black overflows the card's 368px
-inner width beyond roughly 40px.
+The accessibility presets scale the **tokens**, not individual selectors. The
+large-text preset previously overrode ten elements by hand, which meant every
+new element silently opted out of it.
+
+Menu styling is scoped to `#menu`. `.layer.center` is shared with the
+game-over, pause, settings and event panels, so nothing in the menu shell may
+leak into those.
 
 Two implementation notes worth keeping:
 
@@ -82,10 +97,6 @@ Two implementation notes worth keeping:
   latin subset) with its OFL licence alongside. A Google Fonts `<link>` would
   break the offline guarantee and simply fail inside the Android wrapper, which
   has no network at all.
-
-Menu styling is scoped to `#menu`. `.layer.center` is shared with the
-game-over, pause, settings and event panels, so nothing in the menu shell may
-leak into those.
 
 ## Layout
 
@@ -104,6 +115,8 @@ store/                     Play listing assets (generated)
   feature-graphic-1024x500.png
   icon-512.png
 privacy.html               privacy policy, published via GitHub Pages
+PHYSICS_REVIEW.md          audit of every physics system vs the real relations
+RUN_DESIGN.md              what the endless run is missing, and what to add
 tools/
   make_icons.py            PWA icons (stdlib only)
   make_store_assets.py     Play feature graphic + 512 icon (needs Pillow)

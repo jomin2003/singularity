@@ -14,24 +14,51 @@
 }
 
 :root {
+  /* Colour. One accent, plus semantic states that mean something. Colour is
+     never decorative here -- if something is coloured, it is telling you
+     something. */
   --cyan: #4ff0ff;
   --violet: #9b6bff;
   --amber: #ffb057;
+  --danger: #ff6a5a;
   --bg: #05060f;
 
-  /* One display face, one body face. Never three. */
+  /* Faces. Two, and never three:
+       display -- the wordmark. Nothing else, ever.
+       ui      -- everything else, numerals included.
+     Numerals use the UI face with tabular figures rather than a mono face.
+     Mono was tried and rejected: its slashed zero renders a score of zero as
+     "Ø", which reads as a null/empty marker rather than a number. Tabular
+     figures give the alignment mono was there for, without the code-editor
+     look -- and mono was previously used for whole sentences, which is what
+     made the entire UI feel like a terminal. */
   --font-display: 'Orbitron', 'Arial Black', 'Segoe UI', sans-serif;
-  --font-body: "SF Mono", "Segoe UI Mono", "Roboto Mono", ui-monospace, monospace;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 
-  /* Type scale -- four sizes total: display / heading / body / caption.
-     The display size is capped at 40px because the title now lives INSIDE a
-     400px card: at 11 characters, Orbitron Black overflows the card's 368px
-     inner width beyond roughly 40px. A 60px display type is not achievable in
-     a card this narrow without clipping the wordmark. */
+  /* Type scale. Six steps, and nothing outside this list.
+     The display cap of 40px is not aesthetic: the wordmark is eleven
+     characters inside a 400px card and Orbitron Black overflows the 368px
+     inner width beyond roughly 40px. */
   --t-display: clamp(24px, 8.2vw, 40px);
-  --t-heading: 24px;
+  --t-hero: clamp(44px, 15vw, 64px);
+  --t-readout: 28px;
+  --t-heading: 18px;
   --t-body: 13px;
-  --t-caption: 10px;
+  --t-label: 11px;
+  --t-micro: 10px;
+
+  /* Tracking. Three values. Over-tracked uppercase at .2em+ is the single
+     most recognisable tell of a sci-fi UI built by feel rather than system;
+     .16em is now reserved for the wordmark alone. */
+  --ls-display: .16em;
+  --ls-label: .08em;
+  --ls-tight: .01em;
+
+  /* Weight carries emphasis. Glow does not. */
+  --w-body: 400;
+  --w-label: 600;
+  --w-strong: 700;
+  --w-display: 900;
 
   /* 8px grid. Every margin, padding and gap is a multiple of these. */
   --s-1: 8px;
@@ -39,13 +66,22 @@
   --s-3: 24px;
   --s-4: 32px;
 
-  --r-card: 20px;
+  /* Radius scale, so shape itself carries hierarchy. Exactly one thing in
+     the whole UI is a pill (the segmented track); everything else picks a
+     step. Previously nearly every surface was a 100px pill, which meant
+     shape communicated nothing. */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
   --r-pill: 999px;
 
-  /* 60-30-10: neutral / secondary / accent. */
-  --c-accent: rgba(79, 240, 255, 1);
+  /* Surfaces. */
   --c-panel: rgba(255, 255, 255, .05);
   --c-panel-line: rgba(255, 255, 255, .09);
+  --c-scrim: rgba(6, 9, 18, .62);
+
+  /* The one glow budget. Reserved for the primary action of a screen. */
+  --glow-accent: 0 0 24px rgba(79, 240, 255, .28);
 }
 
 html, body {
@@ -54,7 +90,8 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: #eaf6ff;
-  font-family: var(--font-body);
+  font-family: var(--font-ui);
+  font-weight: var(--w-body);
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -110,47 +147,68 @@ html, body {
 
 .hidden { display: none !important; }
 
-/* ---------- HUD ---------- */
+/* ---------- HUD ----------
+   Previously these were loose strings of glowing text floating over the
+   starfield, which is the classic "no container, add a glow" fallback. They
+   are now anchored instrument clusters: a real surface, a label, a value. */
 .hud-top {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: var(--s-2);
 }
 
-.hud-block .hud-label {
-  font-size: 10px;
-  letter-spacing: .28em;
-  color: rgba(180, 215, 245, .55);
+.hud-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-md);
+  background: var(--c-scrim);
+  border: 1px solid var(--c-panel-line);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.hud-label {
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(180, 215, 245, .62);
   margin-bottom: 2px;
 }
 
 /* BEST used to sit directly under the pause circle and was half covered in
    every screenshot. Reserve the button's column instead. */
 .hud-block.right {
+  align-items: flex-end;
   text-align: right;
   margin-right: 48px;
 }
 
 .hud-value {
-  font-size: 30px;
-  font-weight: 700;
-  letter-spacing: .04em;
+  font-family: var(--font-ui);
+  font-size: var(--t-readout);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
   color: #eaf6ff;
-  text-shadow: 0 0 18px rgba(79, 240, 255, .45);
-  line-height: 1;
+  line-height: 1.05;
   transform-origin: left center;
   display: inline-block;
 }
 
+/* Secondary readout: deliberately NOT glowing and deliberately dimmer, so
+   the eye lands on MASS first. */
 .hud-block.right .hud-value {
-  font-size: 17px;
-  color: rgba(180, 215, 245, .6);
-  text-shadow: none;
-  margin-top: 8px;
+  font-size: var(--t-body);
+  color: rgba(180, 215, 245, .62);
+  margin-top: 4px;
 }
 
-/* Low-mass warning: evaporation death used to arrive untelegraphed. */
+/* Low-mass warning. This is the one place the HUD is allowed to glow, because
+   the glow is semantic -- it means "you are about to die". */
 @keyframes heartbeat {
   0%, 100% { transform: scale(1) }
   12% { transform: scale(1.10) }
@@ -161,32 +219,34 @@ html, body {
 
 .hud-value.warn {
   color: var(--amber);
-  text-shadow: 0 0 20px rgba(255, 176, 87, .8);
+  text-shadow: 0 0 20px rgba(255, 176, 87, .75);
   animation: heartbeat 1.05s ease-in-out infinite;
 }
 
 .hud-value.crit {
-  color: #ff6a5a;
-  text-shadow: 0 0 26px rgba(255, 90, 70, .9);
+  color: var(--danger);
+  text-shadow: 0 0 26px rgba(255, 90, 70, .85);
   animation: heartbeat .7s ease-in-out infinite;
 }
 
 /* Shield / era / control chips under MASS. */
 #chips {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
   flex-wrap: wrap;
 }
 
 .chip {
-  font-size: 9px;
-  letter-spacing: .18em;
-  padding: 3px 7px;
-  border-radius: 100px;
-  border: 1px solid rgba(150, 200, 230, .26);
-  color: rgba(190, 220, 245, .75);
-  background: rgba(8, 14, 26, .5);
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  padding: 2px var(--s-1);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--c-panel-line);
+  color: rgba(190, 220, 245, .8);
+  background: rgba(8, 14, 26, .55);
   white-space: nowrap;
 }
 
@@ -196,12 +256,15 @@ html, body {
 .hud-label.dim { color: rgba(150, 185, 215, .45); margin-top: 6px; }
 
 /* ---------- Combo ---------- */
+/* Sits below the HUD clusters. Those are now bordered panels (~83px tall
+   including the chip row) rather than bare text, so the old 74px clearance
+   would put this straight through the chips. */
 #comboWrap {
   position: absolute;
   left: 50%;
-  top: calc(env(safe-area-inset-top, 0px) + 74px);
+  top: calc(env(safe-area-inset-top, 0px) + 120px);
   transform: translateX(-50%);
-  width: 190px;
+  width: 200px;
   opacity: 0;
   transition: opacity .18s ease-out;
   text-align: center;
@@ -210,45 +273,46 @@ html, body {
 #comboWrap.on { opacity: 1; }
 
 #comboValue {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: .16em;
-  color: var(--cyan);
-  text-shadow: 0 0 16px rgba(79, 240, 255, .8);
-  margin-bottom: 6px;
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--ls-tight);
+  font-variant-numeric: tabular-nums;
+  color: #dff6ff;
+  margin-bottom: var(--s-1);
   transform-origin: center;
   display: inline-block;
 }
 
-/* Twenty pips: the bar now reads as "distance to the next shockwave". */
+/* Twenty pips: the bar reads as "distance to the next shockwave". */
 #comboBar {
   display: flex;
   gap: 2px;
-  height: 5px;
+  height: 4px;
 }
 
 #comboBar i {
   flex: 1 1 0;
-  border-radius: 1px;
-  background: rgba(120, 170, 200, .2);
+  border-radius: 2px;
+  background: rgba(120, 170, 200, .22);
   transition: background .09s linear, box-shadow .09s linear;
 }
 
 #comboBar i.on {
-  background: linear-gradient(180deg, var(--cyan), var(--violet));
-  box-shadow: 0 0 6px rgba(79, 240, 255, .55);
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(79, 240, 255, .45);
 }
 
 .icon-btn {
   position: absolute;
-  right: 20px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+  right: var(--s-3);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--s-3));
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 1px solid rgba(150, 200, 230, .22);
-  background: rgba(10, 18, 32, .55);
-  color: rgba(190, 220, 245, .8);
+  border: 1px solid var(--c-panel-line);
+  background: rgba(10, 18, 32, .6);
+  color: rgba(190, 220, 245, .82);
   font-size: 16px;
   pointer-events: auto;
   cursor: pointer;
@@ -262,7 +326,7 @@ html, body {
   font-size: var(--t-display);
   font-weight: 900;
   line-height: 1;
-  letter-spacing: .08em;
+  letter-spacing: var(--ls-display);
   margin-right: -.08em;
   background: linear-gradient(180deg, #ffffff 0%, var(--cyan) 55%, var(--violet) 100%);
   -webkit-background-clip: text;
@@ -275,34 +339,40 @@ html, body {
 }
 
 .subtitle {
-  font-size: var(--t-caption);
-  letter-spacing: .34em;
+  font-size: var(--t-label);
+  letter-spacing: var(--ls-label);
   color: rgba(170, 205, 235, .62);
   margin-top: calc(var(--s-1) * -1);
 }
 
+/* Hierarchy on this screen: the SCORE is the hero and owns the only glow.
+   "COLLAPSE" is a label and was previously competing with it -- amber, 34px
+   and glowing. Demoted to what it actually is. */
 .over-title {
-  font-size: clamp(22px, 7vw, 34px);
-  font-weight: 800;
-  letter-spacing: .3em;
+  font-family: var(--font-ui);
+  font-size: var(--t-label);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
   color: var(--amber);
-  text-shadow: 0 0 30px rgba(255, 176, 87, .45);
 }
 
 .score-big {
-  font-size: clamp(52px, 19vw, 96px);
-  font-weight: 800;
+  font-family: var(--font-ui);
+  font-size: var(--t-hero);
+  font-weight: var(--w-strong);
   line-height: 1;
+  letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
   color: #fff;
-  text-shadow: 0 0 40px rgba(79, 240, 255, .4);
+  text-shadow: var(--glow-accent);
 }
 
 .newbest {
-  font-size: 11px;
-  letter-spacing: .3em;
+  font-family: var(--font-ui);
+  font-size: var(--t-label);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
   color: var(--cyan);
-  text-shadow: 0 0 18px rgba(79, 240, 255, .7);
   animation: pulse 1.1s ease-in-out infinite;
 }
 
@@ -362,7 +432,7 @@ html, body {
   align-items: center;
   gap: var(--s-2);
   padding: var(--s-3) var(--s-2);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   background: linear-gradient(160deg, rgba(24, 34, 54, .74), rgba(9, 14, 26, .68));
   -webkit-backdrop-filter: blur(16px) saturate(120%);
   backdrop-filter: blur(16px) saturate(120%);
@@ -424,7 +494,7 @@ html, body {
   font-family: var(--font-display);
   font-weight: 900;
   font-size: var(--t-body);
-  letter-spacing: .18em;
+  letter-spacing: var(--ls-label);
   color: #04141c;
   border-radius: 16px;
   background: linear-gradient(180deg, #7ceaff 0%, #35b6e4 52%, #1a7fae 100%);
@@ -479,8 +549,8 @@ html, body {
   border: 1px solid var(--c-panel-line);
   border-radius: var(--r-pill);
   background: var(--c-panel);
-  font-size: var(--t-caption);
-  letter-spacing: .18em;
+  font-size: var(--t-label);
+  letter-spacing: var(--ls-label);
   color: rgba(200, 225, 245, .8);
 }
 
@@ -545,7 +615,7 @@ body.no-motion .segmented::before { transition: none; }
   border-radius: 0 10px 10px 0;
 }
 
-.how-row b { color: #eaf6ff; letter-spacing: .16em; font-size: var(--t-caption); }
+.how-row b { color: #eaf6ff; letter-spacing: var(--ls-label); font-size: var(--t-label); }
 
 .how-ico {
   flex: 0 0 20px;
@@ -603,9 +673,9 @@ body.no-motion .segmented::before { transition: none; }
   position: relative;
   z-index: 1;
   font-family: inherit;
-  font-size: var(--t-caption);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: .16em;
+  letter-spacing: var(--ls-label);
   padding: 10px 8px;
   background: transparent;
   border: 0;
@@ -626,13 +696,15 @@ body.no-motion .segmented::before { transition: none; }
 }
 
 .hist { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+/* Muted on purpose: this is a secondary readout in the footer, and a bright
+   cyan bar was pulling more attention than the primary action above it. */
 .hist .bar {
-  width: 24px;
-  border-radius: 4px 4px 0 0;
-  background: linear-gradient(180deg, var(--cyan), rgba(155, 107, 255, .3));
+  width: 20px;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, rgba(79, 240, 255, .48), rgba(155, 107, 255, .16));
 }
-.hist .n { font-size: var(--t-caption); color: rgba(180, 215, 245, .72); font-variant-numeric: tabular-nums; }
-.hist .d { font-size: var(--t-caption); color: rgba(150, 185, 215, .4); }
+.hist .n { font-size: var(--t-label); color: rgba(180, 215, 245, .72); font-variant-numeric: tabular-nums; }
+.hist .d { font-size: var(--t-label); color: rgba(150, 185, 215, .4); }
 
 /* renderHistory() empties the strip on a first run. Without this, its
    min-height reserves a blank 48px band in the middle of the footer. */
@@ -643,19 +715,25 @@ body.no-motion .segmented::before { transition: none; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 11px;
-  letter-spacing: .14em;
-  color: rgba(180, 215, 245, .72);
-  margin-top: 6px;
-  max-width: 330px;
+  font-family: var(--font-ui);
+  font-size: var(--t-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(180, 215, 245, .74);
+  margin-top: var(--s-1);
+  max-width: 336px;
 }
 
-.report b { color: #eaf6ff; font-variant-numeric: tabular-nums; }
+.report b {
+  font-family: var(--font-ui);
+  font-weight: var(--w-strong);
+  color: #eaf6ff;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-tight);
+}
 
 .report .cause {
   color: var(--amber);
-  letter-spacing: .24em;
-  font-weight: 700;
+  font-weight: var(--w-label);
   margin-top: 2px;
 }
 
@@ -663,55 +741,57 @@ body.no-motion .segmented::before { transition: none; }
    turns a score into "one more run". It used to inherit .hint, i.e. the
    dimmest text on the screen, which buried it. Give it its own weight. */
 #overGap {
-  font-size: 13px;
-  letter-spacing: .2em;
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
   color: #cfe6ff;
-  max-width: 340px;
+  max-width: 336px;
   margin-top: 2px;
 }
 
-/* Everything on the over-screen sits on top of the live scene, so legibility
-   must not depend on whatever happens to be behind it. Each line keeps its
-   own glow and gains a dark shadow underneath. */
+/* This screen sits over the live scene, so legibility must not depend on
+   whatever is behind it. A dark shadow for contrast -- NOT a glow. The score
+   above keeps the screen's single glow via --glow-accent. */
 #overGap,
-.report { text-shadow: 0 1px 4px rgba(0, 0, 0, .92); }
-#finalScore { text-shadow: 0 0 40px rgba(79, 240, 255, .4), 0 2px 12px rgba(0, 0, 0, .85); }
-.newbest { text-shadow: 0 0 18px rgba(79, 240, 255, .7), 0 1px 6px rgba(0, 0, 0, .9); }
+.report,
+.newbest { text-shadow: 0 1px 4px rgba(0, 0, 0, .92); }
 
 .row { display: flex; gap: var(--s-1); align-items: center; justify-content: center; }
 
 .btn {
   margin-top: var(--s-1);
-  padding: 16px 40px;
-  font-family: inherit;
+  padding: 14px 32px;
+  font-family: var(--font-ui);
   font-size: var(--t-body);
-  font-weight: 700;
-  letter-spacing: .26em;
+  font-weight: var(--w-strong);
+  letter-spacing: var(--ls-label);
   color: #041016;
   background: linear-gradient(135deg, var(--cyan), var(--violet));
   border: 0;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-md);
   cursor: pointer;
-  box-shadow: 0 8px 32px rgba(79, 240, 255, .3);
+  box-shadow: 0 6px 24px rgba(79, 240, 255, .26);
   transition: transform .12s ease-out, box-shadow .12s ease-out;
 }
 
 .btn:active {
-  transform: scale(.95);
-  box-shadow: 0 4px 16px rgba(79, 240, 255, .22);
+  transform: scale(.96);
+  box-shadow: 0 3px 12px rgba(79, 240, 255, .2);
 }
 
-.btn.small { padding: 8px 24px; font-size: var(--t-caption); }
+.btn.small { padding: 8px 24px; font-size: var(--t-label); }
 
 .hint {
-  font-size: var(--t-caption);
-  letter-spacing: .13em;
-  color: rgba(170, 205, 235, .58);
-  line-height: 1.6;
+  font-family: var(--font-ui);
+  font-size: var(--t-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(170, 205, 235, .6);
+  line-height: 1.55;
   max-width: 320px;
 }
 
-.hint.dim { color: rgba(150, 185, 215, .38); }
+.hint.dim { color: rgba(150, 185, 215, .42); }
 
 /* ---------- Toasts: a stack, not a single overwritten slot ---------- */
 #toasts {
@@ -727,15 +807,24 @@ body.no-motion .segmented::before { transition: none; }
   gap: 7px;
 }
 
+/* A toast is a notification, so it gets a surface to sit on. It used to be
+   bare glowing text, which competed with the HUD and with each other when
+   three stacked up. */
 .toast-item {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .28em;
+  font-family: var(--font-ui);
+  font-size: var(--t-label);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
   white-space: nowrap;
   color: #eaf6ff;
-  text-shadow: 0 0 22px rgba(79, 240, 255, .85);
+  padding: 6px var(--s-2);
+  border-radius: var(--r-sm);
+  background: rgba(8, 14, 26, .74);
+  border: 1px solid var(--c-panel-line);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   opacity: 0;
-  transform: translateY(-6px) scale(.95);
+  transform: translateY(-6px) scale(.96);
   transition: opacity .25s ease-out, transform .25s ease-out;
 }
 
@@ -749,8 +838,8 @@ body.no-motion .segmented::before { transition: none; }
   bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
   z-index: 11;
   text-align: left;
-  font-size: 10px;
-  letter-spacing: .22em;
+  font-size: var(--t-micro);
+  letter-spacing: var(--ls-label);
   color: rgba(160, 195, 225, .38);
   pointer-events: none;
   display: none;
@@ -791,8 +880,8 @@ body.no-motion .segmented::before { transition: none; }
 .grid2 .btn.ghost {
   min-width: 0;
   padding: 11px 4px;
-  font-size: 10px;
-  letter-spacing: .06em;
+  font-size: var(--t-micro);
+  letter-spacing: var(--ls-tight);
   white-space: normal;
   line-height: 1.3;
 }
@@ -806,9 +895,9 @@ body.no-motion .segmented::before { transition: none; }
 body.large .grid2 { grid-template-columns: 1fr; }
 
 .panel-title {
-  font-size: 17px;
+  font-size: var(--t-heading);
   font-weight: 800;
-  letter-spacing: .3em;
+  letter-spacing: var(--ls-label);
   margin-right: -.3em;
   color: var(--cyan);
   text-shadow: 0 0 24px rgba(79, 240, 255, .55);
@@ -831,8 +920,8 @@ body.large .grid2 { grid-template-columns: 1fr; }
   align-items: center;
   gap: 10px;
   width: 100%;
-  font-size: 10px;
-  letter-spacing: .2em;
+  font-size: var(--t-micro);
+  letter-spacing: var(--ls-label);
   color: rgba(180, 215, 245, .7);
 }
 
@@ -854,21 +943,26 @@ body.large .grid2 { grid-template-columns: 1fr; }
   top: calc(env(safe-area-inset-top, 0px) + 20px);
   bottom: auto;
   right: 20px;
-  font-size: 11px;
-  letter-spacing: .12em;
+  font-size: var(--t-label);
+  letter-spacing: var(--ls-tight);
 }
 
-/* ---------- Accessibility presets ---------- */
-body.large .hud-value { font-size: 38px; }
-body.large .hud-block.right .hud-value { font-size: 22px; }
-body.large .hud-label { font-size: 12px; }
-body.large .hint { font-size: 13px; max-width: 340px; }
-body.large .btn { font-size: 14px; }
-body.large .panel-title { font-size: 20px; }
-body.large #comboValue { font-size: 18px; }
-body.large .toast-item { font-size: 14px; }
-body.large .report { font-size: 13px; }
-body.large .how-row { font-size: 13px; }
+/* ---------- Accessibility presets ----------
+   The large-text preset scales the TYPE SCALE, not ten individual selectors.
+   Overriding element by element meant every new element silently opted out of
+   the preset; scaling the tokens means anything added later inherits it. */
+body.large {
+  --t-display: clamp(28px, 9.5vw, 46px);
+  --t-hero: clamp(50px, 17vw, 72px);
+  --t-readout: 34px;
+  --t-heading: 22px;
+  --t-body: 15px;
+  --t-label: 13px;
+  --t-micro: 12px;
+}
+
+/* Layout, not type -- the token scale cannot express these. */
+body.large .hint { max-width: 340px; }
 
 body.hc .hud-value,
 body.hc .hud-label,

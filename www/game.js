@@ -51,7 +51,7 @@ const IMPULSE_CAP = 1.9;   // knockback headroom, as a multiple of top speed
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b15';
+const BUILD_ID = 'b16';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
