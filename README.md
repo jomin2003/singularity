@@ -182,8 +182,8 @@ Combo is the most well-known engagement lever in arcade games (Piano Tiles
 is literally built around a rising tone per note). Here it does two jobs:
 
 1. **Score multiplier**, which makes a good run visibly distinct from a
-   mediocre one (and the score is *mass*, a number that the game keeps
-   animating upward with smooth-lerp).
+   mediocre one (the readout animates upward with smooth-lerp so a big
+   meal registers even if you never glance at the HUD).
 2. **Milestone reward at every 20**, where a shockwave vaporises nearby
    dangers. This is the "one more run" hook: you're chasing the next pulse.
 
@@ -225,22 +225,22 @@ loops calls "gentle urgency" — the thing that makes it feel alive.
 
 ### Accessibility / resilience
 
-- No external assets — fully offline after first load (service worker
-  precaches everything).
+- No external assets — fully offline (there is no network use at all; the
+  old service worker was retired — see Android wrapper notes).
 - Keyboard fallback (WASD / arrows) for desktop testing, plus a footer key
   legend on wide screens. There is no custom cursor: the hole is driven by the
   stick or the keyboard, so hiding the OS pointer would leave a desktop player
   with no pointer and nothing drawn in its place.
 - **Hazard shape, not just hue** — lethal bodies wear a closed spiked ring,
   edible ones stay smooth, so no mode depends on colour alone.
-- **COLOUR** presets: normal / deutan / protan / tritan palettes.
-- **MOTION: OFF** kills shake, camera tilt *and* the fullscreen white strobe
+- **Colour-vision** presets: normal / deuteranopia / protanopia / tritanopia.
+- **Motion off** kills shake, camera tilt *and* the fullscreen white strobe
   (the flash is the real photosensitivity risk, not the shake).
-- **TEXT: LARGE** and **CONTRAST: HIGH** presets for sunlight and low vision.
-- **MUSIC** and **SFX** have separate sliders; **HAPTICS** has three
+- **Large text** and **high contrast** presets for sunlight and low vision.
+- **Music** and **effects** have separate sliders; **haptics** has three
   strengths, because mute-everything is a blunt tool.
-- **EVENT PAUSE** stops the world the first time you meet a pulsar, a
-  wormhole or a civilisation, with a one-line explainer — the rarest content
+- **First-encounter pause** stops the world the first time you meet a pulsar,
+  a wormhole or a civilisation, with a one-line explainer — the rarest content
   in the game used to be missable mid-chaos.
 - Page Visibility pauses the audio drone.
 - All UI text is real DOM (not canvas), so screen readers can see it.

@@ -332,12 +332,16 @@ if (!died) {
 
   // Cycle the accessibility and control options, then confirm the game
   // still runs -- a mode switch that leaves stale input state would throw.
+  // Since b17 a settings row is a label plus a value slot, so the assertions
+  // read the slot rather than matching a "LABEL: VALUE" string.
   $('cbBtn').click();
-  check('settings: colour mode cycles', /COLOUR:/.test($('cbBtn').textContent),
-    $('cbBtn').textContent);
+  check('settings: colour mode cycles',
+    /Deuteranopia|Protanopia|Tritanopia|Normal/.test($('cbBtn').querySelector('.setting-val').textContent),
+    $('cbBtn').querySelector('.setting-val').textContent);
   $('ctrlBtn').click();
-  check('settings: control mode cycles', /CONTROL:/.test($('ctrlBtn').textContent),
-    $('ctrlBtn').textContent);
+  check('settings: control mode cycles',
+    /Stick|Follow|Drag/.test($('ctrlBtn').querySelector('.setting-val').textContent),
+    $('ctrlBtn').querySelector('.setting-val').textContent);
 
   $('settingsBackBtn').click();
   check('settings: BACK returns to pause',
@@ -345,14 +349,17 @@ if (!died) {
 
   // New accessibility + audio options must round-trip through Settings.
   $('textBtn').click();
-  check('settings: text size toggles', /TEXT:/.test($('textBtn').textContent),
-    $('textBtn').textContent);
+  check('settings: text size toggles',
+    $('textBtn').querySelector('.setting-val').textContent === 'Large',
+    $('textBtn').querySelector('.setting-val').textContent);
   $('contrastBtn').click();
-  check('settings: contrast toggles', /CONTRAST:/.test($('contrastBtn').textContent),
-    $('contrastBtn').textContent);
+  check('settings: contrast toggles',
+    $('contrastBtn').querySelector('.setting-val').textContent === 'On',
+    $('contrastBtn').querySelector('.setting-val').textContent);
   $('hapticBtn').click();
-  check('settings: haptics cycle', /HAPTICS:/.test($('hapticBtn').textContent),
-    $('hapticBtn').textContent);
+  check('settings: haptics cycle',
+    $('hapticBtn').querySelector('.setting-val').textContent === 'Low',
+    $('hapticBtn').querySelector('.setting-val').textContent);
   check('settings: music + sfx sliders exist', !!$('musicRange') && !!$('sfxRange'));
   $('textBtn').click();
   $('contrastBtn').click();
@@ -413,7 +420,7 @@ check('death: final score carried into game-over', num('finalScore') > 0,
 check('death: run report card filled in',
   $('report').children.length >= 2, $('report').textContent.trim().slice(0, 48));
 check('death: near-miss line present',
-  /BEST/.test($('overGap').textContent), $('overGap').textContent);
+  /best/i.test($('overGap').textContent), $('overGap').textContent);
 
 /* ---- 6. restart ---- */
 // The game-over screen holds input for ~0.8s so one stray tap cannot wipe the

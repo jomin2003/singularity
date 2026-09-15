@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=b16">
+<link rel="stylesheet" href="style.css?v=b17">
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -20,7 +20,7 @@
 <div id="hud" class="layer hidden">
   <div class="hud-top">
     <div class="hud-block">
-      <div class="hud-label">MASS</div>
+      <div class="hud-label">SCORE</div>
       <div class="hud-value" id="hudScore">0</div>
       <div id="chips"></div>
     </div>
@@ -36,8 +36,23 @@
     <div id="comboValue"></div>
     <div id="comboBar"></div>
   </div>
-  <button id="pauseBtn" class="icon-btn pause-btn" aria-label="Pause">&#10074;&#10074;</button>
-  <button id="muteBtn" class="icon-btn" aria-label="Toggle sound">&#9834;</button>
+  <!-- Icons are the same inline-SVG set as the settings gear, same stroke
+       weight, because text glyphs (&#10074;&#10074;, &#9834;) render with the
+       metrics of whatever font the WebView falls back to. -->
+  <button id="pauseBtn" class="icon-btn pause-btn" aria-label="Pause">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M8.4 5.8v12.4M15.6 5.8v12.4" fill="none" stroke="currentColor"
+            stroke-width="2.6" stroke-linecap="round"/>
+    </svg>
+  </button>
+  <button id="muteBtn" class="icon-btn" aria-label="Mute sound" aria-pressed="false">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4.6 9.6v4.8h3.5l4.4 3.7V5.9L8.1 9.6H4.6Z" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linejoin="round"/>
+      <path d="M15.7 9.3a3.9 3.9 0 0 1 0 5.4M18.1 7.1a7 7 0 0 1 0 9.8" fill="none"
+            stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  </button>
 </div>
 
 <div id="keysLegend" class="hidden">WASD / ARROWS &nbsp;&middot;&nbsp; SPACE START &nbsp;&middot;&nbsp; P PAUSE &nbsp;&middot;&nbsp; M MUTE</div>
@@ -104,7 +119,7 @@
 
     <!-- Primary action sits last in the card so it lands in the thumb zone
          rather than dead centre of the screen. -->
-    <button id="playBtn" class="btn cta">TAP TO BEGIN</button>
+    <button id="playBtn" class="btn cta">BEGIN</button>
 
     <div class="menu-foot">
       <div class="foot-chip">
@@ -136,14 +151,14 @@
     <button id="shareBtn" class="btn ghost">SHARE</button>
   </div>
   <button id="overHomeBtn" class="btn ghost">HOME</button>
-  <div class="hint dim">or tap anywhere</div>
+  <div class="hint dim">tap anywhere to run again</div>
 </div>
 
 <div id="pause" class="layer center overlay hidden">
   <div class="panel">
     <div class="panel-title">PAUSED</div>
     <div class="hint dim" id="pauseScore"></div>
-    <button id="resumeBtn" class="btn">PLAY</button>
+    <button id="resumeBtn" class="btn">RESUME</button>
     <button id="restartBtn" class="btn ghost">RESTART</button>
     <button id="settingsBtn" class="btn ghost">SETTINGS</button>
     <button id="homeBtn" class="btn ghost">HOME</button>
@@ -153,19 +168,48 @@
 <div id="settings" class="layer center overlay hidden">
   <div class="panel">
     <div class="panel-title">SETTINGS</div>
-    <button id="soundBtn" class="btn ghost wide">SOUND: ON</button>
-    <div class="slider-row wide"><span>MUSIC</span><input id="musicRange" type="range" min="0" max="100" step="5" aria-label="Music volume"><span class="val" id="musicVal">70%</span></div>
-    <div class="slider-row wide"><span>SFX</span><input id="sfxRange" type="range" min="0" max="100" step="5" aria-label="Effects volume"><span class="val" id="sfxVal">85%</span></div>
-    <!-- Two columns so BACK never falls off the bottom of a short screen. -->
-    <div class="grid2">
-      <button id="hapticBtn" class="btn ghost">HAPTICS: OFF</button>
-      <button id="motionBtn" class="btn ghost">MOTION: ON</button>
-      <button id="cbBtn" class="btn ghost">COLOUR: NORMAL</button>
-      <button id="ctrlBtn" class="btn ghost">CONTROL: STICK</button>
-      <button id="textBtn" class="btn ghost">TEXT: NORMAL</button>
-      <button id="contrastBtn" class="btn ghost">CONTRAST: OFF</button>
-      <button id="threatBtn" class="btn ghost">THREAT: OFF</button>
-      <button id="eventBtn" class="btn ghost">EVENT PAUSE: ON</button>
+    <!-- One control per row: the setting is a label, its value sits in its own
+         right-aligned slot. Boolean rows carry aria-pressed so the state is
+         exposed to assistive tech as well as spelled out. -->
+    <div class="settings-list">
+      <button id="soundBtn" class="setting wide" type="button" aria-pressed="true">
+        <span class="setting-name">Sound</span>
+        <span class="setting-val">On</span>
+      </button>
+      <div class="slider-row wide"><span class="setting-name">Music</span><input id="musicRange" type="range" min="0" max="100" step="5" aria-label="Music volume"><span class="val" id="musicVal">70%</span></div>
+      <div class="slider-row wide"><span class="setting-name">Effects</span><input id="sfxRange" type="range" min="0" max="100" step="5" aria-label="Effects volume"><span class="val" id="sfxVal">85%</span></div>
+      <button id="hapticBtn" class="setting wide" type="button">
+        <span class="setting-name">Haptics</span>
+        <span class="setting-val">Off</span>
+      </button>
+      <button id="motionBtn" class="setting wide" type="button" aria-pressed="true">
+        <span class="setting-name">Motion</span>
+        <span class="setting-val">On</span>
+      </button>
+      <button id="cbBtn" class="setting wide" type="button">
+        <span class="setting-name">Colour vision</span>
+        <span class="setting-val">Normal</span>
+      </button>
+      <button id="ctrlBtn" class="setting wide" type="button">
+        <span class="setting-name">Control</span>
+        <span class="setting-val">Stick</span>
+      </button>
+      <button id="textBtn" class="setting wide" type="button">
+        <span class="setting-name">Text size</span>
+        <span class="setting-val">Normal</span>
+      </button>
+      <button id="contrastBtn" class="setting wide" type="button" aria-pressed="false">
+        <span class="setting-name">High contrast</span>
+        <span class="setting-val">Off</span>
+      </button>
+      <button id="threatBtn" class="setting wide" type="button" aria-pressed="false">
+        <span class="setting-name">Threat readout</span>
+        <span class="setting-val">Off</span>
+      </button>
+      <button id="eventBtn" class="setting wide" type="button" aria-pressed="true">
+        <span class="setting-name">First-encounter pause</span>
+        <span class="setting-val">On</span>
+      </button>
     </div>
     <button id="settingsBackBtn" class="btn wide">BACK</button>
   </div>
@@ -182,6 +226,6 @@
 <div id="toasts"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="game.js?v=b16"></script>
+<script src="game.js?v=b17"></script>
 </body>
 </html>

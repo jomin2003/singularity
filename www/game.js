@@ -48,10 +48,15 @@ const SPACE_DRAG = 1.70;   // velocity bleed at the starting mass
 const DRIFT_EXP = 0.45;    // how much more a big hole coasts and lags
 const IMPULSE_CAP = 1.9;   // knockback headroom, as a multiple of top speed
 
+// How far ahead of the hole the camera leads, in seconds of travel. Small on
+// purpose: enough to open up the space you are moving into rather than the
+// space you just left, without making the hole feel detached from the camera.
+const CAM_LEAD = 0.18;
+
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b16';
+const BUILD_ID = 'b17';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -303,7 +308,7 @@ function pushHistory(s, when) {
 
 /* ---------- haptics ---------- */
 const HAPTIC_ORDER = ['off', 'low', 'med', 'high'];
-const HAPTIC_LABEL = { off: 'OFF', low: 'LOW', med: 'MED', high: 'HIGH' };
+const HAPTIC_LABEL = { off: 'Off', low: 'Low', med: 'Medium', high: 'High' };
 const HAPTIC_SCALE = { off: 0, low: 0.45, med: 1, high: 1.7 };
 let haptics = lsGet('haptic', 'off');
 if (HAPTIC_ORDER.indexOf(haptics) < 0) haptics = 'off';
@@ -376,15 +381,44 @@ const Snd = {
     if (this.sfxBus) this.sfxBus.gain.setTargetAtTime(this.sfxVol, this.ac.currentTime, 0.05);
   },
 
-  tone(freq, type, peak, attack, decay) {
+  // Two oscillators a few cents apart rather than one. A single oscillator is
+  // a pure mathematical waveform, and that is precisely why one sounds
+  // synthetic; the slight detune produces the slow beating that makes it read
+  // as an instrument instead. The drone already did this (55 and 55.7 Hz
+  // sawtooths) -- the eat blip, which is the sound you hear most, did not.
+  tone(freq, type, peak, attack, decay, detuneCents) {
     const ac = this.ac, t = ac.currentTime;
-    const o = ac.createOscillator(); o.type = type; o.frequency.value = freq;
     const g = ac.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(peak, t + attack);
+    // Two voices sum, so trim the peak to keep the perceived level steady.
+    g.gain.linearRampToValueAtTime(peak * 0.62, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
-    o.connect(g); g.connect(this.sfxBus);
-    o.start(t); o.stop(t + decay + 0.02);
+    g.connect(this.sfxBus);
+    const cents = (detuneCents === undefined) ? 8 : detuneCents;
+    for (let i = 0; i < 2; i++) {
+      const o = ac.createOscillator();
+      o.type = type;
+      o.frequency.value = freq;
+      o.detune.value = i === 0 ? -cents : cents;
+      o.connect(g);
+      o.start(t); o.stop(t + decay + 0.02);
+    }
+  },
+
+  // A very short filtered noise click. The transient is most of what makes a
+  // sound feel physical rather than synthesised -- a note that starts at full
+  // volume with no attack noise reads as a beep.
+  tick(freq, q, peak, decay) {
+    if (!this.ac || this.muted || !this.noise) return;
+    const ac = this.ac, t = ac.currentTime;
+    const s = ac.createBufferSource(); s.buffer = this.noise;
+    const f = ac.createBiquadFilter(); f.type = 'bandpass';
+    f.frequency.value = freq; f.Q.value = q;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(peak, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+    s.connect(f); f.connect(g); g.connect(this.sfxBus);
+    s.start(t); s.stop(t + decay + 0.02);
   },
 
   // rising pentatonic blip — the main dopamine lever
@@ -392,7 +426,11 @@ const Snd = {
     if (!this.ac || this.muted) return;
     const SCALE = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22, 24, 27, 29, 31, 34, 36];
     const semi = SCALE[Math.min(step, SCALE.length - 1)];
-    this.tone(196 * Math.pow(2, semi / 12), 'triangle', 0.20, 0.008, 0.20);
+    const f = 196 * Math.pow(2, semi / 12);
+    // Slight per-note detune so a fast chain of eats does not sound like the
+    // same sample retriggered.
+    this.tone(f, 'triangle', 0.19, 0.008, 0.20, 6 + Math.random() * 8);
+    this.tick(f * 6, 1.4, 0.045, 0.03);
   },
 
   // short filtered noise — rock breaking apart
@@ -413,15 +451,22 @@ const Snd = {
   nova() {
     if (!this.ac || this.muted) return;
     const ac = this.ac, t = ac.currentTime;
-    const o = ac.createOscillator(); o.type = 'sine';
-    o.frequency.setValueAtTime(180, t);
-    o.frequency.exponentialRampToValueAtTime(1500, t + 0.5);
     const g = ac.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.34, t + 0.03);
+    g.gain.linearRampToValueAtTime(0.34 * 0.62, t + 0.03);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
-    o.connect(g); g.connect(this.sfxBus);
-    o.start(t); o.stop(t + 0.72);
+    g.connect(this.sfxBus);
+    // Two detuned sweepers plus a noise swell. A single sine sweep is the
+    // classic placeholder laser; the second voice and the noise give it mass.
+    for (let i = 0; i < 2; i++) {
+      const o = ac.createOscillator(); o.type = 'sine';
+      o.detune.value = i === 0 ? -14 : 14;
+      o.frequency.setValueAtTime(180, t);
+      o.frequency.exponentialRampToValueAtTime(1500, t + 0.5);
+      o.connect(g);
+      o.start(t); o.stop(t + 0.72);
+    }
+    this.tick(900, 0.7, 0.13, 0.45);
     this.boom();
   },
 
@@ -532,6 +577,19 @@ const PLANET_PAL = {
   // A rogue planet has no star. It should be cold, dark and barely lit --
   // not a purple world basking in a nonexistent sun.
   rogue:   { hi: '#4c4c55', mid: '#2c2c35', lo: '#101015', spot: '#23232b' }
+};
+
+// Which bodies actually have an atmosphere, and the colour its limb glow takes.
+// A rocky or barren world has no air, so it gets none -- that contrast is the
+// point. The halo is what separates "a lit sphere" from "a sphere in space".
+const ATMO_TYPES = {
+  ocean:   'rgba(120,190,255,0.16)',
+  ice:     'rgba(200,235,255,0.13)',
+  desert:  'rgba(255,190,140,0.10)',
+  giant:   'rgba(255,215,170,0.12)',
+  uranus:  'rgba(190,245,240,0.13)',
+  neptune: 'rgba(120,160,255,0.14)',
+  lava:    'rgba(255,130,60,0.10)'
 };
 
 // Real main-sequence spectral classes with their true colours and their
@@ -861,7 +919,55 @@ function drawPlanet(g, rnd, type) {
     craters(g, rnd, 9 + ((rnd() * 7) | 0), SPR_R * 0.12);
     blobs(g, rnd, pal.hi, 6, 3, 10, 0.28);
   }
+
+  // ---- Shading, applied over the surface detail ------------------------
+  // A planet used to be a flat vertical gradient clipped to a circle, which
+  // reads as a sticker rather than a sphere. Three cheap passes fix it.
+
+  // 1. Limb darkening. A real disc is darker at its edge, because at a grazing
+  // angle you are looking through more atmosphere and less surface.
+  const limb = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.52, SPR_R, SPR_R, SPR_R);
+  limb.addColorStop(0.00, 'rgba(0,0,0,0)');
+  limb.addColorStop(0.74, 'rgba(0,0,0,0.10)');
+  limb.addColorStop(1.00, 'rgba(0,0,0,0.40)');
+  g.fillStyle = limb;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+
+  // 2. A lit rim on the sunward limb. Painted as a full ring here and then
+  // half-eaten by the terminator below, which leaves only the lit side bright.
+  g.globalCompositeOperation = 'lighter';
+  const rim = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.87, SPR_R, SPR_R, SPR_R);
+  rim.addColorStop(0.00, 'rgba(255,255,255,0)');
+  rim.addColorStop(1.00, 'rgba(255,252,244,0.20)');
+  g.fillStyle = rim;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+
+  // 3. Terminator -- the day/night line. The scene light is fixed, so the
+  // shadowed hemisphere is always the lower-right. This is the single change
+  // that makes the bodies look like they are being lit by something.
+  const lx = SPR_R - LIGHT.x * SPR_R * 1.6;
+  const ly = SPR_R - LIGHT.y * SPR_R * 1.6;
+  const term = g.createLinearGradient(lx, ly, SPR_R * 2 - lx, SPR_R * 2 - ly);
+  term.addColorStop(0.00, 'rgba(0,0,0,0)');
+  term.addColorStop(0.42, 'rgba(0,0,0,0.05)');
+  term.addColorStop(1.00, 'rgba(2,4,10,0.46)');
+  g.fillStyle = term;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+
   g.restore();
+
+  // 4. Atmospheric halo, outside the clip so it can bleed past the limb. Only
+  // bodies that actually have an atmosphere get one.
+  if (ATMO_TYPES[type]) {
+    g.globalCompositeOperation = 'lighter';
+    const at = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.94, SPR_R, SPR_R, SPR_R * 1.20);
+    at.addColorStop(0.00, ATMO_TYPES[type]);
+    at.addColorStop(1.00, 'rgba(0,0,0,0)');
+    g.fillStyle = at;
+    g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 1.20, 0, TAU); g.fill();
+    g.globalCompositeOperation = 'source-over';
+  }
 }
 
 // A pulsar — a rapidly rotating neutron star with two crossing emission
@@ -1201,26 +1307,85 @@ function glowSprite(hue) {
 }
 
 let starLayers = [];
+// Stellar spectral classes, weighted roughly the way a real field is weighted:
+// the sky is dominated by cool K/M dwarfs, with hot blue stars rare. The old
+// field painted every star the same rgba(198,228,255) -- one colour across
+// three layers and fifty-eight stars, which is a large part of why it read as
+// a texture rather than a sky.
+const STAR_CLASSES = [
+  { c: [155, 176, 255], w: 3,  lum: 1.00 },   // O/B  blue-white, rare, bright
+  { c: [170, 191, 255], w: 6,  lum: 0.90 },   // A
+  { c: [202, 215, 255], w: 10, lum: 0.80 },   // F
+  { c: [255, 244, 234], w: 16, lum: 0.70 },   // G    sun-like
+  { c: [255, 210, 161], w: 26, lum: 0.56 },   // K    orange
+  { c: [255, 181, 107], w: 39, lum: 0.44 }    // M    red, common, dim
+];
+const STAR_W_TOTAL = STAR_CLASSES.reduce((s, k) => s + k.w, 0);
+
+function pickStarClass(r) {
+  let t = r * STAR_W_TOTAL;
+  for (const k of STAR_CLASSES) { t -= k.w; if (t <= 0) return k; }
+  return STAR_CLASSES[STAR_CLASSES.length - 1];
+}
+
+// One star, plus its four-point diffraction cross if it is bright enough.
+// Spikes are what make a bright star read as BRIGHT rather than merely large.
+function paintStar(g, x, y, r, a, col, spike) {
+  g.fillStyle = 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + a.toFixed(3) + ')';
+  g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+  if (!spike) return;
+  const L = r * 7;
+  const lg = g.createLinearGradient(x - L, y, x + L, y);
+  lg.addColorStop(0.00, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
+  lg.addColorStop(0.50, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (a * 0.5).toFixed(3) + ')');
+  lg.addColorStop(1.00, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
+  g.fillStyle = lg;
+  g.fillRect(x - L, y - r * 0.16, L * 2, r * 0.32);
+  const lg2 = g.createLinearGradient(x, y - L, x, y + L);
+  lg2.addColorStop(0.00, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
+  lg2.addColorStop(0.50, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (a * 0.5).toFixed(3) + ')');
+  lg2.addColorStop(1.00, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
+  g.fillStyle = lg2;
+  g.fillRect(x - r * 0.16, y - L, r * 0.32, L * 2);
+}
+
 function buildStars() {
   starLayers = [
-    { tile: 180, par: 0.16, n: 30, maxR: 0.9, a: 0.30 },
-    { tile: 250, par: 0.42, n: 18, maxR: 1.3, a: 0.45 },
-    { tile: 340, par: 0.80, n: 10, maxR: 2.0, a: 0.62 }
+    { tile: 220, par: 0.12, n: 58, maxR: 0.70, a: 0.26, hero: 1 },
+    { tile: 320, par: 0.30, n: 44, maxR: 1.00, a: 0.36, hero: 1 },
+    { tile: 440, par: 0.54, n: 30, maxR: 1.40, a: 0.48, hero: 2 },
+    { tile: 600, par: 0.80, n: 20, maxR: 1.85, a: 0.60, hero: 3 },
+    { tile: 780, par: 1.06, n: 13, maxR: 2.40, a: 0.76, hero: 4 }
   ].map((cfg) => {
     const px = Math.round(cfg.tile * DPR);
     const c = document.createElement('canvas');
     c.width = c.height = px;
     const g = c.getContext('2d');
+
     for (let i = 0; i < cfg.n; i++) {
       const x = Math.random() * px, y = Math.random() * px;
-      const r = (Math.random() * cfg.maxR + 0.35) * DPR;
-      const a = Math.random() * cfg.a + 0.22;
-      g.fillStyle = `rgba(198,228,255,${a})`;
-      g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+      const cls = pickStarClass(Math.random());
+      // Luminosity drives size: hot stars are both brighter and larger, which
+      // is what makes a real field read as having depth rather than being
+      // scattered confetti.
+      const r = (Math.random() * cfg.maxR * cls.lum + 0.32) * DPR;
+      const a = Math.min(1, (Math.random() * 0.5 + 0.5) * cfg.a * (0.55 + cls.lum * 0.65));
+      const spike = i < cfg.hero && cls.lum > 0.55;
+
+      // Draw at nine offsets so a star crossing a tile edge reappears on the
+      // far side. Without this the tile has hard seams where stars are sliced
+      // in half -- which, with a 180px tile, was half of why the field read as
+      // a repeating pattern rather than a sky.
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oy = -1; oy <= 1; oy++) {
+          paintStar(g, x + ox * px, y + oy * px, r, a, cls.c, spike);
+        }
+      }
     }
     return Object.assign({}, cfg, { pattern: ctx.createPattern(c, 'repeat') });
   });
 }
+
 
 let vignette = null;
 function buildVignette() {
@@ -1230,14 +1395,20 @@ function buildVignette() {
   vignette = g;
 }
 
-let nebula = null, nebulaHue = -999;
-function getNebula(hue) {
-  if (Math.abs(hue - nebulaHue) < 3) return nebula;
+let nebula = null, nebulaHue = -999, nebulaHeat = -1;
+// The nebula already shifted HUE per era, but hue alone is a rotation, not a
+// progression. Saturation and lightness now climb with it, so the sky goes
+// from cold and thin to hot and dense across a run -- the palette carries the
+// same arc as the mass.
+function getNebula(hue, heat) {
+  if (Math.abs(hue - nebulaHue) < 3 && Math.abs(heat - nebulaHeat) < 0.02) return nebula;
+  const sat = 44 + heat * 26;
+  const li = 6 + heat * 5;
   const g = ctx.createRadialGradient(W * 0.5, H * 0.42, 0, W * 0.5, H * 0.42, Math.max(W, H) * 0.85);
-  g.addColorStop(0.00, `hsl(${hue}, 60%, 9%)`);
-  g.addColorStop(0.45, `hsl(${(hue + 28) % 360}, 56%, 6%)`);
-  g.addColorStop(1.00, `hsl(${(hue + 52) % 360}, 50%, 3%)`);
-  nebula = g; nebulaHue = hue;
+  g.addColorStop(0.00, `hsl(${hue}, ${sat.toFixed(0)}%, ${(li + 3).toFixed(1)}%)`);
+  g.addColorStop(0.45, `hsl(${(hue + 28) % 360}, ${(sat - 4).toFixed(0)}%, ${li.toFixed(1)}%)`);
+  g.addColorStop(1.00, `hsl(${(hue + 52) % 360}, ${(sat - 10).toFixed(0)}%, ${Math.max(2, li - 3).toFixed(1)}%)`);
+  nebula = g; nebulaHue = hue; nebulaHeat = heat;
   return g;
 }
 
@@ -1250,6 +1421,7 @@ function resize() {
   buildStars();
   buildVignette();
   nebulaHue = -999;
+  nebulaHeat = -1;
   layoutStick();
 }
 
@@ -1305,7 +1477,7 @@ const CB_PALETTES = {
   tritan: { e0: 300, e1: 332, l0: 150, l1: 168 }
 };
 const CB_ORDER = ['normal', 'deutan', 'protan', 'tritan'];
-const CB_LABEL = { normal: 'NORMAL', deutan: 'DEUTAN', protan: 'PROTAN', tritan: 'TRITAN' };
+const CB_LABEL = { normal: 'Normal', deutan: 'Deuteranopia', protan: 'Protanopia', tritan: 'Tritanopia' };
 let cbMode = lsGet('cb', 'normal');
 if (!CB_PALETTES[cbMode]) cbMode = 'normal';
 
@@ -1513,7 +1685,13 @@ function absorbFx(e) {
   }
 }
 
-function burstFx(x, y, n, spread, scale) {
+// Spark burst. `hue` should be the colour of whatever produced it -- the old
+// version used rand(180,300) unconditionally, so eating a red giant and eating
+// an ice world threw identical cyan-magenta sparks and the feedback actively
+// misreported what had happened. Callers pass entHue(...) for bodies; the
+// default is the player's own accent.
+function burstFx(x, y, n, spread, scale, hue) {
+  const base = (hue === undefined) ? 196 : hue;
   for (let i = 0; i < n; i++) {
     const a = Math.random() * TAU;
     const sp = rand(0.6, 2.4) * (spread || p.r) * 1.4 * (scale || 1);
@@ -1521,13 +1699,18 @@ function burstFx(x, y, n, spread, scale) {
       x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
       life: 0, max: rand(0.35, 0.9),
       r: rand(0.08, 0.26) * p.r + 1,
-      hue: rand(180, 300), mode: 1
+      // Scatter so the burst is not flat, but stay anchored to the source.
+      hue: base + rand(-18, 18), mode: 1
     });
   }
 }
 
-const ERAS = ['NEBULA', 'PROTOSTAR', 'MAIN SEQUENCE', 'RED GIANT',
-              'SUPERNOVA', 'QUASAR', 'SINGULARITY'];
+// Eras are thresholds of score, announced with a toast and a wave. The names
+// are the mass classes of a growing hole, ending in the active-galactic-nucleus
+// phases -- a black hole has no main sequence or red giant phase, that is a
+// star's life, and the fiction should survive a player who knows astronomy.
+const ERAS = ['NEBULA', 'STELLAR', 'INTERMEDIATE', 'SUPERMASSIVE',
+              'QUASAR', 'BLAZAR', 'SINGULARITY'];
 
 // Human names for the run report card ("BIGGEST MEAL +320 (ice giant)").
 const BODY_NAME = {
@@ -1558,7 +1741,15 @@ const CAUSE = {
 // Scripted hints, run 1 only. One static line never taught anybody anything.
 //   0 -> shortly after the run starts   1 -> after the first meal
 //   2 -> the first time a combo of 5 lands
-const COACH = ['PUSH THE STICK TO MOVE', 'CHAIN EATS TO BUILD COMBO', 'COMBO 20 = SHOCKWAVE'];
+// Voice. Two registers, and a string must be one or the other:
+//   SHOUT  -- proper-noun events and milestones (era names, death causes,
+//             STAR CONSUMED). All caps.
+//   SAY    -- anything the game explains to the player. Sentence case, with
+//             the explanation after an em dash when a headline needs one.
+// The old copy shouted everything, which is the single most recognisable
+// tell of sci-fi UI written by feel.
+const COACH = ['Push the stick to move', 'Chain eats to build a combo',
+               'Every 20th combo fires a shockwave'];
 
 /* ---------- toasts ---------- */
 // A single slot meant era-up, KILONOVA and STAR CONSUMED clobbered each
@@ -1650,11 +1841,11 @@ function consume(e, idx) {
 
   if (wasStar) {
     supernova(e.x, e.y, e.r);
-    toast('STAR CONSUMED  +' + fmt(gained));
+    toast('STAR CONSUMED +' + fmt(gained));
   } else if (wasPulsar) {
     shield = 1;
-    toast('PULSAR ABSORBED - next impact shielded', 2.2);
-    burstFx(e.x, e.y, 24, e.r, 1.4);
+    toast('PULSAR ABSORBED — your next impact is shielded', 2.2);
+    burstFx(e.x, e.y, 24, e.r, 1.4, 205);
   } else if (wasWormhole) {
     // Teleport along the stored pair vector. Move the player AND the camera
     // so the world scrolls instead of jumping under the finger.
@@ -1662,8 +1853,8 @@ function consume(e, idx) {
     const ty = Math.sin(e.pairAng) * e.pairDist;
     p.x += tx; p.y += ty;
     cam.x += tx; cam.y += ty;
-    burstFx(e.x, e.y, 30, e.r, 1);
-    burstFx(p.x, p.y, 18, p.r * 0.6, 0.8);
+    burstFx(e.x, e.y, 30, e.r, 1, 286);
+    burstFx(p.x, p.y, 18, p.r * 0.6, 0.8, 286);
     toast('WORMHOLE');
   } else if (type === 'magnetar') {
     // A starquake: the crust cracks and releases a burst that clears the
@@ -1673,7 +1864,7 @@ function consume(e, idx) {
       const o = ents[i];
       const ddx = o.x - p.x, ddy = o.y - p.y;
       if (ddx * ddx + ddy * ddy < R * R && o.r > p.r * 0.95) {
-        burstFx(o.x, o.y, 8, o.r, 1);
+        burstFx(o.x, o.y, 8, o.r, 1, 268);
         ents.splice(i, 1);
       }
     }
@@ -1682,13 +1873,13 @@ function consume(e, idx) {
     toast('MAGNETAR STARQUAKE');
     Snd.boom();
   } else if (type === 'ark') {
-    toast('ARK CONSUMED  +' + fmt(gained), 1.8);
-    burstFx(e.x, e.y, 26, e.r, 1.2);
+    toast('ARK CONSUMED +' + fmt(gained), 1.8);
+    burstFx(e.x, e.y, 26, e.r, 1.2, entHue(e.r / p.r));
   } else if (combo % 20 === 0) {
     pendingWave = true;
   }
   // Big things break apart visibly instead of just vanishing.
-  if (e.r > p.r * 0.55) burstFx(e.x, e.y, 14, e.r, 0.8);
+  if (e.r > p.r * 0.55) burstFx(e.x, e.y, 14, e.r, 0.8, entHue(e.r / p.r));
 }
 
 function supernova(x, y, r) {
@@ -1699,11 +1890,11 @@ function supernova(x, y, r) {
     const dx = e.x - x, dy = e.y - y;
     if (dx * dx + dy * dy < R * R && e.r > p.r * 0.95) {
       score += Math.round(e.r * 0.5 * comboMult());
-      burstFx(e.x, e.y, 10, e.r, 1);
+      burstFx(e.x, e.y, 10, e.r, 1, entHue(e.r / p.r));
       ents.splice(i, 1);
     }
   }
-  burstFx(x, y, 46, r * 1.6, 1.4);
+  burstFx(x, y, 46, r * 1.6, 1.4, 196);
   shakeMag = Math.max(shakeMag, 26);
   flashT = Math.max(flashT, 0.34);
   Snd.nova();
@@ -1715,7 +1906,7 @@ function hurt(e) {
     shield = 0;
     toast('PULSAR SHIELD', 1.4);
     if (Snd.ac) Snd.tone(520, 'sine', 0.18, 0.005, 0.16);
-    burstFx(p.x, p.y, 22, p.r * 0.5, 1.2);
+    burstFx(p.x, p.y, 22, p.r * 0.5, 1.2, 196);
     return;
   }
   const type = e.body && e.body.type;
@@ -1749,9 +1940,9 @@ function hurt(e) {
   if (runStats) runStats.cause = prof.msg || CAUSE[type] || 'CRUSHED';
   buzz(60);
 
-  if (prof.burn) burstFx(e.x, e.y, 36, e.r * 0.8, 1.2);
-  else if (prof.gas) burstFx(e.x, e.y, 30, e.r * 0.9, 1.1);
-  else burstFx(p.x, p.y, 26, p.r, 1);
+  if (prof.burn) burstFx(e.x, e.y, 36, e.r * 0.8, 1.2, entHue(e.r / p.r));
+  else if (prof.gas) burstFx(e.x, e.y, 30, e.r * 0.9, 1.1, entHue(e.r / p.r));
+  else burstFx(p.x, p.y, 26, p.r, 1, 8);
 
   Snd.thud();
   Snd.setDrone(true, 0);
@@ -1766,7 +1957,7 @@ function shockwave() {
     const dx = e.x - p.x, dy = e.y - p.y;
     if (dx * dx + dy * dy < R * R && e.r > p.r * 0.95) {
       score += Math.round(e.r * 0.5 * comboMult());
-      burstFx(e.x, e.y, 10, e.r, 1);
+      burstFx(e.x, e.y, 10, e.r, 1, entHue(e.r / p.r));
       ents.splice(i, 1);
     }
   }
@@ -1806,7 +1997,7 @@ function die() {
   Snd.setDrone(false, 0);
   shakeMag = Math.max(shakeMag, 28);
   flashT = Math.max(flashT, 0.25);
-  burstFx(p.x, p.y, 70, p.r, 1.6);
+  burstFx(p.x, p.y, 70, p.r, 1.6, 8);
   buzz(180);
 
   // Attribute the death. A hit inside the last half second is what killed
@@ -1825,8 +2016,8 @@ function die() {
   el.finalScore.textContent = fmt(score);
   el.newBest.classList.toggle('hidden', !newBest);
   el.overBest.textContent = newBest
-    ? 'NEW BEST BY ' + fmt(score - prevBest)
-    : fmt(Math.max(0, best - score)) + ' AWAY FROM BEST';
+    ? 'New best by ' + fmt(score - prevBest)
+    : fmt(Math.max(0, best - score)) + ' away from your best';
   renderReport();
   show(el.over);
   overGuardT = 0.8;      // one stray tap must not wipe the score you're reading
@@ -1922,13 +2113,13 @@ function update(dt) {
         const ddx = o.x - p.x, ddy = o.y - p.y;
         if (ddx * ddx + ddy * ddy < R * R && o.r > p.r * 0.95) {
           score += Math.round(o.r * 0.6 * comboMult());
-          burstFx(o.x, o.y, 10, o.r, 1);
+          burstFx(o.x, o.y, 10, o.r, 1, entHue(o.r / p.r));
           ents.splice(i, 1);
         }
       }
       flashT = Math.max(flashT, 0.45);
       shakeMag = Math.max(shakeMag, 18);
-      toast('KILONOVA - heavy elements forged', 2.4);
+      toast('KILONOVA — heavy elements forged', 2.4);
       Snd.boom();
     }
   }
@@ -1954,8 +2145,8 @@ function update(dt) {
   // quick moves and the player was drawn in the corner with the whole field
   // off-screen, which read as "the game is empty". 0.35 is snappy without
   // being jittery at 60 fps.
-  cam.x = lerp(cam.x, p.x, 0.35);
-  cam.y = lerp(cam.y, p.y, 0.35);
+  cam.x = lerp(cam.x, p.x + p.vx * CAM_LEAD, 0.35);
+  cam.y = lerp(cam.y, p.y + p.vy * CAM_LEAD, 0.35);
 
   if (state === 'play') {
     // ---- Movement: thrust and inertia, not "seek a point" ---------------
@@ -2162,7 +2353,7 @@ function updateEnts(dt) {
       if (e.pulseT <= 0) {
         e.pulseT = e.beatMax;
         waves.push({ x: e.x, y: e.y, r: e.r * 0.6, max: e.r * 9, t: 0, hue: 210 });
-        burstFx(e.x, e.y, 6, e.r * 0.5, 0.5);
+        burstFx(e.x, e.y, 6, e.r * 0.5, 0.5, entHue(e.r / p.r));
       }
     }
 
@@ -2282,7 +2473,7 @@ function updateSlugs(dt) {
         const d = Math.hypot(dx, dy) || 1;
         p.vx += dx / d * 3 * p.r;
         p.vy += dy / d * 3 * p.r;
-        burstFx(s.x, s.y, 8, s.r * 4, 0.7);
+        burstFx(s.x, s.y, 8, s.r * 4, 0.7, 196);
         shakeMag = Math.max(shakeMag, 6);
         slugs.splice(i, 1);
         if (Snd.ac) Snd.tone(120, 'square', 0.14, 0.004, 0.12);
@@ -2310,7 +2501,7 @@ function render() {
 
   ctx.fillStyle = '#05060f';
   ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = getNebula((210 + era * 24) % 360);
+  ctx.fillStyle = getNebula((210 + era * 24) % 360, clamp(era / 6, 0, 1));
   ctx.fillRect(0, 0, W, H);
 
   drawStars();
@@ -2329,7 +2520,30 @@ function render() {
   drawWaves();
   drawSlugs();
   drawParts();
-  if (state !== 'dead') drawPlayer();
+  // Squash and stretch along the direction of travel. A perfectly rigid disc
+  // reads as a sprite no matter how good the shading is; anything under
+  // acceleration should deform. The hole is drawn at absolute coordinates, so
+  // the transform wraps the call rather than the function.
+  if (state !== 'dead') {
+    const spd = Math.hypot(p.vx, p.vy);
+    let psx = 1;
+    if (spd > 1 && state === 'play') {
+      const k = clamp(spd / (SPEED_REF * p.r * 1.6), 0, 1) * 0.13;
+      if (k > 0.002) {
+        const ang = Math.atan2(p.vy, p.vx);
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(ang);
+        ctx.scale(1 + k, 1 - k);          // roughly preserves area
+        ctx.rotate(-ang);
+        ctx.translate(-p.x, -p.y);
+        psx = 0;
+        drawPlayer();
+        ctx.restore();
+      }
+    }
+    if (psx === 1) drawPlayer();
+  }
 
   ctx.restore();
 
@@ -2541,12 +2755,20 @@ function drawEnts() {
     const scr = e.r * cam.zoom;          // on-screen radius, CSS px
     const b = e.body;
 
+    // Atmospheric perspective. Without it every body sits on the same plane at
+    // full contrast, which is a large part of why the field read as flat.
+    // Distant bodies fade toward the background the way they do through air --
+    // the oldest depth cue there is, and it costs one multiply.
+    const dc = Math.hypot(e.x - cam.x, e.y - cam.y);
+    const vis = Math.max(1, viewWorldRadius());
+    const depthA = 1 - clamp((dc / vis - 0.5) / 0.8, 0, 1) * 0.55;
+
     // Threat colour rides on a soft glow instead of a hard stroked ring. The
     // old uniform circle drawn around every single body read as a UI outline
     // sitting on top of the art; the hue now bleeds off the limb the way an
     // atmosphere does, which is both prettier and less like a selection box.
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = highContrast ? 0.82 : 0.6;
+    ctx.globalAlpha = (highContrast ? 0.82 : 0.6) * depthA;
     const gs = e.r * (ratio > 0.95 ? 2.5 : 2.2);
     ctx.drawImage(glowSprite(hue), e.x - gs, e.y - gs, gs * 2, gs * 2);
     ctx.globalAlpha = 1;
@@ -2584,7 +2806,9 @@ function drawEnts() {
       ctx.rotate(-sAng);
     }
     ctx.rotate(e.phase);
+    ctx.globalAlpha = depthA;
     ctx.drawImage(bodySprite(b.type, b.variant, b.sub), -e.r, -e.r, e.r * 2, e.r * 2);
+    ctx.globalAlpha = 1;
     ctx.restore();
 
     // Fixed light direction; stars are self-lit so they skip this, and a
@@ -3322,7 +3546,7 @@ function pauseGame() {
   state = 'paused';
   panel = 'pause';
   commitBest();
-  if (el.pauseScore) el.pauseScore.textContent = 'MASS ' + fmt(score) + '   BEST ' + fmt(best);
+  if (el.pauseScore) el.pauseScore.textContent = 'SCORE ' + fmt(score) + '   BEST ' + fmt(best);
   show(el.pause); hide(el.settings);
   Snd.setDrone(false, 0);
 }
@@ -3434,18 +3658,29 @@ function closeEventPanel() {
   Snd.setDrone(true, combo);
 }
 
-function syncSettingsUI() {
-  if (el.soundBtn) el.soundBtn.textContent = 'SOUND: ' + (Snd.muted ? 'OFF' : 'ON');
-  if (el.motionBtn) el.motionBtn.textContent = 'MOTION: ' + (motion ? 'ON' : 'OFF');
-  if (el.cbBtn) el.cbBtn.textContent = 'COLOUR: ' + (CB_LABEL[cbMode] || 'NORMAL');
-  if (el.ctrlBtn) {
-    el.ctrlBtn.textContent = 'CONTROL: ' + (CTRL_LABEL[controlMode] || 'STICK');
+// One place decides what every settings row says. Each row is a label plus a
+// value slot, so a sync writes the value (and aria-pressed for the boolean
+// rows) instead of rebuilding a "LABEL: VALUE" string — the value's colour
+// carries the state, so it is never buried mid-label.
+function setSetting(btn, value, pressed) {
+  if (!btn) return;
+  const slot = btn.querySelector('.setting-val');
+  if (slot) slot.textContent = value;
+  if (pressed === true || pressed === false) {
+    btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
   }
-  if (el.hapticBtn) el.hapticBtn.textContent = 'HAPTICS: ' + (HAPTIC_LABEL[haptics] || 'OFF');
-  if (el.textBtn) el.textBtn.textContent = 'TEXT: ' + (textLarge ? 'LARGE' : 'NORMAL');
-  if (el.contrastBtn) el.contrastBtn.textContent = 'CONTRAST: ' + (highContrast ? 'HIGH' : 'OFF');
-  if (el.threatBtn) el.threatBtn.textContent = 'THREAT: ' + (threatReadout ? 'ON' : 'OFF');
-  if (el.eventBtn) el.eventBtn.textContent = 'EVENT PAUSE: ' + (pauseOnEvent ? 'ON' : 'OFF');
+}
+
+function syncSettingsUI() {
+  setSetting(el.soundBtn, Snd.muted ? 'Off' : 'On', !Snd.muted);
+  setSetting(el.motionBtn, motion ? 'On' : 'Off', motion);
+  setSetting(el.cbBtn, CB_LABEL[cbMode] || 'Normal');
+  setSetting(el.ctrlBtn, CTRL_VALUE[controlMode] || 'Stick');
+  setSetting(el.hapticBtn, HAPTIC_LABEL[haptics] || 'Off');
+  setSetting(el.textBtn, textLarge ? 'Large' : 'Normal');
+  setSetting(el.contrastBtn, highContrast ? 'On' : 'Off', highContrast);
+  setSetting(el.threatBtn, threatReadout ? 'On' : 'Off', threatReadout);
+  setSetting(el.eventBtn, pauseOnEvent ? 'On' : 'Off', pauseOnEvent);
   if (el.musicRange) el.musicRange.value = String(Math.round(Snd.musicVol * 100));
   if (el.sfxRange) el.sfxRange.value = String(Math.round(Snd.sfxVol * 100));
   if (el.musicVal) el.musicVal.textContent = Math.round(Snd.musicVol * 100) + '%';
@@ -3462,6 +3697,9 @@ function syncSettingsUI() {
 // hole handle differently depending on the device.
 const CTRL_ORDER = ['joystick', 'follow', 'relative'];
 const CTRL_LABEL = { joystick: 'STICK', follow: 'FOLLOW', relative: 'DRAG' };
+// Title case for the settings row, where the value reads as a word; the chip
+// and the menu's segmented control keep the caps form.
+const CTRL_VALUE = { joystick: 'Stick', follow: 'Follow', relative: 'Drag' };
 const CTRL_HINT = {
   joystick: 'push the stick at the bottom of the screen',
   follow: 'the hole chases your fingertip',
@@ -3669,6 +3907,7 @@ function toggleMute() {
   lsSet('muted', Snd.muted ? '1' : '0');
   if (Snd.master) Snd.master.gain.setTargetAtTime(Snd.muted ? 0 : 0.85, Snd.ac.currentTime, 0.05);
   el.muteBtn.classList.toggle('off', Snd.muted);
+  el.muteBtn.setAttribute('aria-pressed', Snd.muted ? 'true' : 'false');
   syncSettingsUI();
 }
 
@@ -3776,7 +4015,7 @@ function shareRun() {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const g = c.getContext('2d');
-    if (!g) { toast('SHARE UNAVAILABLE'); return; }
+    if (!g) { toast('Sharing unavailable on this device'); return; }
 
     const bg = g.createLinearGradient(0, 0, w, h);
     bg.addColorStop(0, '#04050d');
@@ -3828,7 +4067,7 @@ function shareRun() {
     g.fillText(fmt(score), 64, 200);
     g.fillStyle = 'rgba(180,215,245,0.7)';
     g.font = '700 20px ui-monospace, SFMono-Regular, Menlo, monospace';
-    g.fillText('MASS', 66, 232);
+    g.fillText('SCORE', 66, 232);
 
     g.fillStyle = 'rgba(200,230,255,0.88)';
     g.font = '700 24px ui-monospace, SFMono-Regular, Menlo, monospace';
@@ -3841,17 +4080,17 @@ function shareRun() {
     g.fillText('BEST ' + fmt(best), 64, 462);
 
     const done = (blob) => {
-      if (!blob) { toast('SHARE UNAVAILABLE'); return; }
+      if (!blob) { toast('Sharing unavailable on this device'); return; }
       let file = null;
       try { file = new File([blob], 'singularity.png', { type: 'image/png' }); } catch (_) {}
       if (file && navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
-        navigator.share({ files: [file], title: 'SINGULARITY', text: 'MASS ' + fmt(score) })
+        navigator.share({ files: [file], title: 'SINGULARITY', text: 'Score ' + fmt(score) })
           .catch(() => {});
         return;
       }
       if (navigator.clipboard && window.ClipboardItem) {
         navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })])
-          .then(() => toast('CARD COPIED', 1.8))
+          .then(() => toast('Card copied', 1.8))
           .catch(() => save());
         return;
       }
@@ -3867,14 +4106,14 @@ function shareRun() {
           if (a.parentNode) a.parentNode.removeChild(a);
           URL.revokeObjectURL(url);
         }, 1200);
-        toast('CARD SAVED', 1.8);
+        toast('Card saved', 1.8);
       }
     };
 
     if (c.toBlob) c.toBlob(done, 'image/png');
-    else toast('SHARE UNAVAILABLE');
+    else toast('Sharing unavailable on this device');
   } catch (_) {
-    toast('SHARE UNAVAILABLE');
+    toast('Sharing unavailable on this device');
   }
 }
 
@@ -3901,13 +4140,18 @@ window.addEventListener('resize', resize);
 function fatal(msg) {
   const n = document.getElementById('fatal');
   if (!n) return;
-  n.textContent = 'SINGULARITY failed to start\n\n' + msg;
+  // A human sentence opens the surface; the stack is for the developer, so it
+  // trails behind a clear marker rather than greeting the player.
+  n.textContent = 'SINGULARITY failed to start.\n\n' +
+    'Reload the app and try again. If it keeps happening, the details ' +
+    'below say where.\n\n— technical details —\n' + msg;
   n.classList.remove('hidden');
 }
 window.addEventListener('error', (e) => fatal((e.error && e.error.stack) || e.message));
 
 best = parseInt(lsGet('best', 0), 10) || 0;
 el.muteBtn.classList.toggle('off', Snd.muted);
+el.muteBtn.setAttribute('aria-pressed', Snd.muted ? 'true' : 'false');
 
 // Desktop-only affordance: the key legend along the bottom. A machine with no
 // touch points can still play with WASD, so it gets the legend even though the
@@ -3920,7 +4164,7 @@ try {
 applyA11y();
 buildPips();
 syncSettingsUI();
-if (el.buildTag) el.buildTag.textContent = 'build ' + BUILD_ID;
+if (el.buildTag) el.buildTag.textContent = 'BUILD ' + BUILD_ID;
 
 try {
   buildShade();

@@ -6,6 +6,7 @@
   "scripts": {
     "sync": "cap sync android",
     "open:android": "cap open android",
+    "build:sync": "python tools/sync_build.py",
     "assets:store": "python tools/make_store_assets.py",
     "assets:android": "python tools/make_android_icons.py"
   },
