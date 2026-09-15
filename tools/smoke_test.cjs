@@ -26,10 +26,26 @@ const WWW = path.join(ROOT, 'www');
 
 const html = fs.readFileSync(path.join(WWW, 'index.html'), 'utf8');
 const gameSrc = fs.readFileSync(path.join(WWW, 'game.js'), 'utf8');
-const inlined = html.replace(
-  '<script src="game.js"></script>',
-  '<script>\n' + gameSrc + '\n</script>'
-);
+
+// Match the script tag LOOSELY, and fail loudly if we cannot.
+//
+// This used to be an exact-string replace on '<script src="game.js"></script>'.
+// When a cache-busting query was added (?v=b10) the replace silently matched
+// nothing, game.js was never loaded, the entire suite went dead -- and the
+// only symptom was a misleading "window.frame is not a function" deep in the
+// harness. A test that cannot load the code under test must say so.
+const SCRIPT_TAG = /<script\s+src="game\.js[^"]*"><\/script>/;
+if (!SCRIPT_TAG.test(html)) {
+  console.error('FATAL: no <script src="game.js..."> tag in index.html.');
+  console.error('The harness inlines game.js to run it headlessly. Without a');
+  console.error('match there is nothing to test -- fix the script tag markup.');
+  process.exit(2);
+}
+const inlined = html.replace(SCRIPT_TAG, '<script>\n' + gameSrc + '\n</script>');
+if (inlined.indexOf('function frame') === -1) {
+  console.error('FATAL: game.js was not inlined into the page.');
+  process.exit(2);
+}
 
 /* ------------------------------------------------------------------ *
  * Canvas 2D stub. We only care that calls resolve, not that they draw.
@@ -138,6 +154,17 @@ const doc = window.document;
 const $ = (id) => doc.getElementById(id);
 const visible = (id) => !$(id).classList.contains('hidden');
 const num = (id) => parseInt(String($(id).textContent).replace(/,/g, ''), 10) || 0;
+
+// The game must expose `frame` as a top-level FUNCTION DECLARATION so it lands
+// on window. A `const frame = ...` arrow would not, and the harness would have
+// nothing to drive -- which is worth a clear message rather than a TypeError.
+if (typeof window.frame !== 'function') {
+  console.error('FATAL: window.frame is not a function after boot.');
+  console.error('game.js must declare `function frame(now) { ... }` at top level.');
+  const seen = errors.slice(0, 6).map((e) => '  ' + e).join('\n');
+  if (seen) console.error('Errors captured during boot:\n' + seen);
+  process.exit(2);
+}
 
 let T = 0;
 const step = (frames, dtMs = 16.7) => {

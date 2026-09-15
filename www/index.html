@@ -10,8 +10,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=b10">
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -39,7 +40,7 @@
   <div class="title">SINGULARITY</div>
   <div class="subtitle">Consume. Grow. Survive.</div>
   <button id="playBtn" class="btn">TAP TO BEGIN</button>
-  <div class="hint">Touch and drag anywhere to move &nbsp;&bull;&nbsp; swallow what's smaller &nbsp;&bull;&nbsp; flee what isn't</div>
+  <div class="hint">Drag anywhere, move the mouse, or use WASD &nbsp;&bull;&nbsp; swallow what's smaller &nbsp;&bull;&nbsp; flee what isn't</div>
   <div class="hint dim" id="menuBest"></div>
   <div class="hint dim" id="buildTag"></div>
 </div>
@@ -79,6 +80,6 @@
 <div id="toast" class="toast"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="game.js"></script>
+<script src="game.js?v=b10"></script>
 </body>
 </html>

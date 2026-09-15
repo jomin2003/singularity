@@ -38,7 +38,7 @@ const STAR_BONUS = 3;                // score multiplier for eating a star
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b8';
+const BUILD_ID = 'b10';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -87,12 +87,18 @@ let camRoll = 0;    // Kerr-style frame-dragging wobble near big bodies
 let shield = 0;     // one-hit protection from eating a pulsar
 let kilonovaT = 0;  // countdown to the next neutron-star merger event
 
-const pointer = { x: 0, y: 0, active: false };
 const keys = { up: false, down: false, left: false, right: false };
 
-// Virtual joystick on the lower-left. Touch-and-drag anywhere in the left
-// third of the screen drives the black hole. Mouse and keyboard still work
-// outside that zone (desktop users get WASD).
+// Hover steering for desktop mice: merely moving the mouse (no button held)
+// steers the hole toward the cursor, so the web build plays out of the box.
+// Cleared whenever a drag, joystick touch, or key press takes over, and when
+// the cursor leaves the window, so a stale vector can never drive the hole.
+const hover = { dx: 0, dy: 0, on: false };
+function clearHover() { hover.on = false; hover.dx = 0; hover.dy = 0; }
+
+// Floating joystick: anchors wherever a finger or mouse press lands, so any
+// drag anywhere on the canvas drives the black hole. Keyboard (WASD/arrows)
+// always works as well.
 const JOY_R = 78;
 const JOY_KNOB = 28;
 const joy = { active: false, bx: 0, by: 0, kx: 0, ky: 0, dx: 0, dy: 0 };
@@ -202,9 +208,6 @@ function commitBest() {
 }
 
 let motion = lsGet('motion', '1') === '1';
-
-const IS_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform &&
-                     window.Capacitor.isNativePlatform());
 
 /* ============================================================
    AUDIO
@@ -370,8 +373,6 @@ const EDIBLE = ['rocky', 'ice', 'ocean', 'desert', 'barren', 'asteroid',
 const LETHAL = ['star', 'giant', 'lava', 'rogue', 'rival'];
 // Rare astronomical anomalies, each with its own behaviour.
 const RARE = ['pulsar', 'wormhole'];
-// Neutron-star remnants with extreme fields, and active galactic nuclei.
-const EXTREME = ['magnetar', 'quasar'];
 // What an advanced civilisation builds once it realises the hole is coming.
 // Grounded in real proposed megastructures plus the classic sci-fi answers:
 //   shield     - planetary deflector dome (Star Wars / Dune house shields)
@@ -1248,7 +1249,6 @@ function reset() {
   elapsed = 0; era = 0; shakeMag = 0; hitstopT = 0; invuln = 0;
   flashT = 0; toastT = 0; shotT = 5;
   camRoll = 0; shield = 0; kilonovaT = rand(35, 70);
-  pointer.active = false; pointer.x = W / 2; pointer.y = H / 2;
   joy.active = false; joy.dx = 0; joy.dy = 0;
   for (let i = 0; i < ENT_TARGET; i++) spawn(Math.random() < 0.5 ? 1.15 : 1.7);
   cam.zoom = desiredZoom();
@@ -1511,6 +1511,12 @@ function currentTarget() {
   if (dx || dy) {
     const m = Math.hypot(dx, dy) || 1;
     return { x: p.x + dx / m * 260, y: p.y + dy / m * 260 };
+  }
+  // Desktop mouse hover: steer toward the cursor with proportional speed.
+  // Explicit drag / joystick / keys above always win; this only applies when
+  // nothing else is driving.
+  if (hover.on && (hover.dx !== 0 || hover.dy !== 0)) {
+    return { x: p.x + hover.dx * 260, y: p.y + hover.dy * 260 };
   }
   return { x: p.x, y: p.y };
 }
@@ -2579,6 +2585,7 @@ function screenToWorld(cx, cy) {
 cvs.addEventListener('pointerdown', (e) => {
   ensureAudio();
   try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
+  clearHover();   // an explicit press always supersedes hover steering
 
   if (controlMode === 'joystick') {
     // Floating joystick: it anchors wherever you actually touch. A fixed
@@ -2637,6 +2644,26 @@ function pointerRelease() {
 }
 cvs.addEventListener('pointerup', pointerRelease);
 cvs.addEventListener('pointercancel', pointerRelease);
+
+// Desktop mouse hover steering (web debugging + desktop play). A mouse move
+// with no button held steers toward the cursor; touch/pen are ignored here
+// so taps never leave a phantom vector behind. Proportional within a radius
+// tied to the smaller screen dimension, with a small centre dead-zone.
+window.addEventListener('pointermove', (e) => {
+  if (e.pointerType && e.pointerType !== 'mouse') return;
+  if ((e.buttons || 0) !== 0) return;             // a drag owns the input
+  if (joy.active || drag.active) return;
+  if (state !== 'play') { clearHover(); return; }
+  const dx = e.clientX - W / 2, dy = e.clientY - H / 2;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 12) { clearHover(); return; }
+  const m = Math.min(1, dist / (Math.max(1, MIN) * 0.25)) / (dist || 1);
+  hover.dx = dx * m;
+  hover.dy = dy * m;
+  hover.on = true;
+});
+document.documentElement.addEventListener('pointerleave', clearHover);
+window.addEventListener('blur', clearHover);
 
 document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
