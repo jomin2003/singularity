@@ -21,7 +21,7 @@
             <!-- Android 16 ignores orientation locks on large screens (tablets,
                  foldables, >=600dp) for apps targeting API 36. The UI is
                  portrait-authored, so opt back into the lock for now. This
-                 property is temporary -- it stops working in Android 17, at
+                 property is temporary: it stops working in Android 17, at
                  which point the layout must genuinely adapt. -->
             <property
                 android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
@@ -49,7 +49,7 @@
 
     <!-- The haptics setting drives navigator.vibrate(). The Android WebView
          implements the Vibration API natively but refuses to act without this
-         permission -- without it the entire haptics system silently no-ops. -->
+         permission: without it the entire haptics system silently no-ops. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <uses-permission android:name="android.permission.INTERNET" />

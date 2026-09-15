@@ -61,6 +61,25 @@ jobs:
         with:
           packages: 'platform-tools'
 
+      # XML forbids "--" anywhere inside a comment, and one of those in the
+      # manifest fails the build 47 seconds in at the manifest-merge step with
+      # a Gradle stack trace that names the line but not the cause. Catch it in
+      # the first two seconds instead.
+      - name: Validate Android XML
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys, xml.etree.ElementTree as ET
+          bad = []
+          for p in sorted(pathlib.Path('android').rglob('*.xml')):
+              try:
+                  ET.parse(p)
+              except Exception as e:
+                  bad.append((p, e))
+          for p, e in bad:
+              print(f'::error file={p}::{e}')
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 

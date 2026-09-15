@@ -77,6 +77,22 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
+      # Same guard as build-apk.yml -- XML forbids "--" inside a comment.
+      - name: Validate Android XML
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys, xml.etree.ElementTree as ET
+          bad = []
+          for p in sorted(pathlib.Path('android').rglob('*.xml')):
+              try:
+                  ET.parse(p)
+              except Exception as e:
+                  bad.append((p, e))
+          for p, e in bad:
+              print(f'::error file={p}::{e}')
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 

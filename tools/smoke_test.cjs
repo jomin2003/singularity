@@ -559,6 +559,34 @@ check('physics: top speed still equals SPEED_REF * r',
   terminal > 0.85 && terminal < 1.05,
   'terminal=' + (terminal * 100).toFixed(1) + '% of cap');
 
+/* ---- 10. Android XML is well-formed ----
+   XML forbids "--" anywhere inside a comment. One em-dash-style double hyphen
+   in the manifest comment broke the CI build at the manifest-merge step, 47
+   seconds in, with a stack trace pointing at Gradle and at a line number in a
+   file nobody had edited in weeks. It is a five-line check; do it here. */
+const androidXml = [];
+(function walk(dir) {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) walk(p);
+    else if (ent.name.endsWith('.xml')) androidXml.push(p);
+  }
+})(path.join(ROOT, 'android'));
+
+let xmlOffender = null;
+for (const p of androidXml) {
+  const src = fs.readFileSync(p, 'utf8');
+  for (const c of src.match(/<!--[\s\S]*?-->/g) || []) {
+    if (c.slice(4, -3).indexOf('--') >= 0) {
+      xmlOffender = path.relative(ROOT, p) + ' has "--" inside a comment';
+      break;
+    }
+  }
+  if (xmlOffender) break;
+}
+check('android: no "--" inside XML comments', xmlOffender === null,
+  xmlOffender || androidXml.length + ' XML files clean');
+
 /* ---- output ---- */
 console.log('\n' + report.join('\n'));
 if (errors.length) {
