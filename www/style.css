@@ -447,8 +447,8 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--s-1);
-  padding: var(--s-2) var(--s-2);
+  gap: 6px;
+  padding: 14px var(--s-2);
   border-radius: var(--r-lg);
   background: linear-gradient(160deg, rgba(24, 34, 54, .74), rgba(9, 14, 26, .68));
   -webkit-backdrop-filter: blur(16px) saturate(120%);
@@ -476,27 +476,34 @@ html, body {
   pointer-events: none;
 }
 
-/* Settings, demoted out of the main flow to a quiet utility control in the
-   screen corner -- it was colliding with the wordmark when it sat inside the
-   card, because the title is centred and nearly fills the card's width. */
+/* Settings, demoted into the card header rather than floating in the screen
+   corner. This keeps it away from the SCORE/BEST readouts on the HUD below. */
+.card-header {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
 .gear-btn {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 6px);
-  right: 6px;
+  top: 0;
+  right: 0;
   z-index: 2;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: rgba(170, 205, 235, .48);
+  color: rgba(170, 205, 235, .52);
   cursor: pointer;
   transition: color .16s ease-out, background .16s ease-out;
 }
-.gear-btn svg { width: 18px; height: 18px; display: block; }
+.gear-btn svg { width: 16px; height: 16px; display: block; }
 .gear-btn:hover { color: rgba(220, 240, 255, .92); }
 .gear-btn:active { background: rgba(255, 255, 255, .07); }
 
