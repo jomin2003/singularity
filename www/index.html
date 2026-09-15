@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=b19">
+<link rel="stylesheet" href="style.css?v=b20">
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -120,9 +120,23 @@
     </div>
     <div class="hint dim" id="ctrlHint"></div>
 
+    <!-- Pre-run variant pick: starting rules, never stat unlocks. A second
+         segmented control reusing the same sliding-pill pattern. -->
+    <div id="varPick" class="segmented cols4" role="group" aria-label="Run variant">
+      <button type="button" data-var="normal">STANDARD</button>
+      <button type="button" data-var="titan">TITAN</button>
+      <button type="button" data-var="wisp">WISP</button>
+      <button type="button" data-var="monk">MONK</button>
+    </div>
+    <div class="hint dim" id="varHint"></div>
+
+    <!-- Parametric missions, three at a time. Rendered by renderMissions(). -->
+    <div id="missions" aria-label="Missions"></div>
+
     <!-- Primary action sits last in the card so it lands in the thumb zone
          rather than dead centre of the screen. -->
     <button id="playBtn" class="btn cta">BEGIN</button>
+    <button id="dailyBtn" class="btn ghost wide">DAILY</button>
 
     <div class="menu-foot">
       <div class="foot-chip">
@@ -140,26 +154,52 @@
       <div id="histStrip"></div>
       <div class="hint dim" id="buildTag"></div>
     </div>
+
+    <!-- Meta-progression buttons row -->
+    <div class="menu-meta-row">
+      <button id="menuObservatoryBtn" class="meta-btn" aria-label="Observatory" title="Observatory">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/>
+          <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button id="menuFieldGuideBtn" class="meta-btn" aria-label="Field Guide" title="Field Guide">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M12 4v16M4 8a8 8 0 0 1 16 0M4 8v12a8 8 0 0 0 16 0V8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <circle cx="12" cy="14" r="3" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/>
+        </svg>
+      </button>
+      <button id="menuLeaderboardBtn" class="meta-btn" aria-label="Leaderboard" title="Leaderboard">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M5 6H3v2a3 3 0 0 0 3 3M19 6h2v2a3 3 0 0 1-3 3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+      </button>
+    </div>
   </div>
 </div>
 
 <div id="over" class="layer center hidden">
-  <div class="over-title">COLLAPSE</div>
-  <div class="score-big" id="finalScore">0</div>
-  <div class="newbest hidden" id="newBest">NEW PERSONAL BEST</div>
-  <div class="hint" id="overGap"></div>
-  <div class="report" id="report"></div>
-  <div class="row">
-    <button id="againBtn" class="btn">RUN AGAIN</button>
-    <button id="shareBtn" class="btn ghost">SHARE</button>
+  <div id="overCard" class="glass-card">
+    <div class="over-title">COLLAPSE</div>
+    <div class="score-big" id="finalScore">0</div>
+    <div class="newbest hidden" id="newBest">NEW PERSONAL BEST</div>
+    <div class="hint" id="overGap"></div>
+    <div class="report" id="report"></div>
+    <div id="overNearMiss" class="hint dim"></div>
+    <div class="glass-btn-row">
+      <button id="againBtn" class="btn">RUN AGAIN</button>
+      <button id="shareBtn" class="btn ghost">SHARE</button>
+    </div>
+    <button id="overHomeBtn" class="btn ghost">HOME</button>
+    <div class="hint dim">tap anywhere to run again</div>
   </div>
-  <button id="overHomeBtn" class="btn ghost">HOME</button>
-  <div class="hint dim">tap anywhere to run again</div>
 </div>
 
 <div id="pause" class="layer center overlay hidden">
-  <div class="panel">
-    <div class="panel-title">PAUSED</div>
+  <div class="glass-card">
+    <div class="glass-title">PAUSED</div>
     <div class="hint dim" id="pauseScore"></div>
     <button id="resumeBtn" class="btn">RESUME</button>
     <button id="restartBtn" class="btn ghost">RESTART</button>
@@ -172,23 +212,19 @@
      readouts about whatever is on screen: field of view, nearest body, the
      hole's true size. The player has chosen to look, so this is the only
      place where annotated numbers feel like a feature rather than noise. -->
-<div id="observe" class="layer center overlay hidden">
-  <div class="panel">
-    <div class="panel-title">OBSERVING</div>
-    <div class="obs-row"><span class="obs-key">FIELD</span><span class="obs-val" id="obsFov"></span></div>
-    <div class="obs-row"><span class="obs-key">NEAREST</span><span class="obs-val" id="obsNearest"></span></div>
-    <div class="obs-row"><span class="obs-key">SPAN</span><span class="obs-val" id="obsSpan"></span></div>
-    <div class="obs-row"><span class="obs-key">ERA</span><span class="obs-val" id="obsEra"></span></div>
-    <div class="hint dim" id="obsHint">Press O or tap to resume</div>
-  </div>
+<div id="observe" class="layer center overlay hidden glass-card">
+  <div class="glass-title">OBSERVING</div>
+  <div class="glass-row"><span class="glass-row-key">FIELD</span><span class="glass-row-val" id="obsFov"></span></div>
+  <div class="glass-row"><span class="glass-row-key">NEAREST</span><span class="glass-row-val" id="obsNearest"></span></div>
+  <div class="glass-row"><span class="glass-row-key">SPAN</span><span class="glass-row-val" id="obsSpan"></span></div>
+  <div class="glass-row"><span class="glass-row-key">ERA</span><span class="glass-row-val" id="obsEra"></span></div>
+  <div class="glass-row"><span class="glass-row-key">SPIN</span><span class="glass-row-val" id="obsSpin"></span></div>
+  <div class="hint dim" id="obsHint">Press O or tap to resume</div>
 </div>
 
 <div id="settings" class="layer center overlay hidden">
-  <div class="panel">
-    <div class="panel-title">SETTINGS</div>
-    <!-- One control per row: the setting is a label, its value sits in its own
-         right-aligned slot. Boolean rows carry aria-pressed so the state is
-         exposed to assistive tech as well as spelled out. -->
+  <div class="glass-card">
+    <div class="glass-title">SETTINGS</div>
     <div class="settings-list">
       <button id="soundBtn" class="setting wide" type="button" aria-pressed="true">
         <span class="setting-name">Sound</span>
@@ -228,22 +264,61 @@
         <span class="setting-name">First-encounter pause</span>
         <span class="setting-val">On</span>
       </button>
+      <button id="ghostBtn" class="setting wide" type="button">
+        <span class="setting-name">Ghost rival</span>
+        <span class="setting-val">On</span>
+      </button>
     </div>
     <button id="settingsBackBtn" class="btn wide">BACK</button>
   </div>
 </div>
 
-<div id="eventPanel" class="layer center overlay hidden">
-  <div class="panel">
-    <div class="panel-title" id="eventTitle">EVENT</div>
-    <div class="hint" id="eventBody"></div>
-    <button id="eventOkBtn" class="btn">CONTINUE</button>
-  </div>
+<div id="eventPanel" class="layer center overlay hidden glass-card">
+  <div class="glass-title" id="eventTitle">EVENT</div>
+  <div class="glass-body" id="eventBody"></div>
+  <button id="eventOkBtn" class="btn">CONTINUE</button>
+</div>
+
+<!-- Field Guide: collection album of discovered bodies -->
+<div id="fieldguide" class="layer center overlay hidden glass-card">
+  <div class="glass-title">FIELD GUIDE</div>
+  <div class="fg-progress" id="fgProgress">0 / 20 discovered</div>
+  <div class="fg-grid" id="fgGrid"></div>
+  <button id="fgCloseBtn" class="btn wide">CLOSE</button>
+</div>
+
+<!-- Daily Reward: 28-day cumulative calendar -->
+<div id="dailyreward" class="layer center overlay hidden glass-card">
+  <div class="glass-title">DAILY REWARDS</div>
+  <div class="dr-info" id="drInfo"></div>
+  <div class="dr-calendar" id="drCalendar"></div>
+  <button id="drClaimBtn" class="btn wide">CLAIM</button>
+  <button id="drCloseBtn" class="btn ghost wide">CLOSE</button>
+</div>
+
+<!-- Leaderboard: weekly rankings -->
+<div id="leaderboard" class="layer center overlay hidden glass-card">
+  <div class="glass-title">LEADERBOARD</div>
+  <div class="dr-info" id="lbInfo">This week</div>
+  <div id="lbList"></div>
+  <button id="lbCloseBtn" class="btn wide">CLOSE</button>
+</div>
+
+<!-- Observatory panel: shows astronomical readouts -->
+<div id="observatory" class="layer center overlay hidden glass-card">
+  <div class="glass-title">OBSERVATORY</div>
+  <div class="glass-row"><span class="glass-row-key">Stardust</span><span class="glass-row-val" id="obsStardust">0</span></div>
+  <div class="glass-row"><span class="glass-row-key">Runs</span><span class="glass-row-val" id="obsRuns">0</span></div>
+  <div class="glass-row"><span class="glass-row-key">Total Eaten</span><span class="glass-row-val" id="obsEaten">0</span></div>
+  <div class="glass-row"><span class="glass-row-key">Time Played</span><span class="glass-row-val" id="obsTime">0:00</span></div>
+  <div style="width:100%;margin:8px 0;font-size:var(--t-label);color:rgba(150,185,215,.55);text-align:center;">UPGRADES</div>
+  <div id="obsUpgrades"></div>
+  <button id="obsCloseBtn" class="btn wide">CLOSE</button>
 </div>
 
 <div id="toasts"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="game.js?v=b19"></script>
+<script src="game.js?v=b20"></script>
 </body>
 </html>

@@ -286,11 +286,52 @@ this plus the bands is all the "glow" the object can carry before the hard
 black shadow stops reading as black. Both holes share this structure, so a
 rival reads as the same class of object rather than a different sprite.
 
+## Run structure
+
+- **Variants** (STANDARD / TITAN / WISP / MONK on the menu) are the difficulty
+  modes: starting rules, never stat unlocks. A permanent size or drain buff
+  would delete the threat inversion the game is built on.
+- **Missions**, three at a time, read counters the game already tracks
+  (era, peak combo, white dwarfs, arks, pulsars, shockwave kills, grazes,
+  survival time, score). Completed missions roll a fresh objective.
+- **Daily run**: one seeded attempt per calendar day from the menu.
+- **Finale**: reaching SINGULARITY stops the world with a scripted panel;
+  continuing is an explicit choice, so the endless grind has a destination.
+- **Ghost rival**: your best run's positions replay as a translucent ring
+  (toggle in Settings). No simulation needed — every run starts at origin.
+- **Tension curve**: each meal buys ~2s without decay, and combo ×10+ slows
+  the drain, so evaporation is a rhythm to ride rather than a flat tax.
+
+## Meta-progression
+
+The game has a full meta-progression layer that persists between runs:
+
+- **Stardust** — earn 1 per 100 score, plus bonuses for rare bodies (pulsar +5,
+  wormhole +3, magnetar +3, quasar +5, star +2). Spend at the Observatory on
+  permanent upgrades across four branches: Gravity Well, Accretion Disk,
+  Event Horizon, Singularity. Each has five levels.
+- **Daily Rewards** — a 28-day cumulative calendar. Missing a day costs you
+  that day only; no reset. Day 7 gives a skin, Day 14 a larger reward,
+  Day 28 a legendary skin.
+- **Skins** — cosmetic variants for your black hole. Unlock by reaching eras,
+  performing rare feats, lucky drops, or daily rewards.
+- **Achievements** — 12+ milestones from "First Meal" to "Committed". Each
+  unlocks with a toast and a stinger.
+- **Field Guide** — a collection album of every body type. Eating something
+  for the first time discovers it, with a fun fact about the real object.
+- **Weekly Leaderboard** — your top 10 scores this week, ranked. Resets every
+  Monday.
+- **Near-miss feedback** — the game-over screen tells you how close you were
+  to the next era or upgrade, turning frustration into "one more run".
+- **Rare body windows** — every 5th run guarantees a rare spawn within 30
+  seconds, with a boosted chance after 3 dry runs.
+
 ## Not done
 
-- No difficulty modes. The curve is tuned in `pickRadius` and `decay`
-  constants at the top of `game.js`.
-- No level / chapter system. The "eras" are pure visual.
+- No level / chapter system. Eras are announced thresholds with a finale at
+  SINGULARITY, but the field itself has no chapters.
+- The base curve is tuned in `pickRadius` and the Hawking constants at the
+  top of `game.js`.
 
 ## Android wrapper notes
 

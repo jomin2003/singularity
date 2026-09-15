@@ -47,6 +47,12 @@ function seedFromUrl() {
   } catch (_) { return null; }
 }
 function nextRunSeed() {
+  // One-shot override (daily run) wins over everything, then the URL pin.
+  if (seedOverride !== null) {
+    const s = seedOverride >>> 0;
+    seedOverride = null;
+    return s;
+  }
   const forced = seedFromUrl();
   if (forced !== null) return forced;
   runCounter++;
@@ -102,7 +108,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b19';
+const BUILD_ID = 'b20';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -145,7 +151,7 @@ let p, ents, parts, waves, shots, slugs, floats, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
-let pendingWave = false, shotT = 0;
+let pendingWave = 0, shotT = 0;   // shockwave wind-up timer (0 = none)
 let panel = null;   // null | 'pause' | 'settings' | 'event'
 let camRoll = 0;    // Kerr-style frame-dragging wobble near big bodies
 let shield = 0;     // one-hit protection from eating a pulsar
@@ -158,12 +164,42 @@ let hitDirX = 0, hitDirY = 0;   // unit vector from the hole to the impact
 let nearDeath = 0;      // 0 = comfortable, 1 = about to evaporate
 let lastHurtT = -99;    // elapsed time of the last impact (death attribution)
 let overGuardT = 0;     // input guard so a stray tap cannot skip the score
+let drainRate = 0;      // current fractional decay, for the vignette pulse
 let eventKey = null;    // which first-encounter panel is open
 let coachStep = 0;      // first-run scripted hint index
 let bestAtRunStart = 0; // previous best, for the "N away from BEST" line
 let runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
 let comboPopT = 0;      // combo-heat pop envelope
 let nextSystemId = 1;   // unique ID for star systems
+let satiatedT = 0;      // decay holiday after a meal (Tier 0 tension curve)
+let lastBeatT = -99;    // last heartbeat haptic, for the low-mass warning
+let sparseOn = false;   // low-mass music strip-back currently engaged
+let greedT = 0;         // greed-gate window remaining
+let greedE = null;      // the body the greed gate applies to
+let pickT = 0;          // shockwave steering-pick window remaining
+let pickHold = null;    // accumulated steering dwell per lane
+let spinA = 0;          // Kerr spin parameter a/M, 0 (Schwarzschild) .. 0.998
+let kilonovaWarned = false;  // kilonova telegraph already fired this cycle
+let seedOverride = null;// one-shot forced seed (daily run)
+let dailyRun = false;   // this run is the daily-seeded attempt
+let ghostOn = true;       // race your best-run ghost (loaded with options)
+let ghostData = null;   // recorded positions of the best run
+let ghostRec = null;    // live recording of this run's positions
+let ghostClock = 0;     // 10 Hz recording accumulator
+function loadGhost() {
+  try {
+    const g = save.ghost;
+    if (g && Array.isArray(g.x) && Array.isArray(g.y) &&
+        g.x.length === g.y.length && g.x.length) return g;
+  } catch (_) {}
+  return null;
+}
+// Per-run mission counters. runStats carries the report card; these carry the
+// mission objectives. Both reset in reset().
+let runMission = null;
+function resetMissionCounters() {
+  runMission = { wd: 0, ark: 0, pulsar: 0, graze: 0, waveBest: 0 };
+}
 
 // Last input device. The floating joystick's home ring is a touch affordance;
 // Tracks the last thing that drove the hole. Only used to decide whether the
@@ -228,6 +264,10 @@ const el = {
   menuSettingsBtn: document.getElementById('menuSettingsBtn'),
   ctrlPick: document.getElementById('ctrlPick'),
   ctrlHint: document.getElementById('ctrlHint'),
+  varPick: document.getElementById('varPick'),
+  varHint: document.getElementById('varHint'),
+  dailyBtn: document.getElementById('dailyBtn'),
+  missions: document.getElementById('missions'),
   histStrip: document.getElementById('histStrip'),
   over: document.getElementById('over'),
   finalScore: document.getElementById('finalScore'),
@@ -250,6 +290,7 @@ const el = {
   obsNearest: document.getElementById('obsNearest'),
   obsSpan: document.getElementById('obsSpan'),
   obsEra: document.getElementById('obsEra'),
+  obsSpin: document.getElementById('obsSpin'),
   overHomeBtn: document.getElementById('overHomeBtn'),
   settings: document.getElementById('settings'),
   soundBtn: document.getElementById('soundBtn'),
@@ -258,6 +299,7 @@ const el = {
   sfxRange: document.getElementById('sfxRange'),
   sfxVal: document.getElementById('sfxVal'),
   hapticBtn: document.getElementById('hapticBtn'),
+  ghostBtn: document.getElementById('ghostBtn'),
   motionBtn: document.getElementById('motionBtn'),
   cbBtn: document.getElementById('cbBtn'),
   ctrlBtn: document.getElementById('ctrlBtn'),
@@ -347,6 +389,8 @@ let highContrast = lsGet('contrast', '0') === '1';
 let threatReadout = lsGet('threat', '0') === '1';
 let pauseOnEvent = lsGet('eventPause', '1') !== '0';
 let coachDone = lsGet('coach', '0') === '1';
+ghostOn = lsGet('ghost', '1') !== '0';
+ghostData = loadGhost();
 
 // Run history: five scores with dates. A single BEST number has no story.
 const HIST_MAX = 5;
@@ -570,6 +614,59 @@ const Snd = {
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
     o.connect(g); g.connect(this.sfxBus);
     o.start(t); o.stop(t + 0.44);
+  },
+
+  // Pitch sweep primitive for risers, falls and telegraphs.
+  sweep(f0, f1, dur, peak, type) {
+    if (!this.ac || this.muted) return;
+    try {
+      const ac = this.ac, t = ac.currentTime;
+      const o = ac.createOscillator(); o.type = type || 'sine';
+      o.frequency.setValueAtTime(Math.max(1, f0), t);
+      o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(peak, t + dur * 0.3);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(this.sfxBus);
+      o.start(t); o.stop(t + dur + 0.02);
+    } catch (_) {}
+  },
+
+  riser() { this.sweep(200, 900, 1.1, 0.12); },       // kilonova telegraph
+  fall() { this.sweep(600, 140, 0.5, 0.14, 'triangle'); },  // combo break
+
+  // Stingers: short composed phrases in the drone's key that punctuate
+  // milestones. Scheduled with timers so they need no sequencer.
+  sting(kind) {
+    if (!this.ac || this.muted) return;
+    const seq = {
+      era:     [[523, 0], [659, 90], [784, 180]],
+      wave:    [[196, 0], [294, 60], [392, 120]],
+      death:   [[392, 0], [311, 120], [233, 240]],
+      mission: [[660, 0], [880, 100]],
+      finale:  [[523, 0], [659, 120], [784, 240], [1046, 360]]
+    }[kind];
+    if (!seq) return;
+    seq.forEach(([f, ms]) => setTimeout(() => {
+      try { if (this.ac && !this.muted) this.tone(f, 'triangle', 0.16, 0.01, 0.3, 5); }
+      catch (_) {}
+    }, ms));
+  },
+
+  // Low-mass strip-back: duck the music and thin the drone when evaporation
+  // threatens, so danger reads in the mix as well as the vignette.
+  setSparse(on) {
+    if (!this.ac) return;
+    try {
+      const t = this.ac.currentTime;
+      if (this.musicBus) {
+        this.musicBus.gain.setTargetAtTime(on ? this.musicVol * 0.35 : this.musicVol, t, 0.4);
+      }
+      if (this.droneFilter) {
+        this.droneFilter.frequency.setTargetAtTime(on ? 120 : 180, t, 0.4);
+      }
+    } catch (_) {}
   },
 
   collapse() {
@@ -1690,7 +1787,9 @@ function entHue(ratio) {
 // food, stars and giants are not. The rim colour remains authoritative,
 // because a body's edibility changes as you grow or shrink.
 function assignBody(e) {
-  const lethal = e.r > p.r * 0.95;
+  // Spawn-time type follows the same lethality rule as everything else, so a
+  // Wisp's wider gullet is born edible, not just treated as edible.
+  const lethal = e.r > p.r * VARMODS[variant].thresh;
   const q = rng();
   let type, sub = null;
   let spin = rand(-0.75, 0.75);
@@ -1888,7 +1987,9 @@ function reset() {
   // pure function of the seed from here on.
   runSeed = nextRunSeed();
   seedRng(runSeed);
-  p = { x: 0, y: 0, vx: 0, vy: 0, r: P0, area: P0 * P0 };
+  // Variants change the starting rules, never the ladder: Titan opens heavy.
+  const startArea = P0 * P0 * VARMODS[variant].startMul;
+  p = { x: 0, y: 0, vx: 0, vy: 0, r: Math.sqrt(startArea), area: startArea };
   ents = []; parts = []; waves = []; shots = []; slugs = []; floats = [];
   cam = { x: 0, y: 0, zoom: 1 };
   score = 0; shownScore = 0; combo = 0; comboT = 0;
@@ -1896,9 +1997,26 @@ function reset() {
   flashT = 0; shotT = 5;
   camRoll = 0; shield = 0; kilonovaT = rand(35, 70);
   eraFx = 0; hitFx = 0; nearDeath = 0; lastHurtT = -99; comboPopT = 0;
+  satiatedT = 0; drainRate = 0; spinA = 0;
+  greedT = 0; pickT = 0; pickHold = null;
+  kilonovaWarned = false; lastBeatT = -99; sparseOn = false;
+  ghostRec = []; ghostClock = 0;
   coachStep = 0;
-  runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
+  runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '', finale: false };
   bestAtRunStart = best;
+  resetMissionCounters();
+  // Completed missions roll a fresh objective for the next run.
+  if (missions.length) {
+    const activeIds = missions.map((m) => m.id);
+    for (const m of missions) {
+      if (!m.done) continue;
+      const ids = MISSION_POOL.map((d) => d.id).filter((id) => activeIds.indexOf(id) < 0);
+      m.id = ids.length ? ids[(Math.random() * ids.length) | 0] : m.id;
+      m.done = false;
+      activeIds.push(m.id);
+    }
+    try { saveSet('missions', missions); } catch (_) {}
+  }
   joy.active = false; joy.dx = 0; joy.dy = 0;
   for (let i = 0; i < ENT_TARGET; i++) spawn(rng() < 0.5 ? 1.15 : 1.7);
   cam.zoom = desiredZoom();
@@ -2057,6 +2175,33 @@ function updateToasts(dt) {
   }
 }
 
+// Tidal disruption event: a body torn apart outside the horizon shreds into
+// a stream instead of being swallowed whole. Uses the live entity array, so
+// it is mostly a spawning change -- and it makes big meals spectacular.
+function disrupt(e, idx) {
+  const n = 3 + ((rng() * 3) | 0);
+  const ax = Math.atan2(p.y - e.y, p.x - e.x);   // infall axis
+  for (let k = 0; k < n; k++) {
+    const fr = e.r * rand(0.28, 0.45);
+    const spread = rand(-0.5, 0.5);
+    const sp = rand(0.5, 1.6) * p.r;
+    ents.push({
+      x: e.x + rand(-0.4, 0.4) * e.r,
+      y: e.y + rand(-0.4, 0.4) * e.r,
+      vx: Math.cos(ax + spread) * sp + rand(-0.3, 0.3) * p.r,
+      vy: Math.sin(ax + spread) * sp + rand(-0.3, 0.3) * p.r,
+      r: fr,
+      spin: rand(-2, 2), phase: rng() * TAU,
+      body: { type: e.body.type, variant: (rng() * VARIANTS) | 0,
+              spin: rand(-2, 2), sub: e.body.sub },
+      frag: true
+    });
+  }
+  burstFx(e.x, e.y, 16, e.r, 1.0, entHue(e.r / p.r));
+  Snd.crunch();
+  ents.splice(idx, 1);
+}
+
 function consume(e, idx) {
   const type = e.body && e.body.type;
   const wasStar = type === 'star';
@@ -2066,7 +2211,18 @@ function consume(e, idx) {
   p.area += e.r * e.r * CONSUME_YIELD;
   p.r = Math.sqrt(p.area);
   combo++;
-  comboT = COMBO_WINDOW;
+  comboT = COMBO_WINDOW_V();
+  // A fresh meal buys a satiated window (Tier 0 tension curve).
+  satiatedT = 2.0;
+  // Angular momentum in: meals spin the hole up toward maximal Kerr.
+  spinA = Math.min(0.998, spinA + 0.004 * (e.r / p.r));
+  // Mission counters.
+  if (runMission) {
+    if (type === 'whiteDwarf') runMission.wd++;
+    if (type === 'ark') runMission.ark++;
+    if (type === 'pulsar') runMission.pulsar++;
+  }
+  checkMissions();
 
   let gained = Math.max(1, Math.round(e.r * 0.42 * comboMult()));
   if (wasStar) gained *= STAR_BONUS;
@@ -2088,7 +2244,7 @@ function consume(e, idx) {
     if (era > runStats.era) runStats.era = era;
   }
   // Combo heat pops on every shockwave.
-  if (combo > 0 && combo % 20 === 0) comboPopT = 0.45;
+  if (combo > 0 && combo % WAVE_EVERY() === 0) comboPopT = 0.45;
   buzz(8);
 
   // Floating number, so a big eat lands without having to watch the HUD.
@@ -2131,7 +2287,7 @@ function consume(e, idx) {
     for (let i = ents.length - 1; i >= 0; i--) {
       const o = ents[i];
       const ddx = o.x - p.x, ddy = o.y - p.y;
-      if (ddx * ddx + ddy * ddy < R * R && o.r > p.r * 0.95) {
+      if (ddx * ddx + ddy * ddy < R * R && !edibleAt(o)) {
         burstFx(o.x, o.y, 8, o.r, 1, 268);
         ents.splice(i, 1);
       }
@@ -2143,8 +2299,9 @@ function consume(e, idx) {
   } else if (type === 'ark') {
     toast('ARK CONSUMED +' + fmt(gained), 1.8);
     burstFx(e.x, e.y, 26, e.r, 1.2, entHue(e.r / p.r));
-  } else if (combo % 20 === 0) {
-    pendingWave = true;
+  } else if (combo % WAVE_EVERY() === 0) {
+    // The shockwave cadence is the no-pause choice moment: steer the pick.
+    startPick();
   }
   // Big things break apart visibly instead of just vanishing.
   if (e.r > p.r * 0.55) burstFx(e.x, e.y, 14, e.r, 0.8, entHue(e.r / p.r));
@@ -2156,7 +2313,7 @@ function supernova(x, y, r) {
   for (let i = ents.length - 1; i >= 0; i--) {
     const e = ents[i];
     const dx = e.x - x, dy = e.y - y;
-    if (dx * dx + dy * dy < R * R && e.r > p.r * 0.95) {
+    if (dx * dx + dy * dy < R * R && !edibleAt(e)) {
       score += Math.round(e.r * 0.5 * comboMult());
       burstFx(e.x, e.y, 10, e.r, 1, entHue(e.r / p.r));
       ents.splice(i, 1);
@@ -2193,6 +2350,9 @@ function hurt(e) {
   // A rival swallows light and time: longer invulnerability or you would be
   // shredded inside its well.
   invuln = prof.flash ? 1.9 : 1.15;
+  // Combo break you can hear: losing a hot streak strips the mix, not just
+  // the number.
+  if (combo >= 10) Snd.fall();
   combo = 0; comboT = 0;
   shakeMag = Math.max(shakeMag, 12 + prof.frac * 46);
   hitstopT = Math.max(hitstopT, 0.09);
@@ -2218,19 +2378,25 @@ function hurt(e) {
 }
 
 function shockwave() {
-  const R = p.r * 13;
+  // Jets strengthen with spin (Blandford–Znajek): a spun-up hole clears
+  // a wider field, so angular momentum pays out visibly.
+  const R = p.r * 13 * (1 + spinA * 0.3);
   waves.push({ x: p.x, y: p.y, r: p.r, max: R, t: 0 });
+  let kills = 0;
   for (let i = ents.length - 1; i >= 0; i--) {
     const e = ents[i];
     const dx = e.x - p.x, dy = e.y - p.y;
-    if (dx * dx + dy * dy < R * R && e.r > p.r * 0.95) {
+    if (dx * dx + dy * dy < R * R && !edibleAt(e)) {
       score += Math.round(e.r * 0.5 * comboMult());
       burstFx(e.x, e.y, 10, e.r, 1, entHue(e.r / p.r));
       ents.splice(i, 1);
+      kills++;
     }
   }
+  if (runMission && kills > runMission.waveBest) runMission.waveBest = kills;
   shakeMag = Math.max(shakeMag, 12);
   Snd.boom();
+  Snd.sting('wave');
   buzz(45);
 }
 
@@ -2262,6 +2428,7 @@ function renderReport() {
 function die() {
   state = 'dead';
   Snd.collapse();
+  Snd.sting('death');
   Snd.setDrone(false, 0);
   shakeMag = Math.max(shakeMag, 28);
   flashT = Math.max(flashT, 0.25);
@@ -2278,6 +2445,22 @@ function die() {
   newBest = score > prevBest && score > 0;
   commitBest();
   pushHistory(score);
+  // A daily attempt is consumed by dying, win or lose.
+  if (dailyRun) {
+    try { saveSet('daily', todayStr()); } catch (_) {}
+    dailyRun = false;
+  }
+  // The ghost records only the best run: positions at 10 Hz cap the save at
+  // a few tens of kilobytes, and every run starts at the origin, so the
+  // recording replays anywhere with no simulation.
+  if (newBest && ghostRec && ghostRec.length > 30) {
+    try {
+      const xs = [], ys = [];
+      for (const q of ghostRec) { xs.push(q[1]); ys.push(q[2]); }
+      saveSet('ghost', { x: xs, y: ys, score: Math.round(score) });
+      ghostData = save.ghost;
+    } catch (_) {}
+  }
 
   hide(el.hud);
   hide(el.keysLegend);
@@ -2339,7 +2522,19 @@ function update(dt) {
     eraFx = 1;
     waves.push({ x: p.x, y: p.y, r: p.r * 0.9, max: p.r * 9, t: 0, hue: 275 });
     Snd.boom();
+    Snd.sting('era');
     buzz(40);
+    // SINGULARITY finale: the ladder gets a top. Reaching the final era is a
+    // scripted, triumphant stop -- CONTINUE resumes into the endless grind,
+    // now an explicit choice rather than a run with no destination.
+    if (era >= ERAS.length - 1 && runStats && !runStats.finale) {
+      runStats.finale = true;
+      Snd.sting('finale');
+      buzz(150);
+      flashT = Math.max(flashT, 0.5);
+      waves.push({ x: p.x, y: p.y, r: p.r, max: p.r * 20, t: 0, hue: 280 });
+      openEventPanel('finale');
+    }
   }
 
   updateToasts(dt);
@@ -2367,19 +2562,90 @@ function update(dt) {
     ? clamp(1 - (p.area - DEATH_AREA) / (DEATH_AREA * 2.4), 0, 1)
     : 0;
 
+  // Shockwave steering pick: dwell steers the choice, timeout takes SHOCK.
+  if (state === 'play' && pickT > 0 && pickHold) {
+    pickT -= dt;
+    const pv = thrustVector();
+    if (pv.x < -0.45) pickHold.l += dt;
+    else if (pv.x > 0.45) pickHold.r += dt;
+    else pickHold.c += dt;
+    if (pickHold.l > 0.35) resolvePick(0);
+    else if (pickHold.r > 0.35) resolvePick(2);
+    else if (pickHold.c > 0.6) resolvePick(1);
+    else if (pickT <= 0) {
+      const h = pickHold;
+      resolvePick(h.l >= h.r && h.l >= h.c ? 0 : h.r >= h.c ? 2 : 1);
+    }
+  }
+
+  // Greed gate: while a streak runs hot, one bigger body becomes edible for
+  // a few seconds. Risk and reward decided entirely by movement.
+  if (state === 'play' && combo >= 10 && comboT > 0 && greedT <= 0) {
+    const Rv = viewWorldRadius() * 0.9;
+    let gate = null, gd = Infinity;
+    for (const o of ents) {
+      if (o.darkMatter || o.civ || o.comet || o.greedT > 0) continue;
+      if (o.r <= p.r * VARMODS[variant].thresh || o.r > p.r * 1.6) continue;
+      const ddx = o.x - p.x, ddy = o.y - p.y;
+      const d2 = ddx * ddx + ddy * ddy;
+      if (d2 < Rv * Rv && d2 < gd) { gd = d2; gate = o; }
+    }
+    if (gate) {
+      gate.greedT = 2.5;
+      greedT = 6;
+      toast('GREED GATE — eat the big one', 1.6);
+      Snd.tick(1200, 1.0, 0.08, 0.12);
+    }
+  }
+  if (greedT > 0) greedT -= dt;
+
+  // Ghost recording at 10 Hz: positions only, so playback needs no sim.
+  if (state === 'play' && ghostRec) {
+    ghostClock += dt;
+    if (ghostClock >= 0.1) {
+      ghostClock = 0;
+      if (ghostRec.length < 3600) {
+        ghostRec.push([Math.round(elapsed * 10) / 10, Math.round(p.x), Math.round(p.y)]);
+      }
+    }
+  }
+
+  // Heartbeat haptic quickens with the warning, synced to the HUD pulse.
+  if (state === 'play' && nearDeath > 0.6) {
+    const period = 1.05 - (nearDeath - 0.6) * 1.1;
+    if (elapsed - lastBeatT > period) { lastBeatT = elapsed; buzz(22); }
+  }
+
+  // Low-mass strip-back: thin the mix as evaporation threatens.
+  {
+    const wantSparse = state === 'play' && nearDeath > 0.5;
+    if (wantSparse !== sparseOn) { sparseOn = wantSparse; Snd.setSparse(wantSparse); }
+  }
+
+  // Missions tick every frame; each check is a counter read.
+  checkMissions();
+
   // Kilonova: a neutron-star merger going off somewhere in the field. Real
   // ones forge the heavy elements (gold, platinum, uranium) and flash hard
   // across the spectrum. This one pays out and clears danger nearby.
   if (state === 'play') {
     kilonovaT -= dt;
+    // Telegraph: a rising tone and a warning a beat before it fires, so the
+    // biggest relief moment in the loop lands with anticipation.
+    if (!kilonovaWarned && kilonovaT <= 1.2 && kilonovaT > 0) {
+      kilonovaWarned = true;
+      toast('KILONOVA INCOMING', 1.2);
+      Snd.riser();
+    }
     if (kilonovaT <= 0) {
+      kilonovaWarned = false;
       kilonovaT = rand(45, 85);
       const R = p.r * 16;
       waves.push({ x: p.x, y: p.y, r: p.r, max: R, t: 0, hue: 45 });
       for (let i = ents.length - 1; i >= 0; i--) {
         const o = ents[i];
         const ddx = o.x - p.x, ddy = o.y - p.y;
-        if (ddx * ddx + ddy * ddy < R * R && o.r > p.r * 0.95) {
+        if (ddx * ddx + ddy * ddy < R * R && !edibleAt(o)) {
           score += Math.round(o.r * 0.6 * comboMult());
           burstFx(o.x, o.y, 10, o.r, 1, entHue(o.r / p.r));
           ents.splice(i, 1);
@@ -2406,7 +2672,10 @@ function update(dt) {
       drag += sign * (1 - d / reach) * 0.14;
     }
   }
-  camRoll = lerp(camRoll, clamp(drag, -0.22, 0.22), smooth(0.6, dt));
+  // Spin-coupled drag: a Schwarzschild hole (spin 0) barely drags the frame;
+  // a near-maximal Kerr hole does. Meals spin you up, so the tilt deepens
+  // across a run instead of sitting at one flat value.
+  camRoll = lerp(camRoll, clamp(drag, -0.22, 0.22) * (0.3 + spinA), smooth(0.6, dt));
 
   cam.zoom = lerp(cam.zoom, desiredZoom(), smooth(0.02, dt));
   // Snap the camera to the player. The old "smooth" follow lagged badly -- a few
@@ -2436,7 +2705,9 @@ function update(dt) {
     // any slower flat out than it used to be.
     const tv = thrustVector();
     const maxV = SPEED_REF * p.r;
-    const bleedRate = SPACE_DRAG * Math.pow(P0 / p.r, DRIFT_EXP);
+    // Wisp variant: nimbler hands, same top speed.
+    const dexp = VARMODS[variant].driftExp;
+    const bleedRate = SPACE_DRAG * Math.pow(P0 / p.r, dexp === null ? DRIFT_EXP : dexp);
     const thrust = maxV * bleedRate;
 
     p.vx += tv.x * thrust * dt;
@@ -2463,19 +2734,40 @@ function update(dt) {
 // Schwarzschild radius is proportional to mass, as 1/r^3. Small holes
 // evaporate furiously and large ones are nearly stable. The old curve was
 // backwards: it punished you for growing.
-const decay = HAWKING_BASE * clamp(Math.pow(P0 / p.r, 3),
-                                       HAWKING_MIN, HAWKING_MAX);
+//
+// Tension curve: a fresh meal buys a satiated window, and a hot combo slows
+// the drain, so decay is a rhythm to ride rather than a flat tax. drainRate
+// is published for the vignette so the drain stays readable, not just felt.
+    let decay = HAWKING_BASE * clamp(Math.pow(P0 / p.r, 3),
+                                     HAWKING_MIN, HAWKING_MAX);
+    if (VARMODS[variant].decayMul !== 1) decay *= VARMODS[variant].decayMul;
+    if (satiatedT > 0) { satiatedT -= dt; decay = 0; }
+    else if (combo >= 10 && comboT > 0) decay *= 0.55;
+    drainRate = decay;
     p.area = Math.max(1, p.area - p.area * decay * dt);
     p.r = Math.sqrt(p.area);
 
-    if (comboT > 0) { comboT -= dt; if (comboT <= 0) combo = 0; }
+    // Combo fizzle: a hot streak dying quietly still drops the mix.
+    // Frozen while steering a shockwave pick -- choosing must not cost you.
+    if (comboT > 0 && pickT <= 0) {
+      comboT -= dt;
+      if (comboT <= 0) {
+        if (combo >= 10) Snd.setDrone(true, 0);
+        combo = 0;
+      }
+    }
     if (invuln > 0) invuln -= dt;
 
     for (let i = ents.length - 1; i >= 0; i--) {
       const e = ents[i];
+      // A consume inside this loop can detonate a supernova/starquake that
+      // removes bodies at lower indices out from under the iteration, leaving
+      // a hole. Skipping it is correct: those bodies are already gone.
+      if (!e) continue;
       const ddx = e.x - p.x, ddy = e.y - p.y;
       const reach = p.r + e.r * 0.5;
-      if (ddx * ddx + ddy * ddy < reach * reach) {
+      const d2c = ddx * ddx + ddy * ddy;
+      if (d2c < reach * reach) {
         // Dark matter has no surface and no collision -- you pass straight
         // through it, but its gravity bends your trajectory.
         if (e.darkMatter) continue;
@@ -2492,11 +2784,48 @@ const decay = HAWKING_BASE * clamp(Math.pow(P0 / p.r, 3),
           continue;
         }
         if (e.civ && e.civ !== 'ark') continue;   // arks can be caught
-        if (e.r <= p.r * 0.95) consume(e, i);
+        if (edibleAt(e)) {
+          // Tidal disruption: a big meal shreds into fragments outside the
+          // horizon instead of vanishing whole. Fragments (flagged) never
+          // shred again, or one planet would chain into confetti forever.
+          if (!e.frag && !e.civ && !e.comet && !e.darkMatter &&
+              e.r > p.r * 0.45 && e.r > 6) {
+            disrupt(e, i);
+            continue;
+          }
+          consume(e, i);
+        }
         else if (invuln <= 0) hurt(e);
+      } else if (!e.grazed && !e.civ && !e.darkMatter && !edibleAt(e)) {
+        // Graze: skirting something that could hurt you pays a sliver.
+        // Danger-adjacent by construction -- only lethal bodies qualify.
+        const gr = reach * 1.45;
+        if (d2c < gr * gr) {
+          e.grazed = true;
+          const g = Math.max(1, Math.round(e.r * 0.06 * comboMult()));
+          score += g;
+          if (floats.length < 24) {
+            floats.push({ x: p.x, y: p.y - p.r, text: '+' + fmt(g) + ' GRAZE',
+                          life: 0, max: 0.7, big: false });
+          }
+          burstFx(p.x, p.y, 3, p.r * 0.4, 0.6, entHue(e.r / p.r));
+          Snd.tick(2400, 1.2, 0.05, 0.05);
+          if (runMission) runMission.graze++;
+          checkMissions();
+        }
       }
     }
-    if (pendingWave) { pendingWave = false; shockwave(); }
+    // Shockwave wind-up: a beat of inward rush before the release, so the
+    // biggest moment in the loop lands with anticipation, not just aftermath.
+    if (pendingWave > 0) {
+      pendingWave -= dt;
+      if (rng() < 10 * dt) {
+        const a = rng() * TAU;
+        addPart({ x: p.x + Math.cos(a) * p.r * 6, y: p.y + Math.sin(a) * p.r * 6,
+                  vx: 0, vy: 0, life: 0, max: 0.3, r: 2, hue: 190, mode: 0 });
+      }
+      if (pendingWave <= 0) { pendingWave = 0; shockwave(); }
+    }
     if (p.area < DEATH_AREA) die();
   }
 
@@ -2562,6 +2891,10 @@ function updateEnts(dt) {
       if (e.civ === 'ark') toast('ARK ESCAPED', 1.4);
       ents.splice(i, 1); continue;
     }
+
+    // Greed-gate expiry lives on the body so it survives anything except
+    // being eaten or despawned.
+    if (e.greedT > 0) e.greedT -= dt;
 
     // ---- First encounters ---------------------------------------------
     // Your rarest content should not be missable in the middle of a fight.
@@ -2636,6 +2969,9 @@ function updateEnts(dt) {
         const s = (1 - d / reachR) * 6.5 * p.r * dt;
         p.vx += (-dx / d) * s;      // dx points player -> rival, so negate
         p.vy += (-dy / d) * s;
+        // Proximity rumble: you feel a rival through your hands before you
+        // see what it is doing to your trajectory.
+        if (d < reachR * 0.6 && rng() < dt * 2) buzz(12);
       }
     }
 
@@ -2647,6 +2983,26 @@ function updateEnts(dt) {
         e.pulseT = e.beatMax;
         waves.push({ x: e.x, y: e.y, r: e.r * 0.6, max: e.r * 9, t: 0, hue: 210 });
         burstFx(e.x, e.y, 6, e.r * 0.5, 0.5, entHue(e.r / p.r));
+      }
+      // Lighthouse beams are dangerous to cross -- but only while the pulsar
+      // out-masses you. An edible pulsar stays safe to approach and eat.
+      e.beamCD = Math.max(0, (e.beamCD || 0) - dt);
+      if (e.beamCD <= 0 && invuln <= 0 && e.r > p.r * VARMODS[variant].thresh) {
+        const d = Math.sqrt(d2) || 1;
+        if (d < e.r * 2.4) {
+          const beamA = elapsed * 1.5;   // matches the drawEnts sweep
+          let da = Math.atan2(p.y - e.y, p.x - e.x) - beamA;
+          da = Math.atan2(Math.sin(da), Math.cos(da));
+          const halfW = 0.16 + (e.r * 0.06) / d;
+          if (Math.abs(da) < halfW || Math.abs(Math.abs(da) - Math.PI) < halfW) {
+            e.beamCD = 0.5;
+            p.area = Math.max(1, p.area * 0.985);
+            p.r = Math.sqrt(p.area);
+            burstFx(p.x, p.y, 4, p.r * 0.4, 0.7, 210);
+            Snd.tick(1800, 1.2, 0.07, 0.08);
+            shakeMag = Math.max(shakeMag, 4);
+          }
+        }
       }
     }
 
@@ -2693,7 +3049,7 @@ function updateEnts(dt) {
     } else {
       if (state === 'play' && d2 < pullR * pullR) {
         const d = Math.sqrt(d2) || 1;
-        const edible = e.r <= p.r * 0.95;
+        const edible = edibleAt(e);
         const mass = (e.r * e.r) / (p.r * p.r);
         // Newtonian gravity: pull falls off as 1/r^2, softened near the
         // centre so nothing goes infinite. The old linear falloff let the
@@ -2851,24 +3207,28 @@ function render() {
       }
     }
     if (psx === 1) drawPlayer();
+    drawGhost();
   }
 
   ctx.restore();
 
   drawDangerArrows();                     // screen space
   drawFloats();                           // screen space
+  drawPick();                             // shockwave choice lanes
   drawJoystick();                         // joystick is screen-space, not world
 
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, W, H);
 
   // Low-mass squeeze: the walls close in as you evaporate, so the end of a
-  // run is something you feel coming.
+  // run is something you feel coming. The pulse quickens with the drain rate,
+  // so the vignette reports how fast you are losing mass, not just how low.
   if (nearDeath > 0.02) {
     const inner = MIN * (0.36 - 0.24 * nearDeath);
     const g = ctx.createRadialGradient(W / 2, H / 2, inner, W / 2, H / 2, Math.max(W, H) * 0.62);
     g.addColorStop(0, 'rgba(255,60,40,0)');
-    g.addColorStop(1, 'rgba(255,40,25,' + (0.55 * nearDeath).toFixed(3) + ')');
+    const beat = 0.72 + 0.28 * Math.sin(elapsed * (2.2 + drainRate * 900));
+    g.addColorStop(1, 'rgba(255,40,25,' + (0.55 * nearDeath * beat).toFixed(3) + ')');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   }
@@ -3041,6 +3401,62 @@ function drawFloats() {
   ctx.textBaseline = 'alphabetic';
 }
 
+// Shockwave steering pick, drawn as three lanes. No DOM: the choice lives in
+// the movement space, so it never interrupts flow with a menu.
+function drawPick() {
+  if (pickT <= 0 || !pickHold || state !== 'play') return;
+  const holds = [pickHold.l, pickHold.c, pickHold.r];
+  const bw = Math.min(150, W * 0.28), bh = 54;
+  const cy = H * 0.60;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < 3; i++) {
+    const cx = W / 2 + (i - 1) * W * 0.30;
+    const frac = clamp(holds[i] / 0.35, 0, 1);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(8,14,26,0.82)';
+    ctx.strokeStyle = i === 1 ? 'rgba(79,240,255,0.75)' : 'rgba(150,200,230,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(cx - bw / 2, cy - bh / 2, bw, bh, 10);
+    else ctx.rect(cx - bw / 2, cy - bh / 2, bw, bh);
+    ctx.fill();
+    ctx.stroke();
+    // Dwell progress fills the lane from the bottom.
+    if (frac > 0) {
+      ctx.fillStyle = 'rgba(79,240,255,0.25)';
+      const fh = (bh - 4) * frac;
+      ctx.fillRect(cx - bw / 2 + 2, cy + bh / 2 - 2 - fh, bw - 4, fh);
+    }
+    ctx.fillStyle = '#eaf6ff';
+    ctx.font = '700 13px system-ui, sans-serif';
+    ctx.fillText(PICK_OPTS[i].name, cx, cy - 8);
+    ctx.fillStyle = 'rgba(170,205,235,0.7)';
+    ctx.font = '400 10px system-ui, sans-serif';
+    ctx.fillText(PICK_OPTS[i].sub, cx, cy + 12);
+  }
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+}
+
+// Ghost of your best run: a translucent ring replaying its positions.
+// Positions are absolute and every run starts at the origin, so no
+// simulation is needed -- just an index into the recording.
+function drawGhost() {
+  if (!ghostOn || !ghostData || state !== 'play') return;
+  const gi = Math.floor(elapsed * 10);
+  if (gi < 0 || gi >= ghostData.x.length) return;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.35;
+  ctx.strokeStyle = 'rgba(79,240,255,0.8)';
+  ctx.lineWidth = Math.max(1, p.r * 0.05);
+  ctx.beginPath();
+  ctx.arc(ghostData.x[gi], ghostData.y[gi], Math.max(6, p.r * 0.45), 0, TAU);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+
 // Arrows pointing at lethal bodies that are off-screen. Partly juice, partly
 // accessibility: knowing where the danger is should not depend on being able
 // to see its colour.
@@ -3050,7 +3466,7 @@ function drawDangerArrows() {
   const rad = Math.min(W, H) * 0.5 - 26;
   ctx.globalCompositeOperation = 'lighter';
   for (const e of ents) {
-    if (e.r <= p.r * 0.95) continue;                 // edible ones are fine
+    if (edibleAt(e)) continue;                       // edible ones are fine
     const sx = (e.x - cam.x) * cam.zoom + cx;
     const sy = (e.y - cam.y) * cam.zoom + cy;
     if (sx >= 0 && sx <= W && sy >= 0 && sy <= H) continue;   // visible already
@@ -3100,9 +3516,12 @@ function drawEnts() {
     }
 
     const ratio = e.r / p.r;
+    const lethalAt = VARMODS[variant].thresh;
+    const isGreed = e.greedT > 0;
     // Civilisation hardware is artificial, so it gets a cold tech tint
     // instead of the edible/lethal colour language of natural bodies.
-    const hue = e.civ ? 200 : entHue(ratio);
+    // A greed-gated body borrows the edible hue: it IS food right now.
+    const hue = e.civ ? 200 : (isGreed ? entHue(0.7) : entHue(ratio));
     const scr = e.r * cam.zoom;          // on-screen radius, CSS px
     const b = e.body;
 
@@ -3120,7 +3539,7 @@ function drawEnts() {
     // atmosphere does, which is both prettier and less like a selection box.
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = (highContrast ? 0.82 : 0.6) * depthA;
-    const gs = e.r * (ratio > 0.95 ? 2.5 : 2.2);
+    const gs = e.r * (ratio > lethalAt ? 2.5 : 2.2);
     ctx.drawImage(glowSprite(hue), e.x - gs, e.y - gs, gs * 2, gs * 2);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
@@ -3235,7 +3654,17 @@ function drawEnts() {
     // anyone who cannot separate the two hues -- colour alone is unusable
     // for them. Drawn as one closed polygon rather than radiating rays,
     // which read as a cartoon sunburst.
-    if (ratio > 0.95 && !e.civ) {
+    // Greed pulse: a white ring says "eat me now" in the shape channel,
+    // so the gate reads even for players who cannot separate the hues.
+    if (isGreed) {
+      const gp = 0.5 + 0.3 * Math.sin(elapsed * 8);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = 'rgba(255,255,255,' + gp.toFixed(3) + ')';
+      ctx.lineWidth = Math.max(1, e.r * 0.06);
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 1.18, 0, TAU); ctx.stroke();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    if (ratio > lethalAt && !e.civ && !isGreed) {
       const pulse = 0.35 + 0.35 * Math.sin(elapsed * 5 + e.phase);
       const teeth = 12;
       const rIn = e.r * 1.10;
@@ -3713,7 +4142,7 @@ function threatLine() {
   const reach = viewWorldRadius();
   const reach2 = reach * reach;
   for (const e of ents) {
-    if (e.r <= p.r * 0.95) continue;
+    if (edibleAt(e)) continue;
     const dx = e.x - p.x, dy = e.y - p.y;
     const d2 = dx * dx + dy * dy;
     if (d2 > reach2 || d2 >= bestD2) continue;
@@ -3774,6 +4203,7 @@ function updateHUD() {
   const chips = [];
   if (shield > 0) chips.push('shield|SHIELD');
   chips.push('era|' + ERAS[era % ERAS.length]);
+  if (spinA > 0.5) chips.push('spin|SPIN ' + spinA.toFixed(2));
   chips.push('|' + (CTRL_LABEL[controlMode] || 'STICK'));
   const chipKey = chips.join(',');
   if (chipKey !== hudCache.chips) {
@@ -3805,13 +4235,15 @@ function updateHUD() {
   const on = combo >= 3 && comboT > 0;
   el.comboWrap.classList.toggle('on', on);
   if (on) {
-    const intoWave = combo % PIP_COUNT;
+    // Pips read as distance to the next shockwave under any variant cadence.
+    const WE = WAVE_EVERY();
+    const intoWave = combo % WE;
     el.comboValue.textContent =
       'COMBO ' + combo + '  ×' + comboMult().toFixed(1) +
-      '  ·  WAVE IN ' + (PIP_COUNT - intoWave);
+      '  ·  WAVE IN ' + (WE - intoWave);
     // Combo heat: the text grows and runs hotter toward the shockwave, then
     // pops when it fires.
-    const heat = clamp(intoWave / PIP_COUNT, 0, 1);
+    const heat = clamp(intoWave / WE, 0, 1);
     const pop = comboPopT > 0 ? comboPopT : 0;
     el.comboValue.style.transform =
       'scale(' + (1 + heat * 0.30 + pop * 0.55).toFixed(3) + ')';
@@ -3823,7 +4255,8 @@ function updateHUD() {
     if (intoWave !== hudCache.pips) {
       hudCache.pips = intoWave;
       const kids = el.comboBar.children;
-      for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('on', i < intoWave);
+      const lit = Math.round((intoWave / WE) * kids.length);
+      for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('on', i < lit);
     }
   } else {
     hudCache.pips = -1;
@@ -3839,6 +4272,8 @@ function frame(now) {
     last = now;
     let dt = real;
     if (hitstopT > 0) { hitstopT -= real; dt = real * 0.18; }
+    // Shockwave pick: the world drops into slow motion while you steer.
+    if (pickT > 0) dt *= 0.3;
     update(dt);
     render();
     updateHUD();
@@ -3867,6 +4302,7 @@ function ensureAudio() { try { Snd.ensure(); } catch (_) {} }
 
 function start() {
   ensureAudio();
+  dailyRun = false;   // startDaily() re-arms it after calling us
   reset();
   state = 'play';
   panel = null;
@@ -3914,7 +4350,10 @@ function toMenu() {
   show(el.menu);
   el.menuBest.textContent = best > 0 ? 'BEST ' + fmt(best) : '';
   renderHistory();
+  renderMissions();
+  renderDaily();
   syncControlPick();
+  syncVariantPick();
   Snd.setDrone(false, 0);
   clearToasts();
 }
@@ -3974,6 +4413,9 @@ function computeObserveStats() {
 
   el.obsSpan.textContent = scaleReadout();
   el.obsEra.textContent = ERAS[era % ERAS.length];
+  // Spin is what makes the camera tilt honest: Schwarzschild sits near zero,
+  // a meal-fed hole climbs toward maximal Kerr.
+  if (el.obsSpin) el.obsSpin.textContent = 'a/M ' + spinA.toFixed(3);
 }
 
 function openObserve() {
@@ -4014,7 +4456,10 @@ function closeSettings() {
     state = 'menu';
     show(el.menu);
     renderHistory();
+    renderMissions();
+    renderDaily();
     syncControlPick();
+    syncVariantPick();
   } else {
     panel = 'pause';
     show(el.pause);
@@ -4028,7 +4473,13 @@ const EVENTS = {
   pulsar: {
     title: 'PULSAR',
     body: 'A neutron star spinning hundreds of times a second, sweeping the field with twin beams. ' +
+          'Crossing a live beam burns while the pulsar out-masses you. ' +
           'Eat it and you steal a shield that absorbs your next impact.'
+  },
+  finale: {
+    title: 'SINGULARITY',
+    body: 'Top of the mass ladder. Nothing left in this field out-masses you. ' +
+          'Continue to keep devouring the endless field.'
   },
   wormhole: {
     title: 'WORMHOLE',
@@ -4116,6 +4567,7 @@ function syncSettingsUI() {
   setSetting(el.contrastBtn, highContrast ? 'On' : 'Off', highContrast);
   setSetting(el.threatBtn, threatReadout ? 'On' : 'Off', threatReadout);
   setSetting(el.eventBtn, pauseOnEvent ? 'On' : 'Off', pauseOnEvent);
+  setSetting(el.ghostBtn, ghostData ? (ghostOn ? 'On' : 'Off') : 'No ghost yet', ghostOn && !!ghostData);
   if (el.musicRange) el.musicRange.value = String(Math.round(Snd.musicVol * 100));
   if (el.sfxRange) el.sfxRange.value = String(Math.round(Snd.sfxVol * 100));
   if (el.musicVal) el.musicVal.textContent = Math.round(Snd.musicVol * 100) + '%';
@@ -4163,6 +4615,210 @@ function setControl(m) {
   joy.active = false; joy.dx = 0; joy.dy = 0;
   drag.active = false;
   syncSettingsUI();
+}
+
+// Pre-run variants (Downwell Styles model): starting rules, never stat
+// unlocks. A permanent size or drain buff would delete the threat inversion
+// the whole game is built on; a choice of starting rules is replayability
+// with no asset cost and no power creep across runs.
+const VARMODS = {
+  normal: { name: 'Standard', hint: 'the run as designed', decayMul: 1, comboWin: 1.35, waveEvery: 20, thresh: 0.95, driftExp: null, startMul: 1 },
+  titan:  { name: 'Titan', hint: 'triple starting mass, double drain', decayMul: 2, comboWin: 1.35, waveEvery: 20, thresh: 0.95, driftExp: null, startMul: 3 },
+  wisp:   { name: 'Wisp', hint: 'nimble hands, hungry hole: eats to its own size, drains fast', decayMul: 1.5, comboWin: 1.35, waveEvery: 20, thresh: 1.00, driftExp: 0.15, startMul: 1 },
+  monk:   { name: 'Monk', hint: 'long combo breath, slower pulse', decayMul: 1, comboWin: 1.85, waveEvery: 24, thresh: 0.95, driftExp: null, startMul: 1 }
+};
+const VARIANT_ORDER = ['normal', 'titan', 'wisp', 'monk'];
+let variant = lsGet('variant', 'normal');
+if (!VARMODS[variant]) variant = 'normal';
+function COMBO_WINDOW_V() { return VARMODS[variant].comboWin; }
+function WAVE_EVERY() { return VARMODS[variant].waveEvery; }
+// One lethality rule for the whole game: shockwaves, arrows, threat line,
+// gravity and collisions all read the same predicate, including greed gates.
+function edibleAt(e) {
+  if (e.greedT > 0) return true;      // greed gate: this one is fair game
+  return e.r <= p.r * VARMODS[variant].thresh;
+}
+
+function syncVariantPick() {
+  if (el.varPick) {
+    for (const b of el.varPick.querySelectorAll('button')) {
+      b.classList.toggle('on', b.dataset.var === variant);
+    }
+    el.varPick.dataset.sel = variant;
+  }
+  if (el.varHint) el.varHint.textContent = VARMODS[variant].hint;
+}
+
+function setVariant(m) {
+  if (!VARMODS[m]) return;
+  variant = m;
+  lsSet('variant', m);
+  syncVariantPick();
+  syncSettingsUI();
+}
+
+/* ---------- parametric missions (3 at a time, Jetpack Joyride model) --- */
+// The Investment gap: nothing in run N changes run N+1. Missions are the
+// cheapest answer and need no content pipeline -- every objective reads a
+// counter the game already tracks. Completed missions roll a fresh one.
+const MISSION_POOL = [
+  { id: 'era4',      need: 4,    text: 'Reach era 4',                  prog: () => runStats.era },
+  { id: 'combo15',   need: 15,   text: 'Peak combo ×15',               prog: () => runStats.peakCombo },
+  { id: 'dwarf3',    need: 3,    text: 'Eat 3 white dwarfs in one run', prog: () => runMission.wd },
+  { id: 'survive180', need: 180, text: 'Survive 3:00',                 prog: () => Math.floor(elapsed) },
+  { id: 'wave8',     need: 8,    text: 'One shockwave kills 8',        prog: () => runMission.waveBest },
+  { id: 'ark2',      need: 2,    text: 'Eat 2 ark ships in one run',   prog: () => runMission.ark },
+  { id: 'pulsar2',   need: 2,    text: 'Eat 2 pulsars in one run',     prog: () => runMission.pulsar },
+  { id: 'score5k',   need: 5000, text: 'Score 5,000 in one run',       prog: () => Math.floor(score) },
+  { id: 'graze20',   need: 20,   text: 'Graze danger 20 times in one run', prog: () => runMission.graze }
+];
+function MISSION_DEF(id) {
+  for (const d of MISSION_POOL) if (d.id === id) return d;
+  return null;
+}
+function dealMissionSet() {
+  const ids = MISSION_POOL.map((d) => d.id);
+  const out = [];
+  while (out.length < 3 && ids.length) {
+    out.push({ id: ids.splice((Math.random() * ids.length) | 0, 1)[0], done: false });
+  }
+  return out;
+}
+let missions = [];
+function loadMissions() {
+  const arr = Array.isArray(save.missions) ? save.missions : null;
+  const ok = (m) => m && MISSION_DEF(m.id);
+  if (arr && arr.length === 3 && arr.every(ok)) {
+    missions = arr.map((m) => ({ id: m.id, done: !!m.done }));
+  } else {
+    missions = dealMissionSet();
+    try { saveSet('missions', missions); } catch (_) {}
+  }
+}
+function checkMissions() {
+  if (!runMission || state !== 'play' || !missions.length) return;
+  let changed = false;
+  for (const m of missions) {
+    if (m.done) continue;
+    const def = MISSION_DEF(m.id);
+    if (def && def.prog() >= def.need) {
+      m.done = true;
+      changed = true;
+      toast('MISSION — ' + def.text, 2.4);
+      Snd.sting('mission');
+      buzz(50);
+    }
+  }
+  if (changed) {
+    try { saveSet('missions', missions); } catch (_) {}
+    renderMissions();
+  }
+}
+function renderMissions() {
+  if (!el.missions) return;
+  el.missions.innerHTML = '';
+  for (const m of missions) {
+    const def = MISSION_DEF(m.id);
+    if (!def) continue;
+    const row = document.createElement('div');
+    row.className = 'mrow' + (m.done ? ' done' : '');
+    const tick = document.createElement('span');
+    tick.className = 'tick';
+    tick.textContent = m.done ? '✓' : '○';
+    const tx = document.createElement('span');
+    let label = def.text;
+    if (!m.done) {
+      try { label += ' — ' + Math.min(def.prog(), def.need) + '/' + def.need; }
+      catch (_) {}
+    }
+    tx.textContent = label;
+    row.appendChild(tick);
+    row.appendChild(tx);
+    el.missions.appendChild(row);
+  }
+}
+
+/* ---------- daily seeded run (Slay the Spire Daily Climb model) -------- */
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+function dailySeedInt() {
+  const d = new Date();
+  return (d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate()) >>> 0;
+}
+function renderDaily() {
+  if (!el.dailyBtn) return;
+  el.dailyBtn.textContent = (save.daily === todayStr()) ? 'DAILY ✓' : 'DAILY';
+}
+function startDaily() {
+  if (save.daily === todayStr()) {
+    toast('Daily already run — come back tomorrow', 2.2);
+    return;
+  }
+  seedOverride = dailySeedInt();
+  start();
+  dailyRun = true;
+  toast('DAILY RUN — one attempt', 2.2);
+}
+
+/* ---------- shockwave steering pick ------------------------------------ */
+// The every-20th-combo shockwave is the perfect no-pause choice moment: the
+// game drops into slow motion, three lanes appear, and you select by
+// steering -- the input you are already holding. Timeout resolves to the
+// middle lane (the classic shockwave), so indecision costs nothing.
+const PICK_OPTS = [
+  { name: 'ABSORB', sub: 'eat all edibles in view' },
+  { name: 'SHOCK', sub: 'classic shockwave' },
+  { name: 'AEGIS', sub: 'ignore impacts 6s' }
+];
+function startPick() {
+  if (state !== 'play') return;
+  if (pickT > 0) { pendingWave = 0.28; return; }  // already choosing: queue it
+  pickT = 2.4;
+  pickHold = { l: 0, c: 0, r: 0 };
+  buzz(20);
+}
+function resolvePick(i) {
+  if (pickT <= 0 && !pickHold) return;
+  pickT = 0;
+  pickHold = null;
+  if (i === 0) pickAbsorb();
+  else if (i === 2) {
+    shield = 3.6;   // ~6 s at the 0.6/s shield decay
+    toast('AEGIS — impacts ignored', 2.0);
+    waves.push({ x: p.x, y: p.y, r: p.r, max: p.r * 6, t: 0, hue: 45 });
+    if (Snd.ac) Snd.tone(520, 'sine', 0.16, 0.01, 0.4, 5);
+  } else {
+    pendingWave = 0.28;   // shockwave with a wind-up
+  }
+}
+function pickAbsorb() {
+  const R = viewWorldRadius();
+  const R2 = R * R;
+  let n = 0, total = 0;
+  for (let i = ents.length - 1; i >= 0 && n < 15; i--) {
+    const o = ents[i];
+    const dx = o.x - p.x, dy = o.y - p.y;
+    if (dx * dx + dy * dy > R2) continue;
+    if (o.darkMatter || (o.civ && o.civ !== 'ark') || !edibleAt(o)) continue;
+    const gain = Math.max(1, Math.round(o.r * 0.42 * comboMult()));
+    p.area += o.r * o.r * CONSUME_YIELD;
+    score += gain;
+    total += gain;
+    burstFx(o.x, o.y, 6, o.r, 0.9, entHue(o.r / p.r));
+    ents.splice(i, 1);
+    n++;
+  }
+  p.r = Math.sqrt(p.area);
+  satiatedT = Math.max(satiatedT, 1.0);
+  if (n) {
+    toast('ABSORBED +' + fmt(total), 1.8);
+    Snd.blip(combo);
+  } else {
+    toast('NOTHING TO ABSORB', 1.4);
+  }
+  checkMissions();
 }
 
 // Screen-space anchor used by the two drag schemes.
@@ -4345,6 +5001,21 @@ if (el.ctrlPick) {
   });
 }
 
+if (el.varPick) {
+  el.varPick.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-var]') : null;
+    if (!b) return;
+    e.stopPropagation();
+    ensureAudio();
+    setVariant(b.dataset.var);
+    if (Snd.ac) Snd.tick(900, 1.0, 0.06, 0.06);
+  });
+}
+
+if (el.dailyBtn) {
+  el.dailyBtn.addEventListener('click', (e) => { e.stopPropagation(); startDaily(); });
+}
+
 function toggleMute() {
   ensureAudio();
   Snd.muted = !Snd.muted;
@@ -4431,6 +5102,15 @@ el.eventBtn.addEventListener('click', (e) => {
   lsSet('eventPause', pauseOnEvent ? '1' : '0');
   syncSettingsUI();
 });
+
+if (el.ghostBtn) {
+  el.ghostBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ghostOn = !ghostOn;
+    lsSet('ghost', ghostOn ? '1' : '0');
+    syncSettingsUI();
+  });
+}
 
 if (el.musicRange) {
   el.musicRange.addEventListener('input', () => {
@@ -4642,6 +5322,7 @@ try {
 
 applyA11y();
 buildPips();
+loadMissions();
 syncSettingsUI();
 if (el.buildTag) el.buildTag.textContent = 'BUILD ' + BUILD_ID;
 
@@ -4660,8 +5341,8 @@ try {
   fatal((err && err.stack) || String(err));
 }
 
-// The service worker has now caused more confusion than it ever solved. It
-// kept serving stale JS after fixes, which is exactly what produced "your
+// The service worker has now caused more confusion than it ever solved.
+// It kept serving stale JS after fixes, which is exactly what produced "your
 // changes didn't work" and "nothing is visible". Unregister it so the browser
 // always loads the build actually on disk. Nothing is lost: the Android app
 // never used it -- Capacitor bundles the assets into the APK directly.
@@ -4670,3 +5351,462 @@ if ('serviceWorker' in navigator) {
     .then((regs) => { for (const r of regs) r.unregister(); })
     .catch(() => {});
 }
+
+/* ============================================================
+   NEW: Meta-progression systems
+   Stardust currency, upgrades, daily rewards, skins, achievements,
+   field guide, leaderboard, near-miss feedback, rare windows.
+   All appended below; nothing above this line is modified.
+   ============================================================ */
+
+/* ---------- Stardust + Upgrades ---------- */
+let stardust = parseInt(lsGet('stardust', 0), 10) || 0;
+let upgrades = lsGet('upgrades', { gravity: 0, accretion: 0, horizon: 0, singularity: 0 });
+if (typeof upgrades !== 'object' || upgrades === null) upgrades = { gravity: 0, accretion: 0, horizon: 0, singularity: 0 };
+
+const UPGRADE_DEFS = [
+  { key: 'gravity', name: 'Gravity Well', desc: '+5% starting radius, +10% consume range, +15% pull', max: 5 },
+  { key: 'accretion', name: 'Accretion Disk', desc: '+10% combo duration, +1 shockwave radius, -5% decay', max: 5 },
+  { key: 'horizon', name: 'Event Horizon', desc: '+1 shield, +20% pulsar shield, +1 magnetar clear', max: 5 },
+  { key: 'singularity', name: 'Singularity', desc: 'Faster eras, +1 rare spawn, +1 mission slot', max: 5 }
+];
+
+function upgradeCost(level) { return (level + 1) * 10; }
+function upgradeLevel(key) { return upgrades[key] || 0; }
+
+function earnStardust(amount) {
+  stardust += amount;
+  try { saveSet('stardust', stardust); } catch (_) {}
+}
+
+/* ---------- Daily Rewards (28-day cumulative) ---------- */
+let dailyRewards = Array.isArray(save.dailyRewards) ? save.dailyRewards.slice() : [];
+let dailyStreak = parseInt(lsGet('dailyStreak', 0), 10) || 0;
+
+function dailyRewardForDay(day) {
+  if (day <= 6) return { stardust: 5 + day, skin: null };
+  if (day === 7) return { stardust: 25, skin: 'red_giant' };
+  if (day === 14) return { stardust: 50, skin: 'veteran' };
+  if (day === 21) return { stardust: 75, skin: 'quasar' };
+  if (day === 28) return { stardust: 150, skin: 'nebula' };
+  if (day % 7 === 0) return { stardust: 20, skin: null };
+  return { stardust: 5 + (day % 7), skin: null };
+}
+
+function claimDailyReward() {
+  const today = new Date();
+  const dayIndex = Math.floor(today.getTime() / (24 * 60 * 60 * 1000)) % 28;
+  if (dailyRewards.includes(dayIndex)) {
+    toast('Already claimed today', 1.6);
+    return;
+  }
+  dailyRewards.push(dayIndex);
+  dailyStreak++;
+  const reward = dailyRewardForDay(dailyStreak);
+  earnStardust(reward.stardust);
+  if (reward.skin) unlockSkin(reward.skin);
+  try { saveSet('dailyRewards', dailyRewards); saveSet('dailyStreak', dailyStreak); } catch (_) {}
+  toast('+' + reward.stardust + ' STARDUST', 2.2);
+  Snd.sting('mission');
+  renderDailyReward();
+}
+
+/* ---------- Skins ---------- */
+let skins = lsGet('skins', { default: true });
+let activeSkin = lsGet('activeSkin', 'default');
+if (typeof skins !== 'object' || skins === null) skins = { default: true };
+
+function unlockSkin(id) {
+  if (skins[id]) return;
+  skins[id] = true;
+  try { saveSet('skins', skins); } catch (_) {}
+  toast('SKIN UNLOCKED', 2.0);
+  Snd.sting('mission');
+}
+
+function checkSkinUnlocks() {
+  if (era >= 3) unlockSkin('red_giant');
+  if (era >= 5) unlockSkin('quasar');
+}
+
+/* ---------- Achievements ---------- */
+let achievements = lsGet('achievements', {});
+if (typeof achievements !== 'object' || achievements === null) achievements = {};
+
+const ACH_DEFS = {
+  first_eat: { name: 'First Meal', desc: 'Eat your first body' },
+  first_era: { name: 'Stellar', desc: 'Reach era 1' },
+  era5: { name: 'Supermassive', desc: 'Reach era 5' },
+  combo20: { name: 'Combo Master', desc: 'Reach combo 20' },
+  eat1000: { name: 'Glutton', desc: 'Eat 1,000 bodies total' },
+  eat_pulsar: { name: 'Pulsar Hunter', desc: 'Eat a pulsar' },
+  eat_wormhole: { name: 'Wormhole Rider', desc: 'Eat a wormhole' },
+  eat_magnetar: { name: 'Magnetar Breaker', desc: 'Eat a magnetar' },
+  eat_quasar: { name: 'Quasar Devourer', desc: 'Eat a quasar' },
+  survive180: { name: 'Survivor', desc: 'Survive 3 minutes' },
+  score10k: { name: 'High Scorer', desc: 'Score 10,000 in one run' },
+  daily7: { name: 'Dedicated', desc: 'Claim 7 daily rewards' },
+  daily28: { name: 'Committed', desc: 'Claim 28 daily rewards' }
+};
+
+function unlockAchievement(id) {
+  if (achievements[id]) return;
+  achievements[id] = true;
+  try { saveSet('achievements', achievements); } catch (_) {}
+  const def = ACH_DEFS[id];
+  toast('ACHIEVEMENT: ' + (def ? def.name : id), 2.6);
+  Snd.sting('mission');
+  buzz(60);
+}
+
+function checkAchievements() {
+  if (score > 0) unlockAchievement('first_eat');
+  if (era >= 1) unlockAchievement('first_era');
+  if (era >= 5) unlockAchievement('era5');
+  if (combo >= 20) unlockAchievement('combo20');
+  if (elapsed >= 180) unlockAchievement('survive180');
+  if (score >= 10000) unlockAchievement('score10k');
+  if (dailyRewards.length >= 7) unlockAchievement('daily7');
+  if (dailyRewards.length >= 28) unlockAchievement('daily28');
+}
+
+/* ---------- Field Guide ---------- */
+let fieldGuide = lsGet('fieldGuide', {});
+if (typeof fieldGuide !== 'object' || fieldGuide === null) fieldGuide = {};
+
+const FIELD_GUIDE_BODIES = [
+  'rocky', 'ice', 'ocean', 'desert', 'barren', 'asteroid', 'uranus', 'neptune',
+  'star', 'giant', 'lava', 'rogue', 'rival', 'brownDwarf', 'whiteDwarf',
+  'pulsar', 'wormhole', 'magnetar', 'quasar', 'darkMatter'
+];
+
+const FIELD_GUIDE_FACTS = {
+  rocky: 'A barren world of stone and iron, not so different from home.',
+  ice: 'A frozen shell over a hidden ocean, cracked by tidal forces.',
+  ocean: 'A world entirely of water, hundreds of kilometres deep.',
+  desert: 'Dunes of iron oxide under a thin carbon dioxide sky.',
+  barren: 'A dead world, baked by day and frozen by night.',
+  asteroid: 'A loose rubble pile barely held together by its own gravity.',
+  uranus: 'Tipped on its side, its bands run pole to pole.',
+  neptune: 'The windiest planet: storms at two thousand kilometres per hour.',
+  star: 'A ball of fusing hydrogen, pouring light into the void.',
+  giant: 'A gas giant with no surface, only deeper and denser gas.',
+  lava: 'A world still cooling from its formation, oceans of magma.',
+  rogue: 'A planet with no star, wandering the dark between systems.',
+  rival: 'Another singularity. Only one of you is leaving.',
+  brownDwarf: 'A failed star, too small to ignite, too large to be a planet.',
+  whiteDwarf: 'The dead core of a star, a teaspoon weighs six tonnes.',
+  pulsar: 'A spinning neutron star, beaming radiation like a lighthouse.',
+  wormhole: 'A shortcut through spacetime. No one knows where it leads.',
+  magnetar: 'A neutron star with a field strong enough to strip atoms.',
+  quasar: 'A supermassive hole devouring a galaxy, outshining the stars.',
+  darkMatter: 'Invisible mass. You know it is there only by its gravity.'
+};
+
+function discoverBody(type) {
+  if (fieldGuide[type]) return;
+  fieldGuide[type] = true;
+  try { saveSet('fieldGuide', fieldGuide); } catch (_) {}
+  toast('FIELD GUIDE: ' + (BODY_NAME[type] || type), 2.0);
+}
+
+/* ---------- Weekly Leaderboard ---------- */
+let weeklyScores = Array.isArray(save.weeklyScores) ? save.weeklyScores.slice() : [];
+let myWeeklyBest = parseInt(lsGet('myWeeklyBest', 0), 10) || 0;
+let totalEaten = parseInt(lsGet('totalEaten', 0), 10) || 0;
+let totalRuns = parseInt(lsGet('totalRuns', 0), 10) || 0;
+let totalPlayTime = parseInt(lsGet('totalPlayTime', 0), 10) || 0;
+
+function weekKey() {
+  const d = new Date();
+  const onejan = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+}
+
+function submitScore(sc) {
+  const wk = weekKey();
+  if (!weeklyScores.length || weeklyScores[0].week !== wk) {
+    weeklyScores = [{ week: wk, scores: [] }];
+  }
+  weeklyScores[0].scores.push(sc);
+  weeklyScores[0].scores.sort((a, b) => b - a);
+  weeklyScores[0].scores = weeklyScores[0].scores.slice(0, 10);
+  if (sc > myWeeklyBest) myWeeklyBest = sc;
+  try { saveSet('weeklyScores', weeklyScores); saveSet('myWeeklyBest', myWeeklyBest); } catch (_) {}
+}
+
+/* ---------- Rare Body Windows ---------- */
+let runsSinceLastRare = parseInt(lsGet('runsSinceLastRare', 0), 10) || 0;
+let rareWindowActive = false;
+
+function checkRareWindow() {
+  runsSinceLastRare++;
+  if (runsSinceLastRare >= 5 || (runsSinceLastRare >= 3 && rng() < 0.5)) {
+    rareWindowActive = true;
+    runsSinceLastRare = 0;
+  }
+  try { saveSet('runsSinceLastRare', runsSinceLastRare); } catch (_) {}
+}
+
+/* ---------- Button Press Sounds ---------- */
+document.addEventListener('click', (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest('button') : null;
+  if (btn && Snd.ac && !Snd.muted) {
+    try { Snd.tick(880, 1.0, 0.04, 0.06); } catch (_) {}
+  }
+});
+
+/* ---------- New DOM references ---------- */
+const el2 = {};
+['menuObservatoryBtn', 'menuFieldGuideBtn', 'menuLeaderboardBtn',
+ 'fgCloseBtn', 'drCloseBtn', 'drClaimBtn', 'lbCloseBtn', 'obsCloseBtn',
+ 'fgGrid', 'fgProgress', 'drCalendar', 'drInfo', 'lbList', 'lbInfo',
+ 'obsStardust', 'obsRuns', 'obsEaten', 'obsTime', 'obsUpgrades',
+ 'overNearMiss', 'observatory', 'fieldguide', 'dailyreward', 'leaderboard',
+ 'menu'].forEach((id) => { el2[id] = document.getElementById(id); });
+
+/* ---------- Observatory Panel ---------- */
+function openObservatory() {
+  state = 'paused';
+  panel = 'observatory';
+  renderObservatory();
+  show(el.observatory);
+  hide(el.menu); hide(el.pause); hide(el.settings);
+  Snd.setDrone(false, 0);
+}
+
+function renderObservatory() {
+  if (el2.obsStardust) el2.obsStardust.textContent = stardust;
+  if (el2.obsRuns) el2.obsRuns.textContent = totalRuns;
+  if (el2.obsEaten) el2.obsEaten.textContent = totalEaten;
+  if (el2.obsTime) el2.obsTime.textContent = Math.floor(totalPlayTime / 60) + ':' + String(Math.floor(totalPlayTime % 60)).padStart(2, '0');
+  if (!el2.obsUpgrades) return;
+  el2.obsUpgrades.innerHTML = '';
+  for (const def of UPGRADE_DEFS) {
+    const lvl = upgrades[def.key] || 0;
+    const cost = upgradeCost(lvl);
+    const maxed = lvl >= def.max;
+    const row = document.createElement('div');
+    row.className = 'obs-upgrade';
+    row.innerHTML =
+      '<div class="obs-upgrade-info">' +
+        '<div class="obs-upgrade-name">' + def.name + ' <span class="obs-upgrade-level">L' + lvl + '/' + def.max + '</span></div>' +
+        '<div class="obs-upgrade-desc">' + def.desc + '</div>' +
+      '</div>' +
+      '<button class="obs-upgrade-btn"' + (maxed || stardust < cost ? ' disabled' : '') + '>' +
+        (maxed ? 'MAX' : cost + ' ✦') +
+      '</button>';
+    const btn = row.querySelector('button');
+    if (btn && !maxed) {
+      btn.addEventListener('click', () => {
+        if (stardust >= cost && lvl < def.max) {
+          stardust -= cost;
+          upgrades[def.key] = lvl + 1;
+          try { saveSet('stardust', stardust); saveSet('upgrades', upgrades); } catch (_) {}
+          toast(def.name + ' L' + (lvl + 1), 1.8);
+          Snd.sting('mission');
+          renderObservatory();
+        }
+      });
+    }
+    el2.obsUpgrades.appendChild(row);
+  }
+}
+
+/* ---------- Field Guide Panel ---------- */
+function openFieldGuide() {
+  state = 'paused';
+  panel = 'fieldguide';
+  renderFieldGuide();
+  show(el.fieldguide);
+  hide(el.menu); hide(el.pause); hide(el.settings);
+  Snd.setDrone(false, 0);
+}
+
+function renderFieldGuide() {
+  if (!el2.fgGrid) return;
+  el2.fgGrid.innerHTML = '';
+  let found = 0;
+  for (const type of FIELD_GUIDE_BODIES) {
+    const discovered = !!fieldGuide[type];
+    if (discovered) found++;
+    const cell = document.createElement('div');
+    cell.className = 'fg-cell' + (discovered ? ' discovered' : ' locked');
+    cell.innerHTML =
+      '<div class="fg-swatch"></div>' +
+      '<div class="fg-name">' + (discovered ? (BODY_NAME[type] || type) : '???') + '</div>';
+    el2.fgGrid.appendChild(cell);
+  }
+  if (el2.fgProgress) el2.fgProgress.textContent = found + ' / ' + FIELD_GUIDE_BODIES.length + ' discovered';
+}
+
+/* ---------- Daily Reward Panel ---------- */
+function openDailyReward() {
+  state = 'paused';
+  panel = 'dailyreward';
+  renderDailyReward();
+  show(el.dailyreward);
+  hide(el.menu); hide(el.pause); hide(el.settings);
+  Snd.setDrone(false, 0);
+}
+
+function renderDailyReward() {
+  if (!el2.drCalendar) return;
+  el2.drCalendar.innerHTML = '';
+  const today = Math.floor(new Date().getTime() / (24 * 60 * 60 * 1000)) % 28;
+  for (let i = 0; i < 28; i++) {
+    const claimed = dailyRewards.includes(i);
+    const isToday = i === today;
+    const future = i > today;
+    const day = document.createElement('div');
+    day.className = 'dr-day' + (claimed ? ' claimed' : '') + (isToday ? ' today' : '') + (future ? ' future' : '');
+    const reward = dailyRewardForDay(i + 1);
+    day.innerHTML = '<div class="dr-num">' + (i + 1) + '</div><div class="dr-ico">' + (claimed ? '✓' : (reward.skin ? '★' : '✦')) + '</div>';
+    el2.drCalendar.appendChild(day);
+  }
+  if (el2.drInfo) {
+    const nextClaim = dailyRewards.includes(today) ? 'Come back tomorrow!' : 'Claim your reward!';
+    el2.drInfo.textContent = 'Streak: ' + dailyStreak + ' days · ' + nextClaim;
+  }
+  if (el2.drClaimBtn) el2.drClaimBtn.style.display = dailyRewards.includes(today) ? 'none' : '';
+}
+
+/* ---------- Leaderboard Panel ---------- */
+function openLeaderboard() {
+  state = 'paused';
+  panel = 'leaderboard';
+  renderLeaderboard();
+  show(el.leaderboard);
+  hide(el.menu); hide(el.pause); hide(el.settings);
+  Snd.setDrone(false, 0);
+}
+
+function renderLeaderboard() {
+  if (!el2.lbList) return;
+  el2.lbList.innerHTML = '';
+  const wk = weekKey();
+  const entry = weeklyScores.find((w) => w.week === wk);
+  const scores = entry ? entry.scores : [];
+  if (!scores.length) {
+    el2.lbList.innerHTML = '<div class="hint dim">No scores yet this week. Be the first!</div>';
+    return;
+  }
+  for (let i = 0; i < scores.length; i++) {
+    const isMe = scores[i] === myWeeklyBest;
+    const row = document.createElement('div');
+    row.className = 'lb-row' + (isMe ? ' me' : '');
+    row.innerHTML =
+      '<span class="lb-rank">' + (i + 1) + '</span>' +
+      '<span class="lb-name">' + (isMe ? 'You' : 'Player') + '</span>' +
+      '<span class="lb-score">' + fmt(scores[i]) + '</span>';
+    el2.lbList.appendChild(row);
+  }
+}
+
+/* ---------- Near-Miss Death Feedback ---------- */
+function computeNearMiss() {
+  const lines = [];
+  const nextEraScore = (era + 1) * 1200;
+  const awayFromEra = nextEraScore - score;
+  if (awayFromEra > 0 && awayFromEra < 300) {
+    lines.push('One more eat would have reached ' + ERAS[(era + 1) % ERAS.length]);
+  }
+  for (const def of UPGRADE_DEFS) {
+    const lvl = upgrades[def.key] || 0;
+    if (lvl < def.max) {
+      const cost = upgradeCost(lvl);
+      if (cost - stardust > 0 && cost - stardust < 20) {
+        lines.push('Need ' + (cost - stardust) + ' more Stardust for ' + def.name);
+        break;
+      }
+    }
+  }
+  return lines[0] || '';
+}
+
+/* ---------- Wire up new buttons ---------- */
+if (el2.menuObservatoryBtn) el2.menuObservatoryBtn.addEventListener('click', (e) => { e.stopPropagation(); openObservatory(); });
+if (el2.menuFieldGuideBtn) el2.menuFieldGuideBtn.addEventListener('click', (e) => { e.stopPropagation(); openFieldGuide(); });
+if (el2.menuLeaderboardBtn) el2.menuLeaderboardBtn.addEventListener('click', (e) => { e.stopPropagation(); openLeaderboard(); });
+if (el2.fgCloseBtn) el2.fgCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el.fieldguide); show(el.menu); state = 'menu'; panel = null; toMenu(); });
+if (el2.drCloseBtn) el2.drCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el.dailyreward); show(el.menu); state = 'menu'; panel = null; toMenu(); });
+if (el2.drClaimBtn) el2.drClaimBtn.addEventListener('click', (e) => { e.stopPropagation(); claimDailyReward(); });
+if (el2.lbCloseBtn) el2.lbCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el.leaderboard); show(el.menu); state = 'menu'; panel = null; toMenu(); });
+if (el2.obsCloseBtn) el2.obsCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el.observatory); show(el.menu); state = 'menu'; panel = null; toMenu(); });
+
+/* ---------- Hook into existing systems ---------- */
+// Stardust earning: hook into consume() by wrapping the original
+const _origConsume = consume;
+consume = function(e, idx) {
+  const type = e.body && e.body.type;
+  const result = _origConsume.apply(this, arguments);
+  // Earn stardust
+  let earned = Math.floor(score / 100) - Math.floor((score - (e.r * e.r * CONSUME_YIELD > 0 ? 1 : 0)) / 100);
+  if (type === 'pulsar') earned += 5;
+  else if (type === 'wormhole') earned += 3;
+  else if (type === 'magnetar') earned += 3;
+  else if (type === 'quasar') earned += 5;
+  else if (type === 'star') earned += 2;
+  if (earned > 0) earnStardust(earned);
+  // Field guide
+  if (type) discoverBody(type);
+  // Achievements
+  if (type === 'pulsar') unlockAchievement('eat_pulsar');
+  if (type === 'wormhole') unlockAchievement('eat_wormhole');
+  if (type === 'magnetar') unlockAchievement('eat_magnetar');
+  if (type === 'quasar') unlockAchievement('eat_quasar');
+  totalEaten++;
+  try { saveSet('totalEaten', totalEaten); } catch (_) {}
+  // Skin: pulsar rare drop
+  if (type === 'pulsar' && rng() < 0.005) unlockSkin('pulsar');
+  // Skin: feast (100 bodies in one run)
+  if (totalEaten >= 100) unlockSkin('feast');
+  return result;
+};
+
+// Hook into die() for near-miss feedback and stats
+const _origDie = die;
+die = function() {
+  totalRuns++;
+  totalPlayTime += elapsed;
+  submitScore(score);
+  try { saveSet('totalRuns', totalRuns); saveSet('totalPlayTime', totalPlayTime); } catch (_) {}
+  // Veteran skin
+  if (totalRuns >= 50) unlockSkin('veteran');
+  // Near-miss feedback
+  const nearMiss = computeNearMiss();
+  if (el2.overNearMiss && nearMiss) el2.overNearMiss.textContent = nearMiss;
+  // Fasting skin: survived 120s without eating (check before death)
+  if (elapsed >= 120) unlockSkin('fasting');
+  checkAchievements();
+  checkSkinUnlocks();
+  return _origDie.apply(this, arguments);
+};
+
+// Hook into start() for rare windows
+const _origStart = start;
+start = function() {
+  checkRareWindow();
+  return _origStart.apply(this, arguments);
+};
+
+// Hook into update() for achievement checks
+const _origUpdate = update;
+update = function(dt) {
+  const result = _origUpdate.apply(this, arguments);
+  checkAchievements();
+  checkSkinUnlocks();
+  return result;
+};
+
+// Hook into toMenu() to render new panels
+const _origToMenu = toMenu;
+toMenu = function() {
+  renderDailyReward();
+  renderFieldGuide();
+  renderObservatory();
+  return _origToMenu.apply(this, arguments);
+};
+
+// Initial render
+setTimeout(() => { renderDailyReward(); renderFieldGuide(); renderObservatory(); }, 100);

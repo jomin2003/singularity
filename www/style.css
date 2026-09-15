@@ -721,6 +721,33 @@ body.no-motion .segmented::before { transition: none; }
    min-height reserves a blank 48px band in the middle of the footer. */
 #histStrip:empty { display: none; }
 
+/* ---------- Meta-progression buttons row ---------- */
+.menu-meta-row {
+  display: flex;
+  gap: var(--s-1);
+  justify-content: center;
+  width: 100%;
+  margin-top: var(--s-1);
+}
+
+.meta-btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--c-panel-line);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .04);
+  color: rgba(170, 205, 235, .6);
+  cursor: pointer;
+  transition: color .16s ease-out, background .16s ease-out, border-color .16s ease-out;
+}
+
+.meta-btn svg { width: 18px; height: 18px; display: block; }
+.meta-btn:hover { color: rgba(220, 240, 255, .92); border-color: rgba(79, 240, 255, .35); }
+.meta-btn:active { background: rgba(79, 240, 255, .1); }
+
 /* ---------- Run report ---------- */
 .report {
   display: flex;
@@ -1017,7 +1044,608 @@ body.hc .chip { border-color: #fff; color: #fff; background: #000; }
 body.hc #comboValue { color: #fff; text-shadow: none; }
 body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 
+/* ---------- Missions (three at a time) ----------
+   Same inset-panel language as the how-to rows, with the accent border
+   carrying state: dim while open, cyan once done. */
+#missions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+#missions:empty { display: none; }
+
+.mrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  font-size: var(--t-body);
+  line-height: 1.45;
+  text-align: left;
+  color: rgba(190, 215, 240, .78);
+  background: var(--c-panel);
+  border-left: 2px solid rgba(150, 185, 215, .4);
+  border-radius: 0 10px 10px 0;
+}
+
+.mrow .tick {
+  flex: 0 0 18px;
+  text-align: center;
+  color: rgba(150, 185, 215, .55);
+}
+
+.mrow.done { border-left-color: var(--cyan); }
+.mrow.done .tick { color: var(--cyan); }
+.mrow.done { color: rgba(190, 215, 240, .55); }
+
+/* ---------- Four-column segmented (variant picker) ----------
+   Same sliding pill as the three-column control picker, one extra stop. */
+.segmented.cols4::before { width: calc((100% - 8px) / 4); }
+.segmented.cols4[data-sel="titan"]::before { transform: translateX(100%); }
+.segmented.cols4[data-sel="wisp"]::before { transform: translateX(200%); }
+.segmented.cols4[data-sel="monk"]::before { transform: translateX(300%); }
+
+/* ---------- Observe rows ----------
+   Label/value pairs for the observation panel. Unstyled until now, which
+   left the whole panel as undifferentiated text. */
+.obs-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 6px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+
+.obs-key {
+  font-size: var(--t-label);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(150, 185, 215, .55);
+}
+
+.obs-val {
+  font-size: var(--t-body);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--ls-tight);
+  font-variant-numeric: tabular-nums;
+  color: #eaf6ff;
+  text-align: right;
+}
+
 /* ---------- Fatal error surface, so a blank screen is never silent ---------- */
+/* ============================================================
+   NEW: Glass card treatment for ALL overlays
+   The menu already had this. Now game-over, pause, settings, event,
+   and observe panels share the same glass language so the whole
+   UI feels like one cohesive product.
+   ============================================================ */
+
+/* Glass card: the signature surface. Shared by menu and all overlays. */
+.glass-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
+  max-height: 92vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-2);
+  border-radius: var(--r-lg);
+  background: linear-gradient(160deg, rgba(24, 34, 54, .74), rgba(9, 14, 26, .68));
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+  backdrop-filter: blur(16px) saturate(120%);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .07) inset;
+  animation: cardReveal .35s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+/* 1px gradient border via masked pseudo-element (border-image can't round corners) */
+.glass-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(160deg,
+    rgba(79, 240, 255, .50), rgba(155, 107, 255, .22) 45%, rgba(255, 255, 255, .05));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+@keyframes cardReveal {
+  from { opacity: 0; transform: translateY(24px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Stagger children so they arrive in sequence */
+.glass-card > *:nth-child(1) { animation-delay: .00s; }
+.glass-card > *:nth-child(2) { animation-delay: .04s; }
+.glass-card > *:nth-child(3) { animation-delay: .08s; }
+.glass-card > *:nth-child(4) { animation-delay: .12s; }
+.glass-card > *:nth-child(5) { animation-delay: .16s; }
+.glass-card > *:nth-child(6) { animation-delay: .20s; }
+.glass-card > *:nth-child(7) { animation-delay: .24s; }
+
+/* Glass card title */
+.glass-title {
+  font-family: var(--font-ui);
+  font-size: var(--t-heading);
+  font-weight: 800;
+  letter-spacing: var(--ls-label);
+  margin-right: -.3em;
+  color: var(--cyan);
+  text-shadow: 0 0 24px rgba(79, 240, 255, .55);
+}
+
+/* Glass card body */
+.glass-body {
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  line-height: 1.55;
+  color: rgba(190, 215, 240, .78);
+  max-width: 320px;
+}
+
+/* Glass card footer */
+.glass-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  width: 100%;
+  margin-top: auto;
+}
+
+/* Glass card rows (label + value) */
+.glass-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+
+.glass-row-key {
+  font-size: var(--t-label);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(150, 185, 215, .55);
+}
+
+.glass-row-val {
+  font-size: var(--t-body);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--ls-tight);
+  font-variant-numeric: tabular-nums;
+  color: #eaf6ff;
+  text-align: right;
+}
+
+/* Glass card button row */
+.glass-btn-row {
+  display: flex;
+  gap: var(--s-1);
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+/* ============================================================
+   NEW: Ghost button surface treatment
+   Ghost buttons were flat bordered text. Now they have a subtle
+   surface so they read as pressable, not as labels.
+   ============================================================ */
+.btn.ghost {
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(150, 200, 230, .26);
+  color: #cfe6f7;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, .06) inset,
+    0 4px 16px rgba(0, 0, 0, .2);
+  padding: 13px 34px;
+  margin-top: 0;
+  transition: background .12s ease-out, transform .12s ease-out, box-shadow .12s ease-out;
+}
+
+.btn.ghost:hover { background: rgba(255, 255, 255, .08); }
+.btn.ghost:active {
+  transform: scale(.96);
+  background: rgba(255, 255, 255, .02);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .15);
+}
+
+/* ============================================================
+   NEW: Toast slide-in (directional entrance)
+   Toasts now slide from the top with a slight overshoot instead
+   of just fading in place.
+   ============================================================ */
+.toast-item {
+  font-family: var(--font-ui);
+  font-size: var(--t-label);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  white-space: nowrap;
+  color: #eaf6ff;
+  padding: 6px var(--s-2);
+  border-radius: var(--r-sm);
+  background: rgba(8, 14, 26, .74);
+  border: 1px solid var(--c-panel-line);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: translateY(-12px) scale(.92);
+  transition: opacity .25s ease-out, transform .3s cubic-bezier(.2, .8, .2, 1);
+}
+
+.toast-item.show { opacity: 1; transform: translateY(0) scale(1); }
+
+/* ============================================================
+   NEW: Combo milestone pulse
+   When one away from a shockwave, the combo bar pulses.
+   ============================================================ */
+@keyframes comboReady {
+  0%, 100% { box-shadow: 0 0 6px rgba(79, 240, 255, .45); }
+  50% { box-shadow: 0 0 18px rgba(79, 240, 255, .9); }
+}
+
+#comboBar.ready i.on {
+  animation: comboReady .5s ease-in-out 3;
+}
+
+/* ============================================================
+   NEW: Settings toggle dots
+   Boolean settings show a colored dot next to the value.
+   ============================================================ */
+.setting[aria-pressed="true"] .setting-val::before,
+.setting[aria-pressed="false"] .setting-val::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  transition: background .15s ease-out, box-shadow .15s ease-out;
+}
+
+.setting[aria-pressed="true"] .setting-val::before {
+  background: var(--cyan);
+  box-shadow: 0 0 8px rgba(79, 240, 255, .6);
+}
+
+.setting[aria-pressed="false"] .setting-val::before {
+  background: rgba(150, 185, 215, .35);
+}
+
+/* ============================================================
+   NEW: Custom slider styling
+   Native range inputs look system-default. Custom tracks match
+   the glass language.
+   ============================================================ */
+.slider-row input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, .1);
+  cursor: pointer;
+}
+
+.slider-row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 10px rgba(79, 240, 255, .4), 0 2px 6px rgba(0, 0, 0, .4);
+  cursor: pointer;
+}
+
+.slider-row input[type=range]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 10px rgba(79, 240, 255, .4), 0 2px 6px rgba(0, 0, 0, .4);
+  cursor: pointer;
+}
+
+/* ============================================================
+   NEW: Observatory panel
+   A glass card showing real astronomical readouts.
+   ============================================================ */
+#observe.glass-card {
+  max-width: 360px;
+}
+
+/* ============================================================
+   NEW: Field Guide panel
+   Collection album showing discovered bodies.
+   ============================================================ */
+#fieldguide.glass-card {
+  max-width: 420px;
+}
+
+.fg-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.fg-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border-radius: var(--r-sm);
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-line);
+  text-align: center;
+  transition: border-color .15s ease-out;
+}
+
+.fg-cell.discovered {
+  border-color: rgba(79, 240, 255, .35);
+}
+
+.fg-cell .fg-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .1);
+}
+
+.fg-cell.discovered .fg-swatch {
+  background: var(--cyan);
+  box-shadow: 0 0 8px rgba(79, 240, 255, .4);
+}
+
+.fg-cell .fg-name {
+  font-size: var(--t-micro);
+  letter-spacing: var(--ls-tight);
+  color: rgba(190, 215, 240, .7);
+}
+
+.fg-cell.locked .fg-name {
+  color: rgba(150, 185, 215, .35);
+}
+
+.fg-progress {
+  font-size: var(--t-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(190, 215, 240, .6);
+  text-align: center;
+  width: 100%;
+}
+
+/* ============================================================
+   NEW: Daily Reward panel
+   28-day cumulative calendar.
+   ============================================================ */
+#dailyreward.glass-card {
+  max-width: 420px;
+}
+
+.dr-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  width: 100%;
+}
+
+.dr-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border-radius: var(--r-sm);
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-line);
+  font-size: var(--t-micro);
+  color: rgba(190, 215, 240, .6);
+  text-align: center;
+}
+
+.dr-day.claimed {
+  border-color: rgba(79, 240, 255, .35);
+  color: var(--cyan);
+}
+
+.dr-day.today {
+  border-color: var(--violet);
+  box-shadow: 0 0 8px rgba(155, 107, 255, .3);
+}
+
+.dr-day.future {
+  opacity: .4;
+}
+
+.dr-day .dr-num {
+  font-weight: var(--w-strong);
+  font-size: var(--t-label);
+}
+
+.dr-day .dr-ico {
+  font-size: 10px;
+}
+
+.dr-info {
+  font-size: var(--t-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(190, 215, 240, .6);
+  text-align: center;
+  width: 100%;
+}
+
+/* ============================================================
+   NEW: Achievements toast
+   A special toast for unlocking achievements.
+   ============================================================ */
+.toast-item.achievement {
+  background: linear-gradient(135deg, rgba(79, 240, 255, .18), rgba(155, 107, 255, .12));
+  border-color: rgba(79, 240, 255, .35);
+  color: #eaf6ff;
+}
+
+/* ============================================================
+   NEW: Near-miss death feedback
+   Enhanced game-over screen with "almost made it" messaging.
+   ============================================================ */
+#over.glass-card {
+  max-width: 400px;
+}
+
+/* ============================================================
+   NEW: Leaderboard panel
+   Weekly rankings.
+   ============================================================ */
+#leaderboard.glass-card {
+  max-width: 420px;
+}
+
+.lb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-line);
+}
+
+.lb-row.me {
+  border-color: rgba(79, 240, 255, .35);
+  background: rgba(79, 240, 255, .06);
+}
+
+.lb-rank {
+  font-weight: var(--w-strong);
+  font-size: var(--t-body);
+  color: var(--cyan);
+  min-width: 28px;
+}
+
+.lb-name {
+  flex: 1;
+  font-size: var(--t-body);
+  color: rgba(190, 215, 240, .78);
+  text-align: left;
+}
+
+.lb-score {
+  font-weight: var(--w-strong);
+  font-size: var(--t-body);
+  font-variant-numeric: tabular-nums;
+  color: #eaf6ff;
+}
+
+/* ============================================================
+   NEW: Observatory panel rows (override obs-row to use glass-row)
+   ============================================================ */
+.obs-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 6px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+
+.obs-key {
+  font-size: var(--t-label);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(150, 185, 215, .55);
+}
+
+.obs-val {
+  font-size: var(--t-body);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--ls-tight);
+  font-variant-numeric: tabular-nums;
+  color: #eaf6ff;
+  text-align: right;
+}
+
+/* ============================================================
+   NEW: Observatory upgrade rows
+   ============================================================ */
+.obs-upgrade {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-line);
+}
+
+.obs-upgrade-info {
+  flex: 1;
+  text-align: left;
+}
+
+.obs-upgrade-name {
+  font-size: var(--t-label);
+  font-weight: var(--w-strong);
+  color: #eaf6ff;
+}
+
+.obs-upgrade-desc {
+  font-size: var(--t-micro);
+  color: rgba(150, 185, 215, .55);
+}
+
+.obs-upgrade-level {
+  font-size: var(--t-micro);
+  color: var(--cyan);
+  margin-right: 8px;
+}
+
+.obs-upgrade-btn {
+  padding: 6px 12px;
+  font-size: var(--t-micro);
+  font-weight: var(--w-strong);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--c-panel-line);
+  background: rgba(79, 240, 255, .1);
+  color: var(--cyan);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s ease-out;
+}
+
+.obs-upgrade-btn:hover { background: rgba(79, 240, 255, .2); }
+.obs-upgrade-btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   NEW: Fatal error surface
+   ============================================================ */
 .fatal {
   position: fixed;
   inset: 0;
