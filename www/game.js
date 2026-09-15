@@ -56,7 +56,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b17';
+const BUILD_ID = 'b18';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -374,6 +374,7 @@ const Snd = {
   setMusicVol(v) {
     this.musicVol = clamp(v, 0, 1);
     if (this.musicBus) this.musicBus.gain.setTargetAtTime(this.musicVol, this.ac.currentTime, 0.05);
+    this.updateMusicAssetVol();
   },
 
   setSfxVol(v) {
@@ -520,8 +521,62 @@ const Snd = {
     o.start(t); o.stop(t + 1.15);
   },
 
+  // ---- Bundled soundtrack -----------------------------------------------
+  // www/audio ships five generated ambient tracks (tools/make_music.py
+  // recreates them). They play through plain Audio elements rather than the
+  // WebAudio graph: the procedural game sounds stay on their synth buses, and
+  // the music follows the MUSIC slider and the master mute without requiring
+  // anything extra of the audio context. Playback only ever starts from inside
+  // a user gesture (BEGIN / RUN AGAIN), which is what WebView's autoplay
+  // policy demands.
+  TRACKS: ['audio/01-nebula.mp3', 'audio/02-stellar.mp3', 'audio/03-intermediate.mp3',
+           'audio/04-supermassive.mp3', 'audio/05-quasar.mp3'],
+  trackIdx: 0,
+  audioEl: null,
+  musicOn: false,
+
+  updateMusicAssetVol() {
+    if (this.audioEl) this.audioEl.volume = this.muted ? 0 : this.musicVol * 0.8;
+  },
+
+  // .play() returns a Promise in real engines but undefined in some stubs, so
+  // route both start paths through this one guard.
+  playMusicAsset() {
+    try {
+      const p = this.audioEl.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (_) {}
+  },
+
+  setMusicAsset(on) {
+    this.musicOn = on;
+    if (on) {
+      if (!this.audioEl) {
+        try {
+          const a = this.audioEl = new Audio();
+          a.src = this.TRACKS[this.trackIdx % this.TRACKS.length];
+          // Cross to the next track on end -- never a hard silence gap.
+          a.addEventListener('ended', () => {
+            if (!this.musicOn || !this.audioEl) return;
+            this.trackIdx = (this.trackIdx + 1) % this.TRACKS.length;
+            this.audioEl.src = this.TRACKS[this.trackIdx];
+            this.updateMusicAssetVol();
+            this.playMusicAsset();
+          });
+        } catch (_) { this.audioEl = null; return; }
+      }
+      this.updateMusicAssetVol();
+      this.playMusicAsset();
+    } else if (this.audioEl) {
+      this.audioEl.pause();
+    }
+  },
+
   setDrone(on, c) {
     if (!this.ac) return;
+    // Music assets ride the same on/off signal as the drone, so every existing
+    // lifecycle path (pause, death, menu, page visibility) pauses them too.
+    this.setMusicAsset(on);
     const t = this.ac.currentTime;
     this.droneGain.gain.setTargetAtTime(on ? 0.17 : 0, t, 0.4);
     this.droneFilter.frequency.setTargetAtTime(180 + Math.min(c, 40) * 24, t, 0.12);
@@ -3906,6 +3961,7 @@ function toggleMute() {
   Snd.muted = !Snd.muted;
   lsSet('muted', Snd.muted ? '1' : '0');
   if (Snd.master) Snd.master.gain.setTargetAtTime(Snd.muted ? 0 : 0.85, Snd.ac.currentTime, 0.05);
+  Snd.updateMusicAssetVol();
   el.muteBtn.classList.toggle('off', Snd.muted);
   el.muteBtn.setAttribute('aria-pressed', Snd.muted ? 'true' : 'false');
   syncSettingsUI();
@@ -4083,6 +4139,40 @@ function shareRun() {
       if (!blob) { toast('Sharing unavailable on this device'); return; }
       let file = null;
       try { file = new File([blob], 'singularity.png', { type: 'image/png' }); } catch (_) {}
+
+      // The Android WebView has no Web Share API at all -- Chrome exposes
+      // navigator.share, the embedded WebView does not -- and Capacitor's
+      // WebView installs no download handler, so both fallbacks below are
+      // silent no-ops inside the app. On native, go through the official
+      // plugins instead: write the PNG into the cache dir, then hand the file
+      // to the system share sheet.
+      const Cap = window.Capacitor;
+      if (Cap && Cap.isNativePlatform && Cap.isNativePlatform()) {
+        const Share = Cap.Plugins && Cap.Plugins.Share;
+        const Filesystem = Cap.Plugins && Cap.Plugins.Filesystem;
+        if (Share && Filesystem) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const b64 = String(reader.result).split(',')[1] || '';
+            Filesystem.writeFile({
+              path: 'singularity-' + Math.round(score) + '.png',
+              data: b64,
+              directory: 'CACHE'
+            })
+              .then((res) => Share.share({
+                title: 'SINGULARITY',
+                text: 'Score ' + fmt(score),
+                files: [res.uri],
+                dialogTitle: 'Share your run'
+              }))
+              .catch(() => toast('Sharing unavailable on this device'));
+          };
+          reader.onerror = () => toast('Sharing unavailable on this device');
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+
       if (file && navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
         navigator.share({ files: [file], title: 'SINGULARITY', text: 'Score ' + fmt(score) })
           .catch(() => {});
@@ -4171,6 +4261,11 @@ try {
   resize();
   reset();
   toMenu();
+  // Dev hook for store screenshots: `?shot=play` boots straight into a run so
+  // a headless browser can capture real gameplay frames (see PLAY_STORE.md).
+  try {
+    if (new URLSearchParams(location.search).get('shot') === 'play') start();
+  } catch (_) {}
   requestAnimationFrame((t) => { last = t; frame(t); });
 } catch (err) {
   fatal((err && err.stack) || String(err));

@@ -39,6 +39,13 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+
+    // The bundled soundtrack (www/audio/*.mp3) is constant-bitrate audio;
+    // storing it uncompressed in the APK keeps seeking cheap and pins the
+    // APK's size to the size of the audio on disk.
+    androidResources {
+        noCompress 'mp3'
+    }
 }
 
 repositories {

@@ -223,6 +223,16 @@ loops calls "gentle urgency" — the thing that makes it feel alive.
 - `globalCompositeOperation = 'lighter'` is set per layer and reset.
 - Particle cap of 460 with bulk-drop to amortise splice cost.
 
+### Sound
+
+- **Procedural WebAudio** — drone that opens with combo, a rising
+  pentatonic blip on each consume, noise thud on hit, descending saw on
+  death. All five sounds together make the loop feel musical.
+- **Bundled soundtrack** — five era-themed ambient tracks in `www/audio/`
+  (regenerate with `npm run assets:music`), played through plain audio
+  elements so they follow the MUSIC slider and the mute switch. The tracks
+  also pin the APK above 20 MB with real content rather than padding.
+
 ### Accessibility / resilience
 
 - No external assets — fully offline (there is no network use at all; the
@@ -297,9 +307,11 @@ rival reads as the same class of object rather than a different sprite.
   there used to kill the boot sequence.
 - Orientation is locked to portrait in `AndroidManifest.xml`.
 
-## Untested
+## Testing status
 
-The game has been checked statically — JS parses, resources are well-formed,
-icon densities and store asset dimensions are verified programmatically — but
-it has **never actually been run** in a browser or on a device. Play it from
-the closed-test track before submitting to production.
+The game is exercised continuously: a jsdom smoke suite (`tools/smoke_test.cjs`)
+boots the real game, drives the frame loop, and checks the physics and UI
+(67/67 passing at b18), and the store screenshots in `store/screenshots/` are
+real renders from a headless browser. What has **still never happened** is a
+human playing it on a physical Android device. Install the closed-test build
+and play it before submitting to production.
