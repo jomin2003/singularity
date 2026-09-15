@@ -46,8 +46,11 @@ jobs:
           java-version: '21'
           cache: gradle
 
+      # Same 'tools' package problem as build-apk.yml -- see the comment there.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
       - name: Verify signing secrets
         run: |

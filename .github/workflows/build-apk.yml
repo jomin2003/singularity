@@ -49,8 +49,17 @@ jobs:
           java-version: '21'
           cache: gradle
 
+      # Do NOT let this action install its default package set. The default is
+      # 'tools platform-tools', and Google removed the legacy 'tools' package
+      # from the SDK repository -- sdkmanager now exits 1 with
+      # "Warning: Failed to find package 'tools'", which fails the whole job
+      # before Gradle ever runs. platform-tools (adb) is all we need here;
+      # Gradle pulls the platform and build-tools it wants itself, which works
+      # because this action accepts the licences.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
