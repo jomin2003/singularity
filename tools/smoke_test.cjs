@@ -186,11 +186,19 @@ vc.on('jsdomError', (e) => {
 });
 vc.on('error', (...a) => errors.push('console.error: ' + a.map(String).join(' ')));
 
+// Pin the field. The simulation is seeded now, and a suite that rolls a fresh
+// world every run is not a test, it is a lottery -- this one was quietly flaky
+// for exactly that reason and only usually got lucky. Override with
+// SMOKE_SEED=<n> to explore other fields.
+const SMOKE_SEED = process.env.SMOKE_SEED || '20260915';
+const BASE_URL = process.env.SMOKE_URL || 'http://localhost/';
+const SMOKE_URL = BASE_URL + (BASE_URL.indexOf('?') >= 0 ? '&' : '?') + 'seed=' + SMOKE_SEED;
+
 const dom = new JSDOM(inlined, {
   runScripts: 'dangerously',
   // Set SMOKE_URL to a file:// URL to exercise the double-click-to-open path,
   // where localStorage and service workers are unavailable.
-  url: process.env.SMOKE_URL || 'http://localhost/',
+  url: SMOKE_URL,
   virtualConsole: vc,
   beforeParse(window) {
     window.HTMLCanvasElement.prototype.getContext = function (type) {

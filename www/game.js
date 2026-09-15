@@ -13,9 +13,45 @@
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
-const rand = (a, b) => a + Math.random() * (b - a);
 const mod = (a, n) => ((a % n) + n) % n;
 const smooth = (perSecond, dt) => 1 - Math.pow(perSecond, dt);
+
+// ---- Randomness ---------------------------------------------------------
+// One seeded stream for the entire simulation, so a run is reproducible from a
+// seed. That is the foundation for daily seeds, ghost replay, and bug reports
+// that can actually be re-run rather than described.
+//
+// Previously the game used rng() at 35 call sites, which made a run
+// unreproducible by construction -- no amount of recording could replay it.
+// Seeding is also what lets two players get an identical field on a given day.
+let rngState = 1;
+function seedRng(s) { rngState = (s >>> 0) || 1; }
+function rng() {
+  rngState = rngState + 0x6D2B79F5 | 0;
+  let t = Math.imul(rngState ^ rngState >>> 15, 1 | rngState);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+const rand = (a, b) => a + rng() * (b - a);
+
+// The seed a run was generated from. Kept so a run can be described exactly,
+// and so ?seed=NNN pins a field -- which turns "it broke when a giant spawned
+// on top of me" into a URL someone else can actually reproduce.
+let runSeed = 0, runCounter = 0;
+function seedFromUrl() {
+  try {
+    const v = new URLSearchParams(location.search).get('seed');
+    if (v === null) return null;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? (n >>> 0) : null;
+  } catch (_) { return null; }
+}
+function nextRunSeed() {
+  const forced = seedFromUrl();
+  if (forced !== null) return forced;
+  runCounter++;
+  return (Date.now() ^ Math.imul(runCounter, 2654435761)) >>> 0;
+}
 
 // Deterministic PRNG: a body's surface must look identical every frame.
 function mulberry32(a) {
@@ -34,6 +70,16 @@ const ENT_TARGET = 110;              // entities kept alive
 const COMBO_WINDOW = 1.35;           // seconds to keep a chain alive
 const CONSUME_YIELD = 0.34;          // how much of a body becomes your mass
 const STAR_BONUS = 3;                // score multiplier for eating a star
+
+/* ---------- real-unit scale ----------
+   The HUD reports how big the hole actually is. The anchor is chosen so a run
+   climbs through scales a player can picture: P0 reads as roughly one Earth
+   diameter, a few meals in reads as Neptune, then Jupiter, then the Sun, and
+   only a very long run reaches orbital distances. The ratios between the steps
+   are real; only the absolute anchor is a game choice. */
+const KM_PER_UNIT = 300;             // P0 (22) is about 13,200 km across
+const AU_KM = 1.495978707e8;
+const LY_KM = 9.4607e12;             // one light-year in km
 
 /* ---------- movement physics ----------
    SPEED_REF is the one number that sets how fast the hole can ever go:
@@ -56,7 +102,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b18';
+const BUILD_ID = 'b19';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -117,6 +163,7 @@ let coachStep = 0;      // first-run scripted hint index
 let bestAtRunStart = 0; // previous best, for the "N away from BEST" line
 let runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
 let comboPopT = 0;      // combo-heat pop envelope
+let nextSystemId = 1;   // unique ID for star systems
 
 // Last input device. The floating joystick's home ring is a touch affordance;
 // Tracks the last thing that drove the hole. Only used to decide whether the
@@ -171,6 +218,7 @@ const el = {
   hudBest: document.getElementById('hudBest'),
   chips: document.getElementById('chips'),
   threatOut: document.getElementById('threatOut'),
+  scaleOut: document.getElementById('scaleOut'),
   comboWrap: document.getElementById('comboWrap'),
   comboValue: document.getElementById('comboValue'),
   comboBar: document.getElementById('comboBar'),
@@ -197,6 +245,11 @@ const el = {
   restartBtn: document.getElementById('restartBtn'),
   settingsBtn: document.getElementById('settingsBtn'),
   homeBtn: document.getElementById('homeBtn'),
+  observe: document.getElementById('observe'),
+  obsFov: document.getElementById('obsFov'),
+  obsNearest: document.getElementById('obsNearest'),
+  obsSpan: document.getElementById('obsSpan'),
+  obsEra: document.getElementById('obsEra'),
   overHomeBtn: document.getElementById('overHomeBtn'),
   settings: document.getElementById('settings'),
   soundBtn: document.getElementById('soundBtn'),
@@ -324,6 +377,20 @@ function buzz(ms) {
 /* ============================================================
    AUDIO
    ============================================================ */
+
+// Adaptive playlist. The five shipped tracks are already named for the five
+// eras (nebula -> stellar -> intermediate -> supermassive -> quasar), so the
+// simplest "adaptive" music is to pick the track that matches where the
+// player is. A live combo nudges one slot up so a heated moment gets a more
+// intense track instead of staying on the current one.
+function pickMusicTrack() {
+  const n = Snd.TRACKS.length;
+  if (!n) return 0;
+  let idx = era % n;
+  if (combo >= 3 && comboT > 0 && idx < n - 1) idx++;
+  return idx;
+}
+
 const Snd = {
   ac: null, master: null, musicBus: null, sfxBus: null,
   droneGain: null, droneFilter: null, noise: null,
@@ -353,7 +420,7 @@ const Snd = {
     const len = Math.floor(ac.sampleRate * 0.5);
     const buf = ac.createBuffer(1, len, ac.sampleRate);
     const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    for (let i = 0; i < len; i++) d[i] = (rng() * 2 - 1) * (1 - i / len);
     this.noise = buf;
 
     const dg = this.droneGain = ac.createGain();
@@ -430,7 +497,7 @@ const Snd = {
     const f = 196 * Math.pow(2, semi / 12);
     // Slight per-note detune so a fast chain of eats does not sound like the
     // same sample retriggered.
-    this.tone(f, 'triangle', 0.19, 0.008, 0.20, 6 + Math.random() * 8);
+    this.tone(f, 'triangle', 0.19, 0.008, 0.20, 6 + rng() * 8);
     this.tick(f * 6, 1.4, 0.045, 0.03);
   },
 
@@ -554,16 +621,27 @@ const Snd = {
       if (!this.audioEl) {
         try {
           const a = this.audioEl = new Audio();
-          a.src = this.TRACKS[this.trackIdx % this.TRACKS.length];
+          // Pick a track that matches the current era so the soundtrack
+          // escalates with the player, not in fixed sequence.
+          this.trackIdx = pickMusicTrack();
+          a.src = this.TRACKS[this.trackIdx];
           // Cross to the next track on end -- never a hard silence gap.
           a.addEventListener('ended', () => {
             if (!this.musicOn || !this.audioEl) return;
-            this.trackIdx = (this.trackIdx + 1) % this.TRACKS.length;
+            this.trackIdx = pickMusicTrack();
             this.audioEl.src = this.TRACKS[this.trackIdx];
             this.updateMusicAssetVol();
             this.playMusicAsset();
           });
         } catch (_) { this.audioEl = null; return; }
+      } else {
+        // An era transition since last pick: switch immediately to the track
+        // that matches where the player is now.
+        const want = pickMusicTrack();
+        if (want !== this.trackIdx) {
+          this.trackIdx = want;
+          this.audioEl.src = this.TRACKS[this.trackIdx];
+        }
       }
       this.updateMusicAssetVol();
       this.playMusicAsset();
@@ -613,6 +691,22 @@ const RARE = ['pulsar', 'wormhole'];
 const CIV = ['shield', 'repulsor', 'driver', 'ark', 'extractor'];
 const CIV_ALERT = 900;        // score at which they notice you exist
 const CIV_MAX = 5;            // never more than this many installations
+
+// The civilisation reacts to your escalation. Early on they panic and flee
+// (arks). Once you have proven you are a threat they start building shields
+// and projecting their own gravity wells (repulsors). At supermassive scale
+// they go on the offensive: extractors skim your energy, mass drivers shoot.
+// Weighted pools make the curve gradual instead of all at once.
+const CIV_POOL_EARLY = ['ark', 'ark', 'ark', 'shield'];
+const CIV_POOL_MID   = ['ark', 'shield', 'shield', 'repulsor', 'repulsor'];
+const CIV_POOL_LATE  = ['shield', 'repulsor', 'repulsor', 'extractor', 'driver'];
+function pickCivType() {
+  let pool;
+  if (era < 2) pool = CIV_POOL_EARLY;
+  else if (era < 4) pool = CIV_POOL_MID;
+  else pool = CIV_POOL_LATE;
+  return pool[(rng() * pool.length) | 0];
+}
 
 const PLANET_PAL = {
   rocky:   { hi: '#8a7659', mid: '#6b5b4a', lo: '#3a3128', spot: '#4a4034' },
@@ -1362,6 +1456,12 @@ function glowSprite(hue) {
 }
 
 let starLayers = [];
+// Cosmic microwave background: the oldest light there is, released 380,000
+// years after the Big Bang. It is a nearly uniform glow with temperature
+// fluctuations of about one part in 100,000 -- real maps of it look like a
+// faint mottling of warm and cool patches. Drawn beneath the starfield at very
+// low alpha, it gives the void a floor instead of flat black.
+let cmbPattern = null;
 // Stellar spectral classes, weighted roughly the way a real field is weighted:
 // the sky is dominated by cool K/M dwarfs, with hot blue stars rare. The old
 // field painted every star the same rgba(198,228,255) -- one colour across
@@ -1418,13 +1518,13 @@ function buildStars() {
     const g = c.getContext('2d');
 
     for (let i = 0; i < cfg.n; i++) {
-      const x = Math.random() * px, y = Math.random() * px;
-      const cls = pickStarClass(Math.random());
+      const x = rng() * px, y = rng() * px;
+      const cls = pickStarClass(rng());
       // Luminosity drives size: hot stars are both brighter and larger, which
       // is what makes a real field read as having depth rather than being
       // scattered confetti.
-      const r = (Math.random() * cfg.maxR * cls.lum + 0.32) * DPR;
-      const a = Math.min(1, (Math.random() * 0.5 + 0.5) * cfg.a * (0.55 + cls.lum * 0.65));
+      const r = (rng() * cfg.maxR * cls.lum + 0.32) * DPR;
+      const a = Math.min(1, (rng() * 0.5 + 0.5) * cfg.a * (0.55 + cls.lum * 0.65));
       const spike = i < cfg.hero && cls.lum > 0.55;
 
       // Draw at nine offsets so a star crossing a tile edge reappears on the
@@ -1441,6 +1541,49 @@ function buildStars() {
   });
 }
 
+
+// A tileable CMB field. Built from soft overlapping blobs rather than
+// per-pixel noise: per-pixel would cost a full-canvas ImageData pass and, at
+// this alpha, would just read as film grain anyway. Seeded so the pattern is
+// stable across resizes instead of shimmering every time the window changes.
+function buildCmb() {
+  const T = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = T;
+  const g = c.getContext('2d');
+  const rr = mulberry32(20240917);          // fixed seed: one canonical sky
+  // No opaque base: the tile stays transparent and only carries the
+  // fluctuations. The nebula wash is fully opaque, so anything painted under
+  // it would simply vanish -- the CMB has to be an overlay on top of it.
+  g.globalCompositeOperation = 'lighter';
+  const N = 46;
+  for (let i = 0; i < N; i++) {
+    // Wrap at nine offsets like the starfield does, so blobs crossing an edge
+    // reappear on the far side and the tile has no seams.
+    const bx = rr() * T, by = rr() * T;
+    const rad = (18 + rr() * 46);
+    // Temperature fluctuation: slightly warm or slightly cool. Kept within a
+    // narrow band -- a strong colour spread would read as a nebula, not as
+    // the CMB.
+    const warm = rr() < 0.5;
+    const r = warm ? 120 : 90;
+    const gg = warm ? 110 : 120;
+    const b = warm ? 120 : 175;
+    const a = 0.020 + rr() * 0.028;
+    for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -1; oy <= 1; oy++) {
+        const x = bx + ox * T, y = by + oy * T;
+        const rg = g.createRadialGradient(x, y, 0, x, y, rad);
+        rg.addColorStop(0, 'rgba(' + r + ',' + gg + ',' + b + ',' + a.toFixed(4) + ')');
+        rg.addColorStop(1, 'rgba(' + r + ',' + gg + ',' + b + ',0)');
+        g.fillStyle = rg;
+        g.beginPath(); g.arc(x, y, rad, 0, TAU); g.fill();
+      }
+    }
+  }
+  g.globalCompositeOperation = 'source-over';
+  cmbPattern = ctx.createPattern(c, 'repeat');
+}
 
 let vignette = null;
 function buildVignette() {
@@ -1474,6 +1617,7 @@ function resize() {
   cvs.width = Math.round(W * DPR);
   cvs.height = Math.round(H * DPR);
   buildStars();
+  buildCmb();
   buildVignette();
   nebulaHue = -999;
   nebulaHeat = -1;
@@ -1511,7 +1655,7 @@ function desiredZoom() {
 
 function pickRadius() {
   const d = difficulty();
-  const q = Math.random();
+  const q = rng();
   if (q < 0.50) return p.r * rand(0.09, 0.30);
   if (q < 0.78) return p.r * rand(0.30, 0.72);
   if (q < 0.78 + 0.18 * (1 - 0.6 * d)) return p.r * rand(0.72, 0.94);
@@ -1547,13 +1691,13 @@ function entHue(ratio) {
 // because a body's edibility changes as you grow or shrink.
 function assignBody(e) {
   const lethal = e.r > p.r * 0.95;
-  const q = Math.random();
+  const q = rng();
   let type, sub = null;
   let spin = rand(-0.75, 0.75);
 
   if (!lethal) {
     if (q < 0.04) {                                   // rare anomaly
-      type = RARE[(Math.random() * RARE.length) | 0];
+      type = RARE[(rng() * RARE.length) | 0];
       spin = rand(-0.3, 0.3);
     } else if (q < 0.06) {                            // failed star
       type = 'brownDwarf';
@@ -1565,14 +1709,14 @@ function assignBody(e) {
       type = 'asteroid';
       spin = rand(-2.6, 2.6);
     } else {
-      type = EDIBLE[(Math.random() * EDIBLE.length) | 0];
+      type = EDIBLE[(rng() * EDIBLE.length) | 0];
     }
   } else {
     if (q < 0.40) {
       // A star you cannot yet swallow is an evolved giant, weighted toward
       // red giants the way real stellar populations are.
       type = 'star';
-      const g = Math.random();
+      const g = rng();
       sub = g < 0.62 ? 'redgiant' : (g < 0.88 ? 'supergiant' : 'bluegiant');
       spin = rand(-0.18, 0.18);
     } else if (q < 0.45) {                            // magnetar
@@ -1582,10 +1726,10 @@ function assignBody(e) {
       type = 'quasar';
       spin = 0;
     } else {
-      type = LETHAL[(Math.random() * LETHAL.length) | 0];
+      type = LETHAL[(rng() * LETHAL.length) | 0];
     }
   }
-  e.body = { type, variant: (Math.random() * VARIANTS) | 0, spin, sub };
+  e.body = { type, variant: (rng() * VARIANTS) | 0, spin, sub };
   initRare(e);
 }
 
@@ -1608,26 +1752,26 @@ function initRare(e) {
 // Asteroids travel in families.
 function spawnBelt() {
   const v = viewWorldRadius();
-  const a = Math.random() * TAU;
+  const a = rng() * TAU;
   const dist = rand(v * 1.2, v * 1.6);
   const bx = p.x + Math.cos(a) * dist, by = p.y + Math.sin(a) * dist;
-  const n = 4 + ((Math.random() * 5) | 0);
+  const n = 4 + ((rng() * 5) | 0);
   for (let i = 0; i < n; i++) {
-    const ra = Math.random() * TAU, rd = Math.random() * p.r * 3.2;
+    const ra = rng() * TAU, rd = rng() * p.r * 3.2;
     const spin = rand(-2.8, 2.8);
     ents.push({
       x: bx + Math.cos(ra) * rd, y: by + Math.sin(ra) * rd,
       vx: rand(-0.05, 0.05) * p.r, vy: rand(-0.05, 0.05) * p.r,
       r: p.r * rand(0.10, 0.34),
-      spin, phase: Math.random() * TAU,
-      body: { type: 'asteroid', variant: (Math.random() * VARIANTS) | 0, spin }
+      spin, phase: rng() * TAU,
+      body: { type: 'asteroid', variant: (rng() * VARIANTS) | 0, spin }
     });
   }
 }
 
 function spawnComet() {
   const v = viewWorldRadius();
-  const a = Math.random() * TAU;
+  const a = rng() * TAU;
   const dist = v * 1.5;
   const speed = rand(1.6, 3.2) * p.r;
   const spin = rand(-1, 1);
@@ -1635,27 +1779,90 @@ function spawnComet() {
   // to go and intercept, not food delivered free to a stationary player --
   // otherwise idling would out-earn the entropy decay.
   const inward = rand(0.20, 0.55);
-  const cross = rand(0.8, 1.4) * (Math.random() < 0.5 ? -1 : 1);
+  const cross = rand(0.8, 1.4) * (rng() < 0.5 ? -1 : 1);
   ents.push({
     x: p.x + Math.cos(a) * dist, y: p.y + Math.sin(a) * dist,
     vx: (-Math.cos(a) * inward - Math.sin(a) * cross) * speed,
     vy: (-Math.sin(a) * inward + Math.cos(a) * cross) * speed,
     r: p.r * rand(0.22, 0.40),
-    spin, phase: Math.random() * TAU,
-    body: { type: 'ice', variant: (Math.random() * VARIANTS) | 0, spin },
+    spin, phase: rng() * TAU,
+    body: { type: 'ice', variant: (rng() * VARIANTS) | 0, spin },
     comet: { life: 0, max: rand(11, 18) }
   });
 }
 
 // Once you are big enough to be noticed, somebody starts building.
+function spawnDarkMatter() {
+  const v = viewWorldRadius();
+  const a = rng() * TAU;
+  const dist = rand(v * 1.1, v * 1.7);
+  // Dark matter is massive: 1.4x - 2.2x the player's radius.
+  // It is invisible -- detected only by the way it lenses background stars.
+  ents.push({
+    x: p.x + Math.cos(a) * dist, y: p.y + Math.sin(a) * dist,
+    vx: 0, vy: 0,
+    r: p.r * rand(1.4, 2.2),
+    spin: 0, phase: 0,
+    darkMatter: true
+  });
+}
+
+function spawnStarSystem() {
+  const v = viewWorldRadius();
+  const a = rng() * TAU;
+  const dist = rand(v * 0.9, v * 1.4);
+  const sx = p.x + Math.cos(a) * dist;
+  const sy = p.y + Math.sin(a) * dist;
+  const sid = nextSystemId++;
+
+  // Central star -- lethal until you have grown.
+  const starR = p.r * rand(1.1, 1.55);
+  const star = {
+    x: sx, y: sy,
+    vx: rand(-0.04, 0.04) * p.r, vy: rand(-0.04, 0.04) * p.r,
+    r: starR,
+    spin: rand(-0.15, 0.15), phase: rng() * TAU,
+    body: {
+      type: 'star', variant: (rng() * VARIANTS) | 0,
+      spin: rand(-0.15, 0.15),
+      sub: (rng() < 0.65) ? 'redgiant' : ((rng() < 0.7) ? 'supergiant' : 'bluegiant')
+    },
+    systemId: sid
+  };
+  ents.push(star);
+
+  // 2-4 planets on Keplerian orbits.
+  const n = 2 + ((rng() * 3) | 0);
+  for (let i = 0; i < n; i++) {
+    const orbitR = starR * (2.0 + i * 0.85 + rng() * 0.55);
+    const angle = rng() * TAU;
+    const speed = rand(0.35, 0.9) / orbitR; // closer planets orbit faster
+    const pr = p.r * rand(0.14, 0.40);
+    ents.push({
+      x: sx + Math.cos(angle) * orbitR,
+      y: sy + Math.sin(angle) * orbitR,
+      vx: 0, vy: 0,
+      r: pr,
+      spin: rand(-1.2, 1.2),
+      phase: rng() * TAU,
+      body: {
+        type: EDIBLE[(rng() * EDIBLE.length) | 0],
+        variant: (rng() * VARIANTS) | 0,
+        spin: rand(-1.2, 1.2)
+      },
+      orbit: { id: sid, radius: orbitR, angle, speed }
+    });
+  }
+}
+
 function spawnCiv() {
   let live = 0;
   for (const e of ents) if (e.civ) live++;
   if (live >= CIV_MAX) return;
 
-  const type = CIV[(Math.random() * CIV.length) | 0];
+  const type = pickCivType();
   const v = viewWorldRadius();
-  const a = Math.random() * TAU;
+  const a = rng() * TAU;
   const dist = rand(v * 0.55, v * 1.0);
   const e = {
     x: p.x + Math.cos(a) * dist,
@@ -1677,6 +1884,10 @@ function spawnCiv() {
 }
 
 function reset() {
+  // Seed first: every spawn below draws from this stream, so the field is a
+  // pure function of the seed from here on.
+  runSeed = nextRunSeed();
+  seedRng(runSeed);
   p = { x: 0, y: 0, vx: 0, vy: 0, r: P0, area: P0 * P0 };
   ents = []; parts = []; waves = []; shots = []; slugs = []; floats = [];
   cam = { x: 0, y: 0, zoom: 1 };
@@ -1689,13 +1900,13 @@ function reset() {
   runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
   bestAtRunStart = best;
   joy.active = false; joy.dx = 0; joy.dy = 0;
-  for (let i = 0; i < ENT_TARGET; i++) spawn(Math.random() < 0.5 ? 1.15 : 1.7);
+  for (let i = 0; i < ENT_TARGET; i++) spawn(rng() < 0.5 ? 1.15 : 1.7);
   cam.zoom = desiredZoom();
 }
 
 function spawn(scaleMul) {
   const v = viewWorldRadius();
-  const a = Math.random() * TAU;
+  const a = rng() * TAU;
   // Spawn just inside the visible ring so the field is never empty around
   // the player. The old 1.14-1.7 range put everything just out of view.
   const dist = rand(v * 0.85, v * (scaleMul || 1.25));
@@ -1706,7 +1917,7 @@ function spawn(scaleMul) {
     vy: rand(-0.12, 0.12) * p.r,
     r: pickRadius(),
     spin: 0,
-    phase: Math.random() * TAU
+    phase: rng() * TAU
   };
   assignBody(e);
   e.spin = e.body.spin;
@@ -1726,7 +1937,7 @@ function absorbFx(e) {
   // Matter spirals in rather than falling straight: add a tangential kick.
   const nx = -ty / d, ny = tx / d;
   for (let i = 0; i < n; i++) {
-    const a = Math.random() * TAU;
+    const a = rng() * TAU;
     const sp = rand(0.5, 1.9) * p.r;
     addPart({
       x: e.x + Math.cos(a) * e.r * 0.7,
@@ -1748,7 +1959,7 @@ function absorbFx(e) {
 function burstFx(x, y, n, spread, scale, hue) {
   const base = (hue === undefined) ? 196 : hue;
   for (let i = 0; i < n; i++) {
-    const a = Math.random() * TAU;
+    const a = rng() * TAU;
     const sp = rand(0.6, 2.4) * (spread || p.r) * 1.4 * (scale || 1);
     addPart({
       x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
@@ -1773,7 +1984,8 @@ const BODY_NAME = {
   barren: 'dead world', asteroid: 'rubble', uranus: 'ice giant', neptune: 'ice giant',
   giant: 'gas giant', lava: 'lava world', rogue: 'rogue planet', brownDwarf: 'brown dwarf',
   whiteDwarf: 'white dwarf', pulsar: 'pulsar', wormhole: 'wormhole',
-  magnetar: 'magnetar', ark: 'ark ship'
+  magnetar: 'magnetar', ark: 'ark ship', darkMatter: 'dark matter',
+  star: 'star', rival: 'rival singularity', quasar: 'quasar'
 };
 
 // What actually finished you, for the report card and the share image.
@@ -1790,7 +2002,8 @@ const CAUSE = {
   brownDwarf: 'CRUSHED BY A BROWN DWARF',
   whiteDwarf: 'TORN APART BY DEGENERATE MATTER',
   magnetar: 'SCORCHED BY A MAGNETAR',
-  quasar: 'VAPORISED BY A QUASAR JET'
+  quasar: 'VAPORISED BY A QUASAR JET',
+  darkMatter: 'DISPERSED BY DARK MATTER'
 };
 
 // Scripted hints, run 1 only. One static line never taught anybody anything.
@@ -2263,6 +2476,9 @@ const decay = HAWKING_BASE * clamp(Math.pow(P0 / p.r, 3),
       const ddx = e.x - p.x, ddy = e.y - p.y;
       const reach = p.r + e.r * 0.5;
       if (ddx * ddx + ddy * ddy < reach * reach) {
+        // Dark matter has no surface and no collision -- you pass straight
+        // through it, but its gravity bends your trajectory.
+        if (e.darkMatter) continue;
         // Civilisation hardware is neither food nor a body to collide with.
         // A deflector dome simply throws you back off it.
         if (e.civ === 'shield') {
@@ -2298,9 +2514,11 @@ function updateEnts(dt) {
   const need = ENT_TARGET - ents.length;
   if (need > 0) {
     for (let i = 0; i < Math.min(need, 6); i++) {
-      const q = Math.random();
+      const q = rng();
       if (q < 0.10) spawnBelt();
       else if (q < 0.13) spawnComet();
+      else if (q < 0.135) spawnDarkMatter();
+      else if (q < 0.175) spawnStarSystem();
       else spawn();
     }
   }
@@ -2309,7 +2527,7 @@ function updateEnts(dt) {
   // enough for someone to have noticed.
   // Roughly one installation every 7 seconds, so they trickle in and escalate
 // rather than all appearing the instant you cross the threshold.
-  if (state === 'play' && score > CIV_ALERT && Math.random() < 0.0025) spawnCiv();
+  if (state === 'play' && score > CIV_ALERT && rng() < 0.0025) spawnCiv();
 
   const v = viewWorldRadius();
   const despawnR = v * 1.95;
@@ -2318,6 +2536,26 @@ function updateEnts(dt) {
 
   for (let i = ents.length - 1; i >= 0; i--) {
     const e = ents[i];
+
+    // Orbital motion: planets track their parent star. If the parent has been
+    // eaten or despawned, they are flung free with tangential velocity.
+    if (e.orbit) {
+      let parent = null;
+      for (const q of ents) { if (q.systemId === e.orbit.id) { parent = q; break; } }
+      if (parent) {
+        e.orbit.angle += e.orbit.speed * dt;
+        e.x = parent.x + Math.cos(e.orbit.angle) * e.orbit.radius;
+        e.y = parent.y + Math.sin(e.orbit.angle) * e.orbit.radius;
+      } else {
+        // Parent gone -- fling free with orbital tangential velocity.
+        const a = e.orbit.angle;
+        const v = e.orbit.speed * e.orbit.radius;
+        e.vx = -Math.sin(a) * v;
+        e.vy = Math.cos(a) * v;
+        e.orbit = null;
+      }
+    }
+
     const dx = p.x - e.x, dy = p.y - e.y;
     const d2 = dx * dx + dy * dy;
     if (d2 > despawnR * despawnR) {
@@ -2363,7 +2601,7 @@ function updateEnts(dt) {
           // ~3.5%/s at point blank -- meaningful pressure, not instant death.
           p.area = Math.max(1, p.area * (1 - (1 - d / reach) * 0.035 * dt));
           p.r = Math.sqrt(p.area);
-          if (Math.random() < 0.25) {
+          if (rng() < 0.25) {
             addPart({
               x: e.x, y: e.y,
               vx: -dx / d * p.r * 2, vy: -dy / d * p.r * 2,
@@ -2427,6 +2665,18 @@ function updateEnts(dt) {
           p.vy += (dx / d) * s;
         }
       }
+    }
+
+    // Dark matter: invisible, massive, pulls the player but is not pulled.
+    if (e.darkMatter && state === 'play') {
+      const d = Math.sqrt(d2) || 1;
+      const reach = p.r * 14;
+      if (d < reach) {
+        const s = (1 - d / reach) * 3.2 * p.r * dt;
+        p.vx += (-dx / d) * s;
+        p.vy += (-dy / d) * s;
+      }
+      continue;   // skip the rest of the update for this entity
     }
 
     if (e.comet) {
@@ -2558,6 +2808,9 @@ function render() {
   ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = getNebula((210 + era * 24) % 360, clamp(era / 6, 0, 1));
   ctx.fillRect(0, 0, W, H);
+  // Over the nebula wash, under the stars: the CMB is the farthest light, so
+  // it belongs behind the starfield but cannot sit under an opaque fill.
+  drawCmb();
 
   drawStars();
   drawShots();
@@ -2662,6 +2915,23 @@ function drawStars() {
     ctx.fillRect(0, 0, (W + 2 * T) * DPR, (H + 2 * T) * DPR);
     ctx.restore();
   }
+}
+
+// The CMB sits beneath everything: it is the most distant light in the
+// universe, so it gets the lowest parallax of any layer -- nearly fixed while
+// the starfield drifts over it.
+function drawCmb() {
+  if (!cmbPattern) return;
+  const T = 256;
+  const par = 0.05;
+  const ox = mod(-cam.x * par * cam.zoom, T);
+  const oy = mod(-cam.y * par * cam.zoom, T);
+  ctx.save();
+  ctx.scale(1 / DPR, 1 / DPR);
+  ctx.translate((ox - T) * DPR, (oy - T) * DPR);
+  ctx.fillStyle = cmbPattern;
+  ctx.fillRect(0, 0, (W + 2 * T) * DPR, (H + 2 * T) * DPR);
+  ctx.restore();
 }
 
 function drawShots() {
@@ -2803,6 +3073,32 @@ function drawDangerArrows() {
 
 function drawEnts() {
   for (const e of ents) {
+    // Dark matter: no body, no glow, no collision. The only visible sign is
+    // the way it lenses background starlight -- a much fainter version of the
+    // Einstein rings that surround the player. This is the whole mechanic:
+    // you know it is there because the stars behind it warp.
+    if (e.darkMatter) {
+      const dmR = e.r * 0.55;   // lensing radius smaller than the mass itself
+      ctx.globalCompositeOperation = 'lighter';
+      // Detection is the whole mechanic -- the rings must read clearly at
+      // gameplay distance or the player cannot tell where the hazard is.
+      // Two bright concentric arcs do that better than four faint ones, and
+      // they are still recognisably the same Einstein-ring language the
+      // player already knows from their own shadow.
+      const bands = [EINSTEIN_BANDS[0], EINSTEIN_BANDS[2]];
+      ctx.globalAlpha = 0.78;
+      for (let i = 0; i < bands.length; i++) {
+        const b = bands[i];
+        const rad = dmR * b.k * (1 + Math.sin(elapsed * 0.6 - i * 0.9) * 0.012);
+        ctx.strokeStyle = `rgba(225,236,255,${(b.a * 0.95).toFixed(3)})`;
+        ctx.lineWidth = Math.max(0.8, dmR * b.w * 1.3);
+        ctx.beginPath(); ctx.arc(e.x, e.y, rad, 0, TAU); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      continue;
+    }
+
     const ratio = e.r / p.r;
     // Civilisation hardware is artificial, so it gets a cold tech tint
     // instead of the edible/lethal colour language of natural bodies.
@@ -3431,7 +3727,26 @@ function threatLine() {
 }
 
 // Only touch the DOM when something actually changed -- this runs every frame.
-const hudCache = { chips: '', threat: '', warn: null, crit: null, pips: -1 };
+// The hole's real size, in whatever unit keeps the number readable. Returns
+// the diameter, because "13,200 km across" is how a person pictures an object
+// -- radius is the physically meaningful quantity but diameter is the one you
+// can see.
+function scaleReadout() {
+  const km = p.r * 2 * KM_PER_UNIT;
+  if (km >= LY_KM) {
+    const v = km / LY_KM;
+    return (v < 10 ? v.toFixed(2) : v.toFixed(1)) + ' ly ACROSS';
+  }
+  if (km >= AU_KM) {
+    const v = km / AU_KM;
+    return (v < 10 ? v.toFixed(2) : v.toFixed(1)) + ' AU ACROSS';
+  }
+  const n = Math.round(km);
+  // Thousands separators once the number gets long enough to need them.
+  return n.toLocaleString('en-US') + ' km ACROSS';
+}
+
+const hudCache = { chips: '', threat: '', scale: null, warn: null, crit: null, pips: -1 };
 
 function updateHUD() {
   // Don't let the rolling counter keep easing while paused -- nothing should
@@ -3477,6 +3792,14 @@ function updateHUD() {
   if (threat !== hudCache.threat) {
     hudCache.threat = threat;
     el.threatOut.textContent = threat;
+  }
+
+  // Real-unit size. Only meaningful while playing, and only worth touching the
+  // DOM when the rendered string actually changes.
+  const scale = (state === 'play' || state === 'paused') ? scaleReadout() : '';
+  if (scale !== hudCache.scale) {
+    hudCache.scale = scale;
+    el.scaleOut.textContent = scale;
   }
 
   const on = combo >= 3 && comboT > 0;
@@ -3610,8 +3933,65 @@ function resumeGame() {
   if (state !== 'paused') return;
   panel = null;
   state = 'play';
-  hide(el.pause); hide(el.settings); hide(el.eventPanel);
+  hide(el.pause); hide(el.settings); hide(el.eventPanel); hide(el.observe);
   last = performance.now();          // don't hand the sim one giant dt
+  Snd.setDrone(true, combo);
+}
+
+// Observation mode. A pause-and-frame view of the scene with real
+// astronomical readouts. The player has chosen to look, so this is the only
+// place where annotated numbers are welcome rather than noise.
+function computeObserveStats() {
+  // Geometric field of view in degrees. The render transform maps a world
+  // radius of viewWorldRadius() to half the screen, so the half-angle is
+  // atan(1/cam.zoom).
+  const fovRad = 2 * Math.atan(1 / cam.zoom);
+  const fovDeg = fovRad * 180 / Math.PI;
+  el.obsFov.textContent = fovDeg.toFixed(fovDeg < 10 ? 2 : 1) + '°';
+
+  // Nearest body in the field. Dark matter is included because the whole
+  // point is that you can detect it; civ hardware is excluded because it is
+  // a structure, not a celestial object. Distance converted to AU via the
+  // same scale constant the size readout uses.
+  let best = null, bd = Infinity;
+  for (const e of ents) {
+    if (e.civ) continue;
+    const d2 = (e.x - p.x) * (e.x - p.x) + (e.y - p.y) * (e.y - p.y);
+    if (d2 < bd) { bd = d2; best = e; }
+  }
+  if (!best) {
+    el.obsNearest.textContent = 'nothing in range';
+  } else {
+    const distKm = Math.sqrt(bd) * KM_PER_UNIT;
+    const au = distKm / AU_KM;
+    const type = best.darkMatter ? 'dark matter' : (BODY_NAME[best.body && best.body.type] || 'body');
+    const auStr = au >= 1
+      ? au.toFixed(au < 10 ? 2 : 1) + ' AU'
+      : (distKm >= 10000 ? Math.round(distKm).toLocaleString('en-US') + ' km'
+                         : Math.round(distKm) + ' km');
+    el.obsNearest.textContent = type + ' · ' + auStr;
+  }
+
+  el.obsSpan.textContent = scaleReadout();
+  el.obsEra.textContent = ERAS[era % ERAS.length];
+}
+
+function openObserve() {
+  if (state !== 'play') return;
+  commitBest();
+  state = 'paused';
+  panel = 'observe';
+  computeObserveStats();
+  show(el.observe);
+  Snd.setDrone(false, 0);
+}
+
+function closeObserve() {
+  if (state !== 'paused' || panel !== 'observe') return;
+  panel = null;
+  state = 'play';
+  hide(el.observe);
+  last = performance.now();
   Snd.setDrone(true, combo);
 }
 
@@ -3913,8 +4293,13 @@ window.addEventListener('keydown', (e) => {
     else if (state === 'paused') {
       if (panel === 'settings') closeSettings();
       else if (panel === 'event') closeEventPanel();
+      else if (panel === 'observe') closeObserve();
       else resumeGame();
     }
+  }
+  if (k === 'o') {
+    if (state === 'play') openObserve();
+    else if (state === 'paused' && panel === 'observe') closeObserve();
   }
   if (k === 'm') el.muteBtn.click();
 });
@@ -3939,6 +4324,10 @@ el.shareBtn.addEventListener('click', (e) => { e.stopPropagation(); shareRun(); 
 
 el.pauseBtn.addEventListener('click', (e) => { e.stopPropagation(); pauseGame(); });
 el.resumeBtn.addEventListener('click', (e) => { e.stopPropagation(); resumeGame(); });
+// Tapping anywhere on the observation overlay returns to play -- the panel
+// itself catches the gesture with stopPropagation in case we ever add inner
+// controls.
+el.observe && el.observe.addEventListener('click', (e) => { e.stopPropagation(); closeObserve(); });
 el.restartBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
 el.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); openSettings('pause'); });
 el.menuSettingsBtn.addEventListener('click', (e) => { e.stopPropagation(); openSettings('menu'); });
@@ -4079,9 +4468,9 @@ function shareRun() {
     g.fillStyle = bg; g.fillRect(0, 0, w, h);
 
     for (let i = 0; i < 220; i++) {
-      g.fillStyle = 'rgba(198,228,255,' + (0.12 + Math.random() * 0.5).toFixed(2) + ')';
+      g.fillStyle = 'rgba(198,228,255,' + (0.12 + rng() * 0.5).toFixed(2) + ')';
       g.beginPath();
-      g.arc(Math.random() * w, Math.random() * h, Math.random() * 1.5 + 0.3, 0, TAU);
+      g.arc(rng() * w, rng() * h, rng() * 1.5 + 0.3, 0, TAU);
       g.fill();
     }
 

@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=b18">
+<link rel="stylesheet" href="style.css?v=b19">
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -30,6 +30,9 @@
       <div class="hud-label">BEST</div>
       <div class="hud-value" id="hudBest">0</div>
       <div class="hud-label dim" id="threatOut"></div>
+      <!-- Real-unit size of the hole. Growth is otherwise just a bigger
+           number and a wider camera; this is what makes it legible. -->
+      <div class="hud-label dim" id="scaleOut"></div>
     </div>
   </div>
   <div id="comboWrap">
@@ -165,6 +168,21 @@
   </div>
 </div>
 
+<!-- Observation mode. A pause-and-frame view that shows real astronomical
+     readouts about whatever is on screen: field of view, nearest body, the
+     hole's true size. The player has chosen to look, so this is the only
+     place where annotated numbers feel like a feature rather than noise. -->
+<div id="observe" class="layer center overlay hidden">
+  <div class="panel">
+    <div class="panel-title">OBSERVING</div>
+    <div class="obs-row"><span class="obs-key">FIELD</span><span class="obs-val" id="obsFov"></span></div>
+    <div class="obs-row"><span class="obs-key">NEAREST</span><span class="obs-val" id="obsNearest"></span></div>
+    <div class="obs-row"><span class="obs-key">SPAN</span><span class="obs-val" id="obsSpan"></span></div>
+    <div class="obs-row"><span class="obs-key">ERA</span><span class="obs-val" id="obsEra"></span></div>
+    <div class="hint dim" id="obsHint">Press O or tap to resume</div>
+  </div>
+</div>
+
 <div id="settings" class="layer center overlay hidden">
   <div class="panel">
     <div class="panel-title">SETTINGS</div>
@@ -226,6 +244,6 @@
 <div id="toasts"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="game.js?v=b18"></script>
+<script src="game.js?v=b19"></script>
 </body>
 </html>
