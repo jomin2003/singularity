@@ -51,7 +51,7 @@ const IMPULSE_CAP = 1.9;   // knockback headroom, as a multiple of top speed
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b14';
+const BUILD_ID = 'b15';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -3475,6 +3475,9 @@ function syncControlPick() {
     for (const b of el.ctrlPick.querySelectorAll('button')) {
       b.classList.toggle('on', b.dataset.ctrl === controlMode);
     }
+    // Drives the sliding pill indicator. A data attribute rather than CSS
+    // :has(), which older Android WebView builds do not support.
+    el.ctrlPick.dataset.sel = controlMode;
   }
   if (el.ctrlHint) el.ctrlHint.textContent = CTRL_HINT[controlMode] || '';
 }
@@ -3675,6 +3678,10 @@ el.soundBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMute()
 function applyA11y() {
   document.body.classList.toggle('large', textLarge);
   document.body.classList.toggle('hc', highContrast);
+  // MOTION: OFF has to reach the menu too, not just the in-game shake. The
+  // breathing CTA and the drifting aurora are decorative motion, so they are
+  // gated by the same preference as the screen flash.
+  document.body.classList.toggle('no-motion', !motion);
 }
 
 el.motionBtn.addEventListener('click', (e) => {
@@ -3684,6 +3691,7 @@ el.motionBtn.addEventListener('click', (e) => {
   // MOTION: OFF must also kill the fullscreen white strobe -- that flash, not
   // the shake, is the actual photosensitivity risk.
   if (!motion) { shakeMag = 0; camRoll = 0; flashT = 0; eraFx = 0; }
+  applyA11y();
   syncSettingsUI();
 });
 

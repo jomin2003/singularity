@@ -52,6 +52,41 @@ changes direction within a frame. Two rules fall out of that:
 Turn `DRIFT_EXP` down if big holes feel too ponderous; set it to 0 and every
 size responds identically. `SPEED_REF` is the one to touch for overall pace.
 
+## UI design system
+
+Four rules, applied to the menu shell. They live as tokens at the top of
+`style.css` so they are enforceable rather than aspirational:
+
+- **8px grid.** Every margin, padding and gap is a multiple of `--s-1: 8px`.
+  The `--s-1..--s-4` scale is the only source of spacing.
+- **60-30-10.** 60% neutral (the dark scrim over the live scene), 30% secondary
+  (glass panel fills, `--c-panel`), 10% accent (`--cyan`, used for the primary
+  action and the selection pill).
+- **Two typefaces, four sizes.** Orbitron Black for display, the system mono for
+  everything else; `--t-display / --t-heading / --t-body / --t-caption`.
+- **Primary action wins.** The CTA is the only element with an outer glow, is
+  last in the card so it lands in the thumb zone rather than screen centre, and
+  is the only thing that breathes.
+
+The display size is capped at 40px, not 60: the wordmark now sits inside a
+400px card, and at eleven characters Orbitron Black overflows the card's 368px
+inner width beyond roughly 40px.
+
+Two implementation notes worth keeping:
+
+- **No `:has()` anywhere.** It works in current Chromium, but `minSdk` here is
+  24 and an unsupported selector silently drops the whole rule on an older
+  WebView. The segmented control's sliding pill is driven by a `data-sel`
+  attribute set in `syncControlPick()` instead.
+- **The font is bundled, not linked.** `www/fonts/orbitron-900.woff2` (6.4 kB,
+  latin subset) with its OFL licence alongside. A Google Fonts `<link>` would
+  break the offline guarantee and simply fail inside the Android wrapper, which
+  has no network at all.
+
+Menu styling is scoped to `#menu`. `.layer.center` is shared with the
+game-over, pause, settings and event panels, so nothing in the menu shell may
+leak into those.
+
 ## Layout
 
 ```
@@ -59,6 +94,7 @@ www/                       the game -- this is what ships inside the app
   index.html               app shell, UI overlays
   style.css                dark, glowy, mobile-first UI
   game.js                  everything: rendering, physics, audio, input, loop
+  fonts/                   Orbitron Black woff2 + its OFL licence
   manifest.webmanifest     PWA installability (browser build)
   sw.js                    offline cache -- browser only, skipped inside the app
   icons/                   PWA launcher icons

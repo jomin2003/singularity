@@ -1,10 +1,51 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* ---------- Display face ----------
+   Orbitron Black, SIL OFL 1.1 -- licence at www/fonts/OFL.txt.
+   Bundled rather than linked from a CDN on purpose: the game is offline-first,
+   and inside the Android wrapper there is no network at all, so a Google Fonts
+   <link> would just fail and silently fall back. 6.4 kB, latin subset. */
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('fonts/orbitron-900.woff2') format('woff2');
+}
+
 :root {
   --cyan: #4ff0ff;
   --violet: #9b6bff;
   --amber: #ffb057;
   --bg: #05060f;
+
+  /* One display face, one body face. Never three. */
+  --font-display: 'Orbitron', 'Arial Black', 'Segoe UI', sans-serif;
+  --font-body: "SF Mono", "Segoe UI Mono", "Roboto Mono", ui-monospace, monospace;
+
+  /* Type scale -- four sizes total: display / heading / body / caption.
+     The display size is capped at 40px because the title now lives INSIDE a
+     400px card: at 11 characters, Orbitron Black overflows the card's 368px
+     inner width beyond roughly 40px. A 60px display type is not achievable in
+     a card this narrow without clipping the wordmark. */
+  --t-display: clamp(24px, 8.2vw, 40px);
+  --t-heading: 24px;
+  --t-body: 13px;
+  --t-caption: 10px;
+
+  /* 8px grid. Every margin, padding and gap is a multiple of these. */
+  --s-1: 8px;
+  --s-2: 16px;
+  --s-3: 24px;
+  --s-4: 32px;
+
+  --r-card: 20px;
+  --r-pill: 999px;
+
+  /* 60-30-10: neutral / secondary / accent. */
+  --c-accent: rgba(79, 240, 255, 1);
+  --c-panel: rgba(255, 255, 255, .05);
+  --c-panel-line: rgba(255, 255, 255, .09);
 }
 
 html, body {
@@ -13,7 +54,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: #eaf6ff;
-  font-family: "SF Mono", "Segoe UI Mono", "Roboto Mono", ui-monospace, monospace;
+  font-family: var(--font-body);
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -40,7 +81,7 @@ html, body {
   inset: 0;
   pointer-events: none;
   z-index: 10;
-  padding: calc(env(safe-area-inset-top, 0px) + 18px) 20px 20px;
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) var(--s-3) var(--s-3);
 }
 
 .layer.center {
@@ -217,23 +258,27 @@ html, body {
 
 /* ---------- Menu / game over ---------- */
 .title {
-  font-size: clamp(30px, 10.5vw, 60px);
-  font-weight: 800;
-  letter-spacing: .2em;
-  margin-right: -.2em;
+  font-family: var(--font-display);
+  font-size: var(--t-display);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: .08em;
+  margin-right: -.08em;
   background: linear-gradient(180deg, #ffffff 0%, var(--cyan) 55%, var(--violet) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 0 26px rgba(79, 240, 255, .35));
+  /* drop-shadow rather than text-shadow: the glyphs are transparent (the fill
+     comes from the background clip), so a text-shadow would paint a blurred
+     silhouette rather than a clean halo. */
+  filter: drop-shadow(0 0 30px rgba(79, 240, 255, .4));
 }
 
 .subtitle {
-  font-size: 12px;
+  font-size: var(--t-caption);
   letter-spacing: .34em;
   color: rgba(170, 205, 235, .62);
-  margin-top: -6px;
-  margin-bottom: 4px;
+  margin-top: calc(var(--s-1) * -1);
 }
 
 .over-title {
@@ -266,77 +311,332 @@ html, body {
   50% { opacity: .45 }
 }
 
-/* ---------- Menu how-to ---------- */
+/* ============================================================
+   MENU SHELL
+   Scoped to #menu on purpose. .layer.center is shared with the game-over,
+   pause, settings and event panels, so nothing here may leak into those.
+   ============================================================ */
+
+/* Anchored low so the primary action lands in the thumb zone instead of dead
+   centre of the screen. The scrim is deliberately lighter than the other
+   overlays' -- the card brings its own backdrop, and the live black hole
+   moving behind the glass is part of the look. */
+#menu {
+  justify-content: flex-end;
+  padding-bottom: max(var(--s-4), 9vh);
+  background: radial-gradient(ellipse at 50% 64%,
+    rgba(5, 6, 15, .70) 0%,
+    rgba(5, 6, 15, .84) 58%,
+    rgba(5, 6, 15, .94) 100%);
+}
+
+/* Aurora wash behind the glass. Pure CSS gradients -- still no image assets. */
+#menuAurora {
+  position: absolute;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: .55;
+  background:
+    radial-gradient(38% 30% at 22% 26%, rgba(79, 240, 255, .18), transparent 70%),
+    radial-gradient(34% 28% at 78% 20%, rgba(155, 107, 255, .17), transparent 70%),
+    radial-gradient(46% 34% at 52% 84%, rgba(79, 240, 255, .11), transparent 72%);
+  filter: blur(24px);
+  animation: auroraDrift 28s ease-in-out infinite alternate;
+}
+
+@keyframes auroraDrift {
+  from { transform: translate3d(-3%, -2%, 0) scale(1.04); }
+  to   { transform: translate3d(3%, 2%, 0) scale(1.10); }
+}
+
+#menuCard {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-2);
+  border-radius: var(--r-card);
+  background: linear-gradient(160deg, rgba(24, 34, 54, .74), rgba(9, 14, 26, .68));
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+  backdrop-filter: blur(16px) saturate(120%);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .07) inset;
+}
+
+/* 1px gradient border. border-image cannot round corners, so this is the
+   masked-pseudo-element technique instead. */
+#menuCard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(160deg,
+    rgba(79, 240, 255, .50), rgba(155, 107, 255, .22) 45%, rgba(255, 255, 255, .05));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Settings, demoted out of the main flow to a quiet utility control in the
+   screen corner -- it was colliding with the wordmark when it sat inside the
+   card, because the title is centred and nearly fills the card's width. */
+.gear-btn {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + var(--s-1));
+  right: var(--s-1);
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(170, 205, 235, .48);
+  cursor: pointer;
+  transition: color .16s ease-out, background .16s ease-out;
+}
+.gear-btn svg { width: 20px; height: 20px; display: block; }
+.gear-btn:hover { color: rgba(220, 240, 255, .92); }
+.gear-btn:active { background: rgba(255, 255, 255, .07); }
+
+/* Primary action: the strongest treatment on the screen. Three layers --
+   gradient fill, outer glow, inner highlight -- plus a noise overlay so the
+   fill does not read as flat plastic. */
+.btn.cta {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  min-width: 240px;
+  max-width: 288px;
+  margin-top: 0;
+  padding: 18px 32px;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: var(--t-body);
+  letter-spacing: .18em;
+  color: #04141c;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #7ceaff 0%, #35b6e4 52%, #1a7fae 100%);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .35);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, .55) inset,
+    0 -2px 0 rgba(0, 0, 0, .18) inset,
+    0 10px 28px rgba(34, 167, 216, .45),
+    0 0 48px rgba(79, 240, 255, .35);
+  animation: ctaBreathe 2.4s ease-in-out infinite;
+}
+
+.btn.cta::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: .16;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+@keyframes ctaBreathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.03); }
+}
+
+/* The press feedback must win over the breathing transform. */
+.btn.cta:active { animation: none; transform: scale(.96); }
+
+.title { animation: titleGlow 5s ease-in-out infinite; }
+
+@keyframes titleGlow {
+  0%, 100% { filter: drop-shadow(0 0 22px rgba(79, 240, 255, .32)); }
+  50%      { filter: drop-shadow(0 0 36px rgba(79, 240, 255, .52)); }
+}
+
+/* Footer: best score and history in a bordered chip, not loose dim text. */
+.menu-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  width: 100%;
+}
+
+.foot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 6px 16px;
+  border: 1px solid var(--c-panel-line);
+  border-radius: var(--r-pill);
+  background: var(--c-panel);
+  font-size: var(--t-caption);
+  letter-spacing: .18em;
+  color: rgba(200, 225, 245, .8);
+}
+
+.foot-ico {
+  display: grid;
+  place-items: center;
+  color: var(--cyan);
+  filter: drop-shadow(0 0 8px rgba(79, 240, 255, .6));
+}
+.foot-ico svg { width: 15px; height: 15px; display: block; }
+
+/* Deliberately no :has() anywhere in this file. It is fine in current Chromium,
+   but minSdk here is 24 and an unsupported selector would drop the whole rule
+   on an older WebView. Everything is expressed with classes and data
+   attributes instead. */
+
+/* ---------- Motion preferences ----------
+   The breathing CTA and the drifting aurora are decorative motion, so both the
+   OS setting and the in-game MOTION toggle must be able to stop them. */
+@media (prefers-reduced-motion: reduce) {
+  #menuAurora, .btn.cta, .title { animation: none; }
+  .segmented::before { transition: none; }
+}
+
+body.no-motion #menuAurora,
+body.no-motion .btn.cta,
+body.no-motion .title { animation: none; }
+body.no-motion .segmented::before { transition: none; }
+
+/* Short viewports (landscape phones): compact the card so the CTA stays
+   on-screen without scrolling. */
+@media (max-height: 560px) {
+  #menu { padding-bottom: var(--s-2); }
+  #menuCard { gap: var(--s-1); padding: var(--s-2); }
+  #menuCard .title { font-size: clamp(24px, 6vh, 32px); }
+  .btn.cta { padding: 14px 24px; }
+  #histStrip { min-height: 32px; }
+  .hist .bar { width: 20px; }
+}
+
+
 #howto {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: var(--s-1);
   text-align: left;
-  margin: 2px 0 2px;
-  max-width: 330px;
+  width: 100%;
 }
 
+/* Each row is its own inset panel with a left accent border, so the three
+   rules read as three separate things rather than one paragraph. */
 .how-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 11px;
-  letter-spacing: .06em;
-  line-height: 1.5;
-  color: rgba(190, 215, 240, .74);
+  gap: var(--s-1);
+  padding: var(--s-1);
+  font-size: var(--t-body);
+  line-height: 1.45;
+  color: rgba(190, 215, 240, .78);
+  background: var(--c-panel);
+  border-left: 2px solid currentColor;
+  border-radius: 0 10px 10px 0;
 }
 
-.how-row b { color: #eaf6ff; letter-spacing: .16em; font-size: 10px; }
+.how-row b { color: #eaf6ff; letter-spacing: .16em; font-size: var(--t-caption); }
 
-.dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 12px; }
-.dot.eat { background: #4ff0ff; box-shadow: 0 0 10px rgba(79, 240, 255, .85); }
-.dot.grow { background: #9b6bff; box-shadow: 0 0 10px rgba(155, 107, 255, .85); }
-.dot.flee { background: #ffb057; box-shadow: 0 0 10px rgba(255, 176, 87, .85); }
+.how-ico {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+}
+.how-ico svg { width: 18px; height: 18px; display: block; }
+.how-ico.eat  { color: var(--cyan);   filter: drop-shadow(0 0 8px rgba(79, 240, 255, .7)); }
+.how-ico.grow { color: var(--violet); filter: drop-shadow(0 0 8px rgba(155, 107, 255, .7)); }
+.how-ico.flee { color: var(--amber);  filter: drop-shadow(0 0 8px rgba(255, 176, 87, .7)); }
+
+/* The accent border takes the row's own colour, so the icon and the edge agree. */
+.how-row:nth-child(1) { color: rgba(79, 240, 255, .55); }
+.how-row:nth-child(2) { color: rgba(155, 107, 255, .55); }
+.how-row:nth-child(3) { color: rgba(255, 176, 87, .55); }
+.how-row > span:last-child { color: rgba(190, 215, 240, .78); }
 
 /* ---------- Segmented control ---------- */
+/* Filled track with a sliding pill indicator, rather than a thin outline with
+   the active item merely changing colour -- the pill shows WHICH option is
+   selected without relying on hue alone. */
 .segmented {
-  display: flex;
-  border: 1px solid rgba(150, 200, 230, .26);
-  border-radius: 100px;
-  overflow: hidden;
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 4px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-line);
+  border-radius: var(--r-pill);
+  width: 100%;
 }
 
+.segmented::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc((100% - 8px) / 3);
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, rgba(79, 240, 255, .30), rgba(79, 240, 255, .13));
+  box-shadow: 0 0 16px rgba(79, 240, 255, .28), 0 1px 0 rgba(255, 255, 255, .18) inset;
+  transition: transform .24s cubic-bezier(.4, 0, .2, 1);
+  pointer-events: none;
+}
+/* Driven by a data attribute rather than :has(), which older Android WebView
+   builds do not support. syncControlPick() sets it. */
+.segmented[data-sel="follow"]::before   { transform: translateX(100%); }
+.segmented[data-sel="relative"]::before { transform: translateX(200%); }
+
 .segmented button {
+  position: relative;
+  z-index: 1;
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--t-caption);
   font-weight: 700;
   letter-spacing: .16em;
-  padding: 9px 13px;
+  padding: 10px 8px;
   background: transparent;
   border: 0;
   color: rgba(190, 220, 245, .6);
   cursor: pointer;
+  transition: color .18s ease-out;
 }
 
-.segmented button + button { border-left: 1px solid rgba(150, 200, 230, .18); }
-
-.segmented button.on {
-  background: linear-gradient(135deg, rgba(79, 240, 255, .24), rgba(155, 107, 255, .24));
-  color: #eaf6ff;
-}
+.segmented button.on { color: #eaf6ff; }
 
 /* ---------- Best history strip ---------- */
 #histStrip {
   display: flex;
-  gap: 9px;
+  gap: var(--s-1);
   align-items: flex-end;
   justify-content: center;
-  min-height: 46px;
+  min-height: 48px;
 }
 
-.hist { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.hist { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .hist .bar {
   width: 24px;
-  border-radius: 3px 3px 0 0;
+  border-radius: 4px 4px 0 0;
   background: linear-gradient(180deg, var(--cyan), rgba(155, 107, 255, .3));
 }
-.hist .n { font-size: 9px; color: rgba(180, 215, 245, .72); font-variant-numeric: tabular-nums; }
-.hist .d { font-size: 8px; color: rgba(150, 185, 215, .4); }
+.hist .n { font-size: var(--t-caption); color: rgba(180, 215, 245, .72); font-variant-numeric: tabular-nums; }
+.hist .d { font-size: var(--t-caption); color: rgba(150, 185, 215, .4); }
+
+/* renderHistory() empties the strip on a first run. Without this, its
+   min-height reserves a blank 48px band in the middle of the footer. */
+#histStrip:empty { display: none; }
 
 /* ---------- Run report ---------- */
 .report {
@@ -378,37 +678,37 @@ html, body {
 #finalScore { text-shadow: 0 0 40px rgba(79, 240, 255, .4), 0 2px 12px rgba(0, 0, 0, .85); }
 .newbest { text-shadow: 0 0 18px rgba(79, 240, 255, .7), 0 1px 6px rgba(0, 0, 0, .9); }
 
-.row { display: flex; gap: 10px; align-items: center; justify-content: center; }
+.row { display: flex; gap: var(--s-1); align-items: center; justify-content: center; }
 
 .btn {
-  margin-top: 10px;
-  padding: 15px 40px;
+  margin-top: var(--s-1);
+  padding: 16px 40px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--t-body);
   font-weight: 700;
   letter-spacing: .26em;
   color: #041016;
   background: linear-gradient(135deg, var(--cyan), var(--violet));
   border: 0;
-  border-radius: 100px;
+  border-radius: var(--r-pill);
   cursor: pointer;
-  box-shadow: 0 8px 34px rgba(79, 240, 255, .3);
+  box-shadow: 0 8px 32px rgba(79, 240, 255, .3);
   transition: transform .12s ease-out, box-shadow .12s ease-out;
 }
 
 .btn:active {
   transform: scale(.95);
-  box-shadow: 0 4px 18px rgba(79, 240, 255, .22);
+  box-shadow: 0 4px 16px rgba(79, 240, 255, .22);
 }
 
-.btn.small { padding: 11px 26px; font-size: 11px; }
+.btn.small { padding: 8px 24px; font-size: var(--t-caption); }
 
 .hint {
-  font-size: 11px;
+  font-size: var(--t-caption);
   letter-spacing: .13em;
   color: rgba(170, 205, 235, .58);
-  line-height: 1.75;
-  max-width: 300px;
+  line-height: 1.6;
+  max-width: 320px;
 }
 
 .hint.dim { color: rgba(150, 185, 215, .38); }

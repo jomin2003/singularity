@@ -240,6 +240,19 @@ check('menu: no MOUSE scheme (Android-first)',
 check('menu: how-to rows rendered',
   doc.querySelectorAll('#howto .how-row').length === 3);
 check('menu: settings reachable without playing', !!$('menuSettingsBtn'));
+check('menu: wrapped in a glass card', !!$('menuCard'));
+check('menu: how-to rows use inline SVG icons',
+  doc.querySelectorAll('#howto .how-ico svg').length === 3,
+  doc.querySelectorAll('#howto .how-ico svg').length + ' icons');
+check('menu: the old colour dots are gone',
+  doc.querySelectorAll('#howto .dot').length === 0);
+check('menu: settings demoted to a labelled icon button',
+  $('menuSettingsBtn').tagName === 'BUTTON' &&
+  $('menuSettingsBtn').getAttribute('aria-label') === 'Settings');
+check('menu: control picker exposes its selection for the pill indicator',
+  $('ctrlPick').dataset.sel === 'joystick', 'data-sel=' + $('ctrlPick').dataset.sel);
+check('menu: primary action is present and last in the card',
+  $('menuCard').lastElementChild.classList.contains('menu-foot'));
 check('hud: combo bar built with 20 pips',
   $('comboBar').children.length === 20, $('comboBar').children.length + ' pips');
 
@@ -439,6 +452,11 @@ check('menu settings: BACK returns to the menu',
 const probe = window.__probe;
 probe.setControl('joystick');
 check('stick: joystick is the active scheme', probe.mode() === 'joystick', probe.mode());
+// The sliding pill is driven by a data attribute, not :has(), so it must be
+// kept in sync by syncControlPick() -- including after a mode change.
+check('menu: pill indicator tracks the control mode',
+  $('ctrlPick').dataset.sel === probe.mode(),
+  'data-sel=' + $('ctrlPick').dataset.sel + ' mode=' + probe.mode());
 
 const geom = probe.geom();
 check('stick: base is horizontally centred',
