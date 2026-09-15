@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=b10">
+<link rel="stylesheet" href="style.css?v=b14">
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -22,26 +22,54 @@
     <div class="hud-block">
       <div class="hud-label">MASS</div>
       <div class="hud-value" id="hudScore">0</div>
+      <div id="chips"></div>
     </div>
+    <!-- Kept clear of the pause button: the old layout put BEST straight
+         underneath it and half the number was covered in every screenshot. -->
     <div class="hud-block right">
       <div class="hud-label">BEST</div>
       <div class="hud-value" id="hudBest">0</div>
+      <div class="hud-label dim" id="threatOut"></div>
     </div>
   </div>
   <div id="comboWrap">
     <div id="comboValue"></div>
-    <div id="comboBar"><i></i></div>
+    <div id="comboBar"></div>
   </div>
   <button id="pauseBtn" class="icon-btn pause-btn" aria-label="Pause">&#10074;&#10074;</button>
   <button id="muteBtn" class="icon-btn" aria-label="Toggle sound">&#9834;</button>
 </div>
 
+<div id="keysLegend" class="hidden">WASD / ARROWS &nbsp;&middot;&nbsp; SPACE START &nbsp;&middot;&nbsp; P PAUSE &nbsp;&middot;&nbsp; M MUTE</div>
+
 <div id="menu" class="layer center">
   <div class="title">SINGULARITY</div>
   <div class="subtitle">Consume. Grow. Survive.</div>
+
+  <!-- Three visual rows instead of one dense hint line: a single sentence
+       never taught anybody what the colours mean. -->
+  <div id="howto">
+    <div class="how-row"><span class="dot eat"></span><span><b>EAT</b> the cyan, smooth ones &mdash; anything smaller than you</span></div>
+    <div class="how-row"><span class="dot grow"></span><span><b>GROW</b> &mdash; every meal widens your well</span></div>
+    <div class="how-row"><span class="dot flee"></span><span><b>FLEE</b> the amber, spiked ones &mdash; they eat you</span></div>
+  </div>
+
   <button id="playBtn" class="btn">TAP TO BEGIN</button>
-  <div class="hint">Drag anywhere, move the mouse, or use WASD &nbsp;&bull;&nbsp; swallow what's smaller &nbsp;&bull;&nbsp; flee what isn't</div>
+
+  <!-- Control picker lives on the menu, not two taps deep in pause-settings. -->
+  <div id="ctrlPick" class="segmented" role="group" aria-label="Control scheme">
+    <button type="button" data-ctrl="joystick">STICK</button>
+    <button type="button" data-ctrl="follow">FOLLOW</button>
+    <button type="button" data-ctrl="relative">DRAG</button>
+  </div>
+  <div class="hint dim" id="ctrlHint"></div>
+
+  <div class="row">
+    <button id="menuSettingsBtn" class="btn ghost small">SETTINGS</button>
+  </div>
+
   <div class="hint dim" id="menuBest"></div>
+  <div id="histStrip"></div>
   <div class="hint dim" id="buildTag"></div>
 </div>
 
@@ -49,8 +77,12 @@
   <div class="over-title">COLLAPSE</div>
   <div class="score-big" id="finalScore">0</div>
   <div class="newbest hidden" id="newBest">NEW PERSONAL BEST</div>
-  <div class="hint" id="overBest"></div>
-  <button id="againBtn" class="btn">RUN AGAIN</button>
+  <div class="hint" id="overGap"></div>
+  <div class="report" id="report"></div>
+  <div class="row">
+    <button id="againBtn" class="btn">RUN AGAIN</button>
+    <button id="shareBtn" class="btn ghost">SHARE</button>
+  </div>
   <button id="overHomeBtn" class="btn ghost">HOME</button>
   <div class="hint dim">or tap anywhere</div>
 </div>
@@ -69,17 +101,35 @@
 <div id="settings" class="layer center overlay hidden">
   <div class="panel">
     <div class="panel-title">SETTINGS</div>
-    <button id="soundBtn" class="btn ghost">SOUND: ON</button>
-    <button id="motionBtn" class="btn ghost">MOTION: ON</button>
-    <button id="cbBtn" class="btn ghost">COLOUR: NORMAL</button>
-    <button id="ctrlBtn" class="btn ghost">CONTROL: JOYSTICK</button>
-    <button id="settingsBackBtn" class="btn">BACK</button>
+    <button id="soundBtn" class="btn ghost wide">SOUND: ON</button>
+    <div class="slider-row wide"><span>MUSIC</span><input id="musicRange" type="range" min="0" max="100" step="5" aria-label="Music volume"><span class="val" id="musicVal">70%</span></div>
+    <div class="slider-row wide"><span>SFX</span><input id="sfxRange" type="range" min="0" max="100" step="5" aria-label="Effects volume"><span class="val" id="sfxVal">85%</span></div>
+    <!-- Two columns so BACK never falls off the bottom of a short screen. -->
+    <div class="grid2">
+      <button id="hapticBtn" class="btn ghost">HAPTICS: OFF</button>
+      <button id="motionBtn" class="btn ghost">MOTION: ON</button>
+      <button id="cbBtn" class="btn ghost">COLOUR: NORMAL</button>
+      <button id="ctrlBtn" class="btn ghost">CONTROL: STICK</button>
+      <button id="textBtn" class="btn ghost">TEXT: NORMAL</button>
+      <button id="contrastBtn" class="btn ghost">CONTRAST: OFF</button>
+      <button id="threatBtn" class="btn ghost">THREAT: OFF</button>
+      <button id="eventBtn" class="btn ghost">EVENT PAUSE: ON</button>
+    </div>
+    <button id="settingsBackBtn" class="btn wide">BACK</button>
   </div>
 </div>
 
-<div id="toast" class="toast"></div>
+<div id="eventPanel" class="layer center overlay hidden">
+  <div class="panel">
+    <div class="panel-title" id="eventTitle">EVENT</div>
+    <div class="hint" id="eventBody"></div>
+    <button id="eventOkBtn" class="btn">CONTINUE</button>
+  </div>
+</div>
+
+<div id="toasts"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="game.js?v=b10"></script>
+<script src="game.js?v=b14"></script>
 </body>
 </html>

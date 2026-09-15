@@ -35,10 +35,23 @@ const COMBO_WINDOW = 1.35;           // seconds to keep a chain alive
 const CONSUME_YIELD = 0.34;          // how much of a body becomes your mass
 const STAR_BONUS = 3;                // score multiplier for eating a star
 
+/* ---------- movement physics ----------
+   SPEED_REF is the one number that sets how fast the hole can ever go:
+   top speed is SPEED_REF * r, exactly as before, so the difficulty curve and
+   the reachability of food are untouched by the switch to inertial motion.
+
+   SPACE_DRAG and DRIFT_EXP only decide how long it takes to get there and how
+   long you coast afterwards. Raising DRIFT_EXP makes big holes feel heavier;
+   setting it to 0 makes every size equally twitchy. */
+const SPEED_REF = 11;      // top speed, in shadow radii per second
+const SPACE_DRAG = 1.70;   // velocity bleed at the starting mass
+const DRIFT_EXP = 0.45;    // how much more a big hole coasts and lags
+const IMPULSE_CAP = 1.9;   // knockback headroom, as a multiple of top speed
+
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b10';
+const BUILD_ID = 'b14';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -81,27 +94,67 @@ let p, ents, parts, waves, shots, slugs, floats, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
-let pendingWave = false, toastT = 0, shotT = 0;
-let panel = null;   // null | 'pause' | 'settings'
+let pendingWave = false, shotT = 0;
+let panel = null;   // null | 'pause' | 'settings' | 'event'
 let camRoll = 0;    // Kerr-style frame-dragging wobble near big bodies
 let shield = 0;     // one-hit protection from eating a pulsar
 let kilonovaT = 0;  // countdown to the next neutron-star merger event
 
+// New feedback state.
+let eraFx = 0;          // milestone celebration envelope (era-up)
+let hitFx = 0;          // directional damage vignette envelope
+let hitDirX = 0, hitDirY = 0;   // unit vector from the hole to the impact
+let nearDeath = 0;      // 0 = comfortable, 1 = about to evaporate
+let lastHurtT = -99;    // elapsed time of the last impact (death attribution)
+let overGuardT = 0;     // input guard so a stray tap cannot skip the score
+let eventKey = null;    // which first-encounter panel is open
+let coachStep = 0;      // first-run scripted hint index
+let bestAtRunStart = 0; // previous best, for the "N away from BEST" line
+let runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
+let comboPopT = 0;      // combo-heat pop envelope
+
+// Last input device. The floating joystick's home ring is a touch affordance;
+// Tracks the last thing that drove the hole. Only used to decide whether the
+// stick should be dimmed for a player who is clearly on a keyboard.
+let lastInput = 'touch';
+// Pointer position, kept for press-state only.
+const pointer = { x: 0, y: 0, on: false, down: false };
+
 const keys = { up: false, down: false, left: false, right: false };
 
-// Hover steering for desktop mice: merely moving the mouse (no button held)
-// steers the hole toward the cursor, so the web build plays out of the box.
-// Cleared whenever a drag, joystick touch, or key press takes over, and when
-// the cursor leaves the window, so a stale vector can never drive the hole.
-const hover = { dx: 0, dy: 0, on: false };
-function clearHover() { hover.on = false; hover.dx = 0; hover.dy = 0; }
-
-// Floating joystick: anchors wherever a finger or mouse press lands, so any
-// drag anywhere on the canvas drives the black hole. Keyboard (WASD/arrows)
-// always works as well.
-const JOY_R = 78;
-const JOY_KNOB = 28;
+// Fixed joystick, pinned to the bottom centre of the screen. This is an
+// Android game first, so the stick is the primary control and it never moves:
+// a base that slides to wherever you first touched means you have to look down
+// and find it mid-dodge. A fixed base you can hit blind is the whole point.
+//
+// JOY_R is recomputed on every resize from the viewport height, because a
+// radius that reads well on a tablet is half the screen on a landscape phone.
+let JOY_R = 78;
+let JOY_KNOB = 28;
+let JOY_BASE_X = 0;
+let JOY_BASE_Y = 0;
+let SAFE_BOTTOM = 0;
+// Throw before the hole responds at all. Without it a resting thumb that
+// drifts a few pixels constantly nudges the hole off course.
+const JOY_DEADZONE = 0.16;
 const joy = { active: false, bx: 0, by: 0, kx: 0, ky: 0, dx: 0, dy: 0 };
+
+// Android draws an edge-to-edge canvas, so the gesture pill sits on top of
+// whatever we put at the bottom. env() only exists in CSS, so measure it by
+// laying out a probe element and reading it back.
+function readSafeBottom() {
+  try {
+    const probe = document.createElement('div');
+    probe.style.cssText =
+      'position:fixed;left:0;bottom:0;width:0;height:env(safe-area-inset-bottom,0px);' +
+      'pointer-events:none;visibility:hidden';
+    document.body.appendChild(probe);
+    SAFE_BOTTOM = probe.getBoundingClientRect().height || 0;
+    probe.remove();
+  } catch (_) {
+    SAFE_BOTTOM = 0;
+  }
+}
 
 // Fixed light direction so every world is lit consistently.
 const LIGHT = { x: -0.52, y: -0.58 };
@@ -111,19 +164,27 @@ const el = {
   hud: document.getElementById('hud'),
   hudScore: document.getElementById('hudScore'),
   hudBest: document.getElementById('hudBest'),
+  chips: document.getElementById('chips'),
+  threatOut: document.getElementById('threatOut'),
   comboWrap: document.getElementById('comboWrap'),
   comboValue: document.getElementById('comboValue'),
   comboBar: document.getElementById('comboBar'),
   menu: document.getElementById('menu'),
   playBtn: document.getElementById('playBtn'),
   menuBest: document.getElementById('menuBest'),
+  menuSettingsBtn: document.getElementById('menuSettingsBtn'),
+  ctrlPick: document.getElementById('ctrlPick'),
+  ctrlHint: document.getElementById('ctrlHint'),
+  histStrip: document.getElementById('histStrip'),
   over: document.getElementById('over'),
   finalScore: document.getElementById('finalScore'),
-  overBest: document.getElementById('overBest'),
+  overBest: document.getElementById('overGap'),
+  report: document.getElementById('report'),
   newBest: document.getElementById('newBest'),
   againBtn: document.getElementById('againBtn'),
+  shareBtn: document.getElementById('shareBtn'),
   muteBtn: document.getElementById('muteBtn'),
-  toast: document.getElementById('toast'),
+  toasts: document.getElementById('toasts'),
   pauseBtn: document.getElementById('pauseBtn'),
   pause: document.getElementById('pause'),
   pauseScore: document.getElementById('pauseScore'),
@@ -134,10 +195,24 @@ const el = {
   overHomeBtn: document.getElementById('overHomeBtn'),
   settings: document.getElementById('settings'),
   soundBtn: document.getElementById('soundBtn'),
+  musicRange: document.getElementById('musicRange'),
+  musicVal: document.getElementById('musicVal'),
+  sfxRange: document.getElementById('sfxRange'),
+  sfxVal: document.getElementById('sfxVal'),
+  hapticBtn: document.getElementById('hapticBtn'),
   motionBtn: document.getElementById('motionBtn'),
   cbBtn: document.getElementById('cbBtn'),
   ctrlBtn: document.getElementById('ctrlBtn'),
+  textBtn: document.getElementById('textBtn'),
+  contrastBtn: document.getElementById('contrastBtn'),
+  threatBtn: document.getElementById('threatBtn'),
+  eventBtn: document.getElementById('eventBtn'),
   settingsBackBtn: document.getElementById('settingsBackBtn'),
+  eventPanel: document.getElementById('eventPanel'),
+  eventTitle: document.getElementById('eventTitle'),
+  eventBody: document.getElementById('eventBody'),
+  eventOkBtn: document.getElementById('eventOkBtn'),
+  keysLegend: document.getElementById('keysLegend'),
   buildTag: document.getElementById('buildTag')
 };
 
@@ -208,13 +283,49 @@ function commitBest() {
 }
 
 let motion = lsGet('motion', '1') === '1';
+// Accessibility + comfort options. All persisted in the same versioned blob.
+let textLarge = lsGet('text', '0') === '1';
+let highContrast = lsGet('contrast', '0') === '1';
+let threatReadout = lsGet('threat', '0') === '1';
+let pauseOnEvent = lsGet('eventPause', '1') !== '0';
+let coachDone = lsGet('coach', '0') === '1';
+
+// Run history: five scores with dates. A single BEST number has no story.
+const HIST_MAX = 5;
+let history = Array.isArray(save.history) ? save.history.slice(0, HIST_MAX) : [];
+history = history.filter((h) => h && typeof h.s === 'number');
+
+function pushHistory(s, when) {
+  history.unshift({ s: Math.round(s), t: when || Date.now() });
+  history = history.slice(0, HIST_MAX);
+  saveSet('history', history);
+}
+
+/* ---------- haptics ---------- */
+const HAPTIC_ORDER = ['off', 'low', 'med', 'high'];
+const HAPTIC_LABEL = { off: 'OFF', low: 'LOW', med: 'MED', high: 'HIGH' };
+const HAPTIC_SCALE = { off: 0, low: 0.45, med: 1, high: 1.7 };
+let haptics = lsGet('haptic', 'off');
+if (HAPTIC_ORDER.indexOf(haptics) < 0) haptics = 'off';
+
+function buzz(ms) {
+  const k = HAPTIC_SCALE[haptics] || 0;
+  if (!k) return;
+  try {
+    if (navigator.vibrate) navigator.vibrate(Math.max(6, Math.round(ms * k)));
+  } catch (_) {}
+}
 
 /* ============================================================
    AUDIO
    ============================================================ */
 const Snd = {
-  ac: null, master: null, droneGain: null, droneFilter: null, noise: null,
+  ac: null, master: null, musicBus: null, sfxBus: null,
+  droneGain: null, droneFilter: null, noise: null,
   muted: lsGet('muted', '0') === '1',
+  // Separate buses so "mute everything" stops being the only tool available.
+  musicVol: clamp(parseFloat(lsGet('music', 0.7)) || 0, 0, 1),
+  sfxVol: clamp(parseFloat(lsGet('sfx', 0.85)) || 0, 0, 1),
 
   ensure() {
     if (this.ac) { if (this.ac.state === 'suspended') this.ac.resume(); return; }
@@ -226,6 +337,14 @@ const Snd = {
     master.gain.value = this.muted ? 0 : 0.85;
     master.connect(ac.destination);
 
+    const music = this.musicBus = ac.createGain();
+    music.gain.value = this.musicVol;
+    music.connect(master);
+
+    const sfx = this.sfxBus = ac.createGain();
+    sfx.gain.value = this.sfxVol;
+    sfx.connect(master);
+
     const len = Math.floor(ac.sampleRate * 0.5);
     const buf = ac.createBuffer(1, len, ac.sampleRate);
     const d = buf.getChannelData(0);
@@ -236,7 +355,7 @@ const Snd = {
     dg.gain.value = 0;
     const df = this.droneFilter = ac.createBiquadFilter();
     df.type = 'lowpass'; df.frequency.value = 200; df.Q.value = 5;
-    dg.connect(df); df.connect(master);
+    dg.connect(df); df.connect(music);
 
     [[55, 'sawtooth', 0.16], [55.7, 'sawtooth', 0.15], [82.5, 'sine', 0.10]]
       .forEach(([f, type, g]) => {
@@ -247,6 +366,16 @@ const Snd = {
       });
   },
 
+  setMusicVol(v) {
+    this.musicVol = clamp(v, 0, 1);
+    if (this.musicBus) this.musicBus.gain.setTargetAtTime(this.musicVol, this.ac.currentTime, 0.05);
+  },
+
+  setSfxVol(v) {
+    this.sfxVol = clamp(v, 0, 1);
+    if (this.sfxBus) this.sfxBus.gain.setTargetAtTime(this.sfxVol, this.ac.currentTime, 0.05);
+  },
+
   tone(freq, type, peak, attack, decay) {
     const ac = this.ac, t = ac.currentTime;
     const o = ac.createOscillator(); o.type = type; o.frequency.value = freq;
@@ -254,7 +383,7 @@ const Snd = {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(peak, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
-    o.connect(g); g.connect(this.master);
+    o.connect(g); g.connect(this.sfxBus);
     o.start(t); o.stop(t + decay + 0.02);
   },
 
@@ -277,7 +406,7 @@ const Snd = {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.30, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
-    s.connect(f); f.connect(g); g.connect(this.master);
+    s.connect(f); f.connect(g); g.connect(this.sfxBus);
     s.start(t); s.stop(t + 0.15);
   },
 
@@ -291,7 +420,7 @@ const Snd = {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(0.34, t + 0.03);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
-    o.connect(g); g.connect(this.master);
+    o.connect(g); g.connect(this.sfxBus);
     o.start(t); o.stop(t + 0.72);
     this.boom();
   },
@@ -304,7 +433,7 @@ const Snd = {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.55, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
-    s.connect(f); f.connect(g); g.connect(this.master);
+    s.connect(f); f.connect(g); g.connect(this.sfxBus);
     s.start(t); s.stop(t + 0.36);
 
     const o = ac.createOscillator(); o.type = 'sine';
@@ -313,7 +442,7 @@ const Snd = {
     const og = ac.createGain();
     og.gain.setValueAtTime(0.5, t);
     og.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
-    o.connect(og); og.connect(this.master);
+    o.connect(og); og.connect(this.sfxBus);
     o.start(t); o.stop(t + 0.34);
   },
 
@@ -326,7 +455,7 @@ const Snd = {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.34, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
-    o.connect(g); g.connect(this.master);
+    o.connect(g); g.connect(this.sfxBus);
     o.start(t); o.stop(t + 0.44);
   },
 
@@ -342,7 +471,7 @@ const Snd = {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.42, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
-    o.connect(f); f.connect(g); g.connect(this.master);
+    o.connect(f); f.connect(g); g.connect(this.sfxBus);
     o.start(t); o.stop(t + 1.15);
   },
 
@@ -915,23 +1044,89 @@ function drawExtractor(g) {
   g.globalCompositeOperation = 'source-over';
 }
 
-// A rival singularity — a real black hole with its own accretion disk.
-// It is the most dangerous thing in the field and it pulls you in.
+// A rival singularity — a real black hole with its own accretion disk. It is
+// the most dangerous thing in the field and it pulls you in.
+//
+// The old version painted a cream radial gradient straight over the shadow
+// (a radial gradient repeats its first stop all the way inward), so the hole
+// rendered as a beige ball with a dark rim instead of a black one. Same
+// structure as the player now: disk first, then the shadow on top, then the
+// photon ring.
 function drawRival(g) {
-  g.fillStyle = '#000';
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.60, 0, TAU); g.fill();
+  const R = SPR_R * 0.50;
+
+  // Disk: a thin band seen almost edge-on, so it crosses the shadow.
+  // Layered exactly like the player's disk so the two holes read as the
+  // same kind of object -- one projected circle would give a hard-edged bar.
+  const RD = SPR_R * 0.98;
+  const flats = [1.00, 0.74, 0.48, 0.26];
+  const share = 1 / flats.length;
   g.globalCompositeOperation = 'lighter';
-  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.58, SPR_R, SPR_R, SPR_R);
-  grd.addColorStop(0.00, 'rgba(255,214,150,0.95)');
-  grd.addColorStop(0.22, 'rgba(255,140,70,0.70)');
-  grd.addColorStop(0.62, 'rgba(210,80,50,0.22)');
-  grd.addColorStop(1.00, 'rgba(180,60,40,0)');
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  for (const flat of flats) {
+    g.save();
+    g.translate(SPR_R, SPR_R);
+    g.scale(1, 0.15 * flat);
+    const dg = g.createRadialGradient(0, 0, 0, 0, 0, RD);
+    dg.addColorStop(0.00, 'rgba(255,246,228,' + (0.95 * share).toFixed(3) + ')');
+    dg.addColorStop(0.34, 'rgba(255,214,152,' + (0.72 * share).toFixed(3) + ')');
+    dg.addColorStop(0.70, 'rgba(255,150,80,' + (0.30 * share).toFixed(3) + ')');
+    dg.addColorStop(1.00, 'rgba(255,118,48,0)');
+    g.fillStyle = dg;
+    g.beginPath(); g.arc(0, 0, RD, 0, TAU); g.fill();
+    g.restore();
+  }
+
+  // Lensed far side, hugging the shadow.
+  const hg = g.createRadialGradient(SPR_R, SPR_R, R * 1.0, SPR_R, SPR_R, SPR_R * 0.96);
+  hg.addColorStop(0.00, 'rgba(255,244,224,0.50)');
+  hg.addColorStop(0.45, 'rgba(255,180,110,0.20)');
+  hg.addColorStop(1.00, 'rgba(255,140,80,0)');
+  g.fillStyle = hg;
+  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.96, 0, TAU); g.fill();
   g.globalCompositeOperation = 'source-over';
-  g.strokeStyle = 'rgba(255,236,205,0.95)';
+
+  // Bent background: the same concentric light-wrapping bands the player's
+  // hole wears, so the two read as the same class of object. Static here
+  // because this is a pre-rendered sprite.
+  g.globalCompositeOperation = 'lighter';
+  const rbands = [
+    { k: 1.16, a: 0.150, w: 0.042 },
+    { k: 1.32, a: 0.090, w: 0.032 },
+    { k: 1.54, a: 0.052, w: 0.024 },
+    { k: 1.82, a: 0.028, w: 0.018 }
+  ];
+  for (const b of rbands) {
+    const rad = R * b.k;
+    const g2 = g.createLinearGradient(SPR_R - rad, 0, SPR_R + rad, 0);
+    g2.addColorStop(0.00, 'rgba(255,214,178,' + (b.a * 0.15).toFixed(3) + ')');
+    g2.addColorStop(0.50, 'rgba(255,240,220,' + (b.a * 0.45).toFixed(3) + ')');
+    g2.addColorStop(1.00, 'rgba(255,214,178,' + b.a.toFixed(3) + ')');
+    g.strokeStyle = g2;
+    g.lineWidth = Math.max(1, R * b.w);
+    g.beginPath(); g.arc(SPR_R, SPR_R, rad, 0, TAU); g.stroke();
+  }
+  g.globalCompositeOperation = 'source-over';
+
+  g.fillStyle = '#000';
+  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
+
+  // The lensed far side, come back round as a knot on the limb.
+  g.globalCompositeOperation = 'lighter';
+  const kx = SPR_R + R * 1.02;
+  const ky = SPR_R + R * 0.18;
+  const kg = g.createRadialGradient(kx, ky, 0, kx, ky, R * 0.34);
+  kg.addColorStop(0.00, 'rgba(255,252,242,0.88)');
+  kg.addColorStop(0.45, 'rgba(255,226,186,0.34)');
+  kg.addColorStop(1.00, 'rgba(255,190,130,0)');
+  g.fillStyle = kg;
+  g.beginPath(); g.arc(kx, ky, R * 0.34, 0, TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+
+  g.globalCompositeOperation = 'lighter';
+  g.strokeStyle = 'rgba(255,244,226,0.95)';
   g.lineWidth = 2.2;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.63, 0, TAU); g.stroke();
+  g.beginPath(); g.arc(SPR_R, SPR_R, R * 1.07, 0, TAU); g.stroke();
+  g.globalCompositeOperation = 'source-over';
 }
 
 function makeBodySprite(type, variant, sub) {
@@ -1055,6 +1250,19 @@ function resize() {
   buildStars();
   buildVignette();
   nebulaHue = -999;
+  layoutStick();
+}
+
+// Geometry for the bottom-centre stick. Scaled off viewport HEIGHT rather than
+// width, because the stick's budget is vertical: on a landscape phone the
+// screen is short, and a 78px-radius stick would eat half of it.
+function layoutStick() {
+  readSafeBottom();
+  JOY_R = clamp(H * 0.155, 40, 74);
+  JOY_KNOB = JOY_R * 0.36;
+  JOY_BASE_X = W * 0.5;
+  // 26px of breathing room above the gesture bar, on top of the safe inset.
+  JOY_BASE_Y = H - SAFE_BOTTOM - 26 - JOY_R;
 }
 
 /* ============================================================
@@ -1247,8 +1455,12 @@ function reset() {
   cam = { x: 0, y: 0, zoom: 1 };
   score = 0; shownScore = 0; combo = 0; comboT = 0;
   elapsed = 0; era = 0; shakeMag = 0; hitstopT = 0; invuln = 0;
-  flashT = 0; toastT = 0; shotT = 5;
+  flashT = 0; shotT = 5;
   camRoll = 0; shield = 0; kilonovaT = rand(35, 70);
+  eraFx = 0; hitFx = 0; nearDeath = 0; lastHurtT = -99; comboPopT = 0;
+  coachStep = 0;
+  runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
+  bestAtRunStart = best;
   joy.active = false; joy.dx = 0; joy.dy = 0;
   for (let i = 0; i < ENT_TARGET; i++) spawn(Math.random() < 0.5 ? 1.15 : 1.7);
   cam.zoom = desiredZoom();
@@ -1317,11 +1529,73 @@ function burstFx(x, y, n, spread, scale) {
 const ERAS = ['NEBULA', 'PROTOSTAR', 'MAIN SEQUENCE', 'RED GIANT',
               'SUPERNOVA', 'QUASAR', 'SINGULARITY'];
 
+// Human names for the run report card ("BIGGEST MEAL +320 (ice giant)").
+const BODY_NAME = {
+  rocky: 'world', ice: 'ice world', ocean: 'ocean world', desert: 'desert world',
+  barren: 'dead world', asteroid: 'rubble', uranus: 'ice giant', neptune: 'ice giant',
+  giant: 'gas giant', lava: 'lava world', rogue: 'rogue planet', brownDwarf: 'brown dwarf',
+  whiteDwarf: 'white dwarf', pulsar: 'pulsar', wormhole: 'wormhole',
+  magnetar: 'magnetar', ark: 'ark ship'
+};
+
+// What actually finished you, for the report card and the share image.
+const CAUSE = {
+  star: 'BURNED BY A GIANT',
+  giant: 'SLAMMED INTO A GIANT',
+  uranus: 'SWALLOWED BY AN ICE GIANT',
+  neptune: 'SWALLOWED BY AN ICE GIANT',
+  lava: 'MELTED BY A LAVA WORLD',
+  rogue: 'HIT BY A ROGUE PLANET',
+  rival: 'CONSUMED BY A RIVAL HOLE',
+  asteroid: 'BROKEN BY RUBBLE',
+  comet: 'STRUCK BY A COMET',
+  brownDwarf: 'CRUSHED BY A BROWN DWARF',
+  whiteDwarf: 'TORN APART BY DEGENERATE MATTER',
+  magnetar: 'SCORCHED BY A MAGNETAR',
+  quasar: 'VAPORISED BY A QUASAR JET'
+};
+
+// Scripted hints, run 1 only. One static line never taught anybody anything.
+//   0 -> shortly after the run starts   1 -> after the first meal
+//   2 -> the first time a combo of 5 lands
+const COACH = ['PUSH THE STICK TO MOVE', 'CHAIN EATS TO BUILD COMBO', 'COMBO 20 = SHOCKWAVE'];
+
+/* ---------- toasts ---------- */
+// A single slot meant era-up, KILONOVA and STAR CONSUMED clobbered each
+// other, so the most interesting line of a run was routinely lost. Up to
+// three now stack, newest at the bottom.
+const toasts = [];
+const TOAST_MAX = 3;
+
+function dropToast(i) {
+  const t = toasts[i];
+  if (!t) return;
+  toasts.splice(i, 1);
+  t.node.classList.remove('show');
+  setTimeout(() => { if (t.node.parentNode) t.node.parentNode.removeChild(t.node); }, 320);
+}
+
+function clearToasts() {
+  for (let i = toasts.length - 1; i >= 0; i--) dropToast(i);
+}
+
 function toast(msg, dur) {
-  if (!el.toast) return;
-  el.toast.textContent = msg;
-  el.toast.classList.add('show');
-  toastT = dur || 1.9;
+  if (!el.toasts) return;
+  while (toasts.length >= TOAST_MAX) dropToast(0);
+  const node = document.createElement('div');
+  node.className = 'toast-item';
+  node.textContent = msg;
+  el.toasts.appendChild(node);
+  void node.offsetWidth;            // force a reflow so the transition runs
+  node.classList.add('show');
+  toasts.push({ node, life: 0, max: dur || 1.9 });
+}
+
+function updateToasts(dt) {
+  for (let i = toasts.length - 1; i >= 0; i--) {
+    toasts[i].life += dt;
+    if (toasts[i].life >= toasts[i].max) dropToast(i);
+  }
 }
 
 function consume(e, idx) {
@@ -1344,6 +1618,19 @@ function consume(e, idx) {
   if (type === 'brownDwarf') gained *= 2;
   if (type === 'ark') gained *= 3;          // a whole ship full of people
   score += gained;
+
+  // Run report card bookkeeping.
+  if (runStats) {
+    if (combo > runStats.peakCombo) runStats.peakCombo = combo;
+    if (gained > runStats.biggest) {
+      runStats.biggest = gained;
+      runStats.biggestName = BODY_NAME[type] || '';
+    }
+    if (era > runStats.era) runStats.era = era;
+  }
+  // Combo heat pops on every shockwave.
+  if (combo > 0 && combo % 20 === 0) comboPopT = 0.45;
+  buzz(8);
 
   // Floating number, so a big eat lands without having to watch the HUD.
   if (floats.length < 24) {
@@ -1453,6 +1740,15 @@ function hurt(e) {
   if (prof.flash) flashT = Math.max(flashT, 0.30);
   if (prof.burn) flashT = Math.max(flashT, 0.16);
 
+  // Directional damage vignette: hits used to have no directional UI at all,
+  // even though we already know the vector. Store it screen-space.
+  hitDirX = -dx / d;          // dx points impact -> player, so negate
+  hitDirY = -dy / d;
+  hitFx = 1;
+  lastHurtT = elapsed;
+  if (runStats) runStats.cause = prof.msg || CAUSE[type] || 'CRUSHED';
+  buzz(60);
+
   if (prof.burn) burstFx(e.x, e.y, 36, e.r * 0.8, 1.2);
   else if (prof.gas) burstFx(e.x, e.y, 30, e.r * 0.9, 1.1);
   else burstFx(p.x, p.y, 26, p.r, 1);
@@ -1476,6 +1772,32 @@ function shockwave() {
   }
   shakeMag = Math.max(shakeMag, 12);
   Snd.boom();
+  buzz(45);
+}
+
+function renderReport() {
+  if (!el.report) return;
+  el.report.innerHTML = '';
+  const mm = Math.floor(runStats.time / 60);
+  const ss = Math.floor(runStats.time % 60);
+  const time = mm + ':' + String(ss).padStart(2, '0');
+  const eraName = ERAS[runStats.era % ERAS.length];
+
+  const lines = [
+    'TIME ' + time + '  ·  PEAK COMBO ×' + runStats.peakCombo,
+    'BIGGEST MEAL +' + fmt(runStats.biggest) +
+      (runStats.biggestName ? ' (' + runStats.biggestName + ')' : '') +
+      '  ·  ' + eraName
+  ];
+  for (const t of lines) {
+    const d = document.createElement('div');
+    d.textContent = t;
+    el.report.appendChild(d);
+  }
+  const c = document.createElement('div');
+  c.className = 'cause';
+  c.textContent = runStats.cause || 'EVAPORATED';
+  el.report.appendChild(c);
 }
 
 function die() {
@@ -1485,40 +1807,65 @@ function die() {
   shakeMag = Math.max(shakeMag, 28);
   flashT = Math.max(flashT, 0.25);
   burstFx(p.x, p.y, 70, p.r, 1.6);
+  buzz(180);
 
-  newBest = commitBest();
+  // Attribute the death. A hit inside the last half second is what killed
+  // you; otherwise you simply boiled away, which the old screen never said.
+  runStats.time = elapsed;
+  runStats.era = Math.max(runStats.era, era);
+  if (!runStats.cause || elapsed - lastHurtT > 0.5) runStats.cause = 'EVAPORATED';
+
+  const prevBest = bestAtRunStart;
+  newBest = score > prevBest && score > 0;
+  commitBest();
+  pushHistory(score);
+
   hide(el.hud);
+  hide(el.keysLegend);
   el.finalScore.textContent = fmt(score);
-  el.overBest.textContent = 'BEST ' + fmt(best);
   el.newBest.classList.toggle('hidden', !newBest);
+  el.overBest.textContent = newBest
+    ? 'NEW BEST BY ' + fmt(score - prevBest)
+    : fmt(Math.max(0, best - score)) + ' AWAY FROM BEST';
+  renderReport();
   show(el.over);
-  if (el.toast) el.toast.classList.remove('show');
+  overGuardT = 0.8;      // one stray tap must not wipe the score you're reading
+  clearToasts();
 }
 
-function currentTarget() {
-  // The drag schemes steer toward an explicit point in the world.
-  if (controlMode !== 'joystick' && drag.active) {
-    return { x: drag.wx, y: drag.wy };
+// Returns a thrust vector with magnitude 0..1 for whichever scheme is active.
+// Every input funnels through here so the physics below is identical however
+// you are steering -- there is exactly one place that decides how the hole
+// accelerates, which is what keeps the feel consistent across control modes.
+function thrustVector() {
+  let x = 0, y = 0;
+
+  // Directional inputs: the stick, plus the keyboard (desktop, or Android with
+  // a hardware keyboard). They sum, then get clamped to unit length.
+  if (controlMode === 'joystick') { x += joy.dx; y += joy.dy; }
+  const kx = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+  const ky = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
+  if (kx || ky) {
+    const m = Math.hypot(kx, ky);
+    x += kx / m; y += ky / m;
   }
-  // Joystick drives touch input.
-  if (controlMode === 'joystick' && joy.active && (joy.dx !== 0 || joy.dy !== 0)) {
-    const m = Math.hypot(joy.dx, joy.dy) || 1;
-    return { x: p.x + (joy.dx / m) * 260, y: p.y + (joy.dy / m) * 260 };
+
+  // Drag schemes steer toward the held point. Thrust tapers off as you arrive,
+  // because a constant full-thrust pull at a nearby target is just something
+  // to overshoot and then orbit forever.
+  if (!x && !y && drag.active) {
+    const dx = drag.wx - p.x, dy = drag.wy - p.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > 1) {
+      const mag = clamp(dist / (p.r * 6), 0, 1);
+      x = (dx / dist) * mag;
+      y = (dy / dist) * mag;
+    }
   }
-  // Keyboard fallback -- desktop, or Android with a hardware keyboard.
-  const dx = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
-  const dy = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
-  if (dx || dy) {
-    const m = Math.hypot(dx, dy) || 1;
-    return { x: p.x + dx / m * 260, y: p.y + dy / m * 260 };
-  }
-  // Desktop mouse hover: steer toward the cursor with proportional speed.
-  // Explicit drag / joystick / keys above always win; this only applies when
-  // nothing else is driving.
-  if (hover.on && (hover.dx !== 0 || hover.dy !== 0)) {
-    return { x: p.x + hover.dx * 260, y: p.y + hover.dy * 260 };
-  }
-  return { x: p.x, y: p.y };
+
+  const m = Math.hypot(x, y);
+  if (m > 1) { x /= m; y /= m; }
+  return { x: x, y: y };
 }
 
 function update(dt) {
@@ -1526,14 +1873,40 @@ function update(dt) {
   elapsed += dt;
   const prevEra = era;
   era = Math.floor(score / 1200);
-  if (era !== prevEra && era > 0) toast(ERAS[era % ERAS.length]);
-
-  if (toastT > 0) {
-    toastT -= dt;
-    if (toastT <= 0 && el.toast) el.toast.classList.remove('show');
+  if (era !== prevEra && era > 0) {
+    toast(ERAS[era % ERAS.length]);
+    // Milestone celebration: the only progression system in the game
+    // deserved more than a line of text.
+    eraFx = 1;
+    waves.push({ x: p.x, y: p.y, r: p.r * 0.9, max: p.r * 9, t: 0, hue: 275 });
+    Snd.boom();
+    buzz(40);
   }
+
+  updateToasts(dt);
+  if (overGuardT > 0) overGuardT -= dt;
   if (flashT > 0) flashT = Math.max(0, flashT - dt * 2.2);
   if (shield > 0) shield = Math.max(0, shield - dt * 0.6);
+  if (eraFx > 0) eraFx = Math.max(0, eraFx - dt * 1.1);
+  if (hitFx > 0) hitFx = Math.max(0, hitFx - dt * 2.4);
+  if (comboPopT > 0) comboPopT = Math.max(0, comboPopT - dt);
+
+  // First-run coach marks. Only on run 1, and only until all three land.
+  if (!coachDone && state === 'play') {
+    if (coachStep === 0 && elapsed > 1.2) { toast(COACH[0], 2.4); coachStep = 1; }
+    else if (coachStep === 1 && combo >= 1) { toast(COACH[1], 2.4); coachStep = 2; }
+    else if (coachStep === 2 && combo >= 5) {
+      toast(COACH[2], 2.6);
+      coachStep = 3;
+      coachDone = true;
+      saveSet('coach', '1');
+    }
+  }
+
+  // Low-mass warning: evaporation death used to arrive untelegraphed.
+  nearDeath = state === 'play'
+    ? clamp(1 - (p.area - DEATH_AREA) / (DEATH_AREA * 2.4), 0, 1)
+    : 0;
 
   // Kilonova: a neutron-star merger going off somewhere in the field. Real
   // ones forge the heavy elements (gold, platinum, uranium) and flash hard
@@ -1585,14 +1958,44 @@ function update(dt) {
   cam.y = lerp(cam.y, p.y, 0.35);
 
   if (state === 'play') {
-    const t = currentTarget();
-    const dx = t.x - p.x, dy = t.y - p.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const maxV = 11 * p.r;
-    const wantV = Math.min(maxV, dist * 7);
-    const k = smooth(0.0006, dt);
-    p.vx = lerp(p.vx, dx / dist * wantV, k);
-    p.vy = lerp(p.vy, dy / dist * wantV, k);
+    // ---- Movement: thrust and inertia, not "seek a point" ---------------
+    // The old model lerped velocity straight at a target point, so the hole
+    // changed direction within a frame and handled like a mouse cursor. A
+    // black hole is the least manoeuvrable object in the universe, so the
+    // stick now applies THRUST, and the resulting velocity has to be carried
+    // around by drag. Nothing can turn on a dime any more.
+    //
+    // The two rates are chosen so that top speed is UNCHANGED at SPEED_REF*r
+    // (the game's reachability depends on it) while the time taken to reach
+    // that speed grows with mass:
+    //
+    //   terminal speed = thrust / bleedRate = (maxV * bleedRate) / bleedRate
+    //                  = maxV                                <- balance held
+    //   time constant  = 1 / bleedRate  ~ (r / P0) ^ DRIFT_EXP <- heavier is slower
+    //
+    // So a small hole is nimble and a grown hole is ponderous, but neither is
+    // any slower flat out than it used to be.
+    const tv = thrustVector();
+    const maxV = SPEED_REF * p.r;
+    const bleedRate = SPACE_DRAG * Math.pow(P0 / p.r, DRIFT_EXP);
+    const thrust = maxV * bleedRate;
+
+    p.vx += tv.x * thrust * dt;
+    p.vy += tv.y * thrust * dt;
+
+    // Space is a vacuum, so there is no real friction -- but a hole that never
+    // slows down is unplayable. This is a light bleed, and because bleedRate
+    // falls with size, big holes coast for longer.
+    const bleed = Math.exp(-bleedRate * dt);
+    p.vx *= bleed;
+    p.vy *= bleed;
+
+    // Ceiling. Loose enough that collisions and shockwaves still land a punch
+    // (they inject velocity directly), tight enough that nothing runs away.
+    const sp = Math.hypot(p.vx, p.vy);
+    const cap = maxV * IMPULSE_CAP;
+    if (sp > cap) { const s = cap / sp; p.vx *= s; p.vy *= s; }
+
     p.x += p.vx * dt;
     p.y += p.vy * dt;
 
@@ -1674,6 +2077,21 @@ function updateEnts(dt) {
     if (d2 > despawnR * despawnR) {
       if (e.civ === 'ark') toast('ARK ESCAPED', 1.4);
       ents.splice(i, 1); continue;
+    }
+
+    // ---- First encounters ---------------------------------------------
+    // Your rarest content should not be missable in the middle of a fight.
+    // Gated on a few seconds of elapsed play so the opening of a run is never
+    // interrupted before the player has even got moving.
+    if (state === 'play' && elapsed > 4 &&
+        !(seenEvents.pulsar && seenEvents.wormhole && seenEvents.civ)) {
+      const bt = e.body && e.body.type;
+      if ((bt === 'pulsar' || bt === 'wormhole') && !seenEvents[bt]) {
+        const reach = p.r * ENCOUNTER_REACH;
+        if (d2 < reach * reach) firstEncounter(bt, e.x, e.y);
+      } else if (e.civ && !seenEvents.civ && d2 < v * v) {
+        firstEncounter('civ', e.x, e.y);
+      }
     }
 
     // ---- Civilisation countermeasures --------------------------------
@@ -1922,7 +2340,40 @@ function render() {
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, W, H);
 
-  if (flashT > 0) {
+  // Low-mass squeeze: the walls close in as you evaporate, so the end of a
+  // run is something you feel coming.
+  if (nearDeath > 0.02) {
+    const inner = MIN * (0.36 - 0.24 * nearDeath);
+    const g = ctx.createRadialGradient(W / 2, H / 2, inner, W / 2, H / 2, Math.max(W, H) * 0.62);
+    g.addColorStop(0, 'rgba(255,60,40,0)');
+    g.addColorStop(1, 'rgba(255,40,25,' + (0.55 * nearDeath).toFixed(3) + ')');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Directional damage vignette: a red edge-pulse from the side the hit came
+  // from. We already knew the vector in hurt(); now it is visible.
+  if (hitFx > 0.01) {
+    const hx = W / 2 + hitDirX * W * 0.5;
+    const hy = H / 2 + hitDirY * H * 0.5;
+    const g = ctx.createRadialGradient(hx, hy, MIN * 0.10, hx, hy, Math.max(W, H) * 0.74);
+    g.addColorStop(0, 'rgba(255,60,40,0)');
+    g.addColorStop(1, 'rgba(255,70,45,' + (0.7 * hitFx).toFixed(3) + ')');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Era-up celebration: a brief tint + a ring swell instead of a bare toast.
+  if (eraFx > 0.01 && motion) {
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'rgba(150,110,255,' + (eraFx * 0.20).toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // MOTION: OFF has to kill the fullscreen white strobe as well. That flash,
+  // not the shake, is the real photosensitivity risk.
+  if (flashT > 0 && motion) {
     ctx.globalCompositeOperation = 'lighter';
     ctx.fillStyle = `rgba(255,246,224,${(flashT * 0.55).toFixed(3)})`;
     ctx.fillRect(0, 0, W, H);
@@ -1960,36 +2411,71 @@ function drawShots() {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-// Virtual joystick drawn in screen space. The base lives in the lower-left
-// when idle and slides under the finger when active.
+// The stick, drawn in screen space at a fixed bottom-centre position. Because
+// it never moves, it can be hit blind -- which is the only way a thumb control
+// is usable while you are watching the hole instead of your hands.
 function drawJoystick() {
-  if (controlMode !== 'joystick') return;     // nothing to draw in drag modes
-  const homeX = JOY_R + 28;
-  const homeY = H - JOY_R - 36;
-  const cx = joy.active ? joy.bx : homeX;
-  const cy = joy.active ? joy.by : homeY;
-  const kx = joy.active ? joy.kx : cx;
-  const ky = joy.active ? joy.ky : cy;
+  if (controlMode !== 'joystick') return;   // drag modes steer themselves
+  if (state !== 'play') return;
+
+  const cx = JOY_BASE_X, cy = JOY_BASE_Y;
+  const kx = cx + joy.dx * JOY_R;
+  const ky = cy + joy.dy * JOY_R;
+  const mag = Math.min(1, Math.hypot(joy.dx, joy.dy));
+
+  // The stick sits over the bottom of the play area, which is where a lot of
+  // the food arrives from. Dim it while nobody is touching it, so it is
+  // findable but does not sit on top of the game the rest of the time.
+  const idle = joy.active ? 1 : 0.55;
 
   ctx.globalCompositeOperation = 'lighter';
 
-  // Outer base ring + faint inner guide ring.
-  ctx.strokeStyle = joy.active ? 'rgba(79,240,255,0.42)' : 'rgba(150,200,230,0.18)';
+  // Base well. A soft dark disc keeps the knob readable over a bright nebula.
+  const well = ctx.createRadialGradient(cx, cy, 0, cx, cy, JOY_R * 1.12);
+  well.addColorStop(0.00, 'rgba(10,20,36,' + (0.42 * idle).toFixed(3) + ')');
+  well.addColorStop(1.00, 'rgba(10,20,36,0)');
+  ctx.fillStyle = well;
+  ctx.beginPath(); ctx.arc(cx, cy, JOY_R * 1.12, 0, TAU); ctx.fill();
+
+  // Outer ring brightens as you push, so the stick reports its own deflection.
+  ctx.strokeStyle = 'rgba(79,240,255,' +
+    ((0.24 + mag * 0.34) * idle).toFixed(3) + ')';
   ctx.lineWidth = 1.4;
   ctx.beginPath(); ctx.arc(cx, cy, JOY_R, 0, TAU); ctx.stroke();
-  ctx.strokeStyle = 'rgba(150,200,230,0.10)';
+
+  // Deadzone guide at 25% -- the throw before the hole actually moves.
+  ctx.strokeStyle = 'rgba(150,200,230,' + (0.13 * idle).toFixed(3) + ')';
   ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.arc(cx, cy, JOY_R * 0.55, 0, TAU); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, JOY_R * JOY_DEADZONE, 0, TAU); ctx.stroke();
+
+  // Four cardinal ticks, so the ring reads as a control and not a decoration.
+  ctx.strokeStyle = 'rgba(150,200,230,' + (0.20 * idle).toFixed(3) + ')';
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI * 0.5;
+    const ux = Math.cos(a), uy = Math.sin(a);
+    ctx.beginPath();
+    ctx.moveTo(cx + ux * JOY_R * 1.06, cy + uy * JOY_R * 1.06);
+    ctx.lineTo(cx + ux * JOY_R * 1.20, cy + uy * JOY_R * 1.20);
+    ctx.stroke();
+  }
+
+  // Thrust vector: a line from the centre to the knob, thickening with push.
+  if (mag > 0.02) {
+    ctx.strokeStyle = 'rgba(79,240,255,' + (0.16 + mag * 0.34).toFixed(3) + ')';
+    ctx.lineWidth = 1 + mag * 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(kx, ky); ctx.stroke();
+  }
 
   // Knob.
-  const live = joy.active ? (0.85 + 0.15 * Math.sin(elapsed * 6)) : 0.65;
-  ctx.globalAlpha = live;
-  ctx.fillStyle = 'rgba(79,240,255,0.55)';
+  const knob = ctx.createRadialGradient(kx, ky, 0, kx, ky, JOY_KNOB);
+  knob.addColorStop(0.00, 'rgba(190,250,255,' + ((0.55 + mag * 0.30) * idle).toFixed(3) + ')');
+  knob.addColorStop(0.70, 'rgba(79,240,255,' + ((0.32 + mag * 0.28) * idle).toFixed(3) + ')');
+  knob.addColorStop(1.00, 'rgba(79,240,255,0)');
+  ctx.fillStyle = knob;
   ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB, 0, TAU); ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.strokeStyle = 'rgba(255,255,255,' + ((0.40 + mag * 0.40) * idle).toFixed(3) + ')';
   ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB, 0, TAU); ctx.stroke();
-  ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB * 0.72, 0, TAU); ctx.stroke();
 
   ctx.globalCompositeOperation = 'source-over';
 }
@@ -2055,10 +2541,13 @@ function drawEnts() {
     const scr = e.r * cam.zoom;          // on-screen radius, CSS px
     const b = e.body;
 
-    // Glow carries the threat colour, so it reads before the surface does.
+    // Threat colour rides on a soft glow instead of a hard stroked ring. The
+    // old uniform circle drawn around every single body read as a UI outline
+    // sitting on top of the art; the hue now bleeds off the limb the way an
+    // atmosphere does, which is both prettier and less like a selection box.
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.55;
-    const gs = e.r * 2.3;
+    ctx.globalAlpha = highContrast ? 0.82 : 0.6;
+    const gs = e.r * (ratio > 0.95 ? 2.5 : 2.2);
     ctx.drawImage(glowSprite(hue), e.x - gs, e.y - gs, gs * 2, gs * 2);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
@@ -2098,8 +2587,9 @@ function drawEnts() {
     ctx.drawImage(bodySprite(b.type, b.variant, b.sub), -e.r, -e.r, e.r * 2, e.r * 2);
     ctx.restore();
 
-    // Fixed light direction; stars are self-lit so they skip this.
-    if (b.type !== 'star' && scr > 3) {
+    // Fixed light direction; stars are self-lit so they skip this, and a
+    // rival is a black hole -- a lit-side highlight on a shadow is nonsense.
+    if (b.type !== 'star' && b.type !== 'rival' && b.type !== 'quasar' && scr > 3) {
       ctx.drawImage(shadeSprite, e.x - e.r, e.y - e.r, e.r * 2, e.r * 2);
     }
 
@@ -2165,35 +2655,32 @@ function drawEnts() {
       ctx.globalCompositeOperation = 'source-over';
     }
 
-    // Atmospheric rim — the authoritative edibility cue.
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.strokeStyle = `hsla(${hue}, 100%, ${ratio > 0.95 ? 66 : 84}%, 0.85)`;
-    ctx.lineWidth = Math.max(0.6, e.r * 0.09);
-    ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 0.99, 0, TAU); ctx.stroke();
-
-    // Lethal bodies get a pulsing ring AND outward hazard spikes. The spikes are
-// a SHAPE cue, so threat stays readable for anyone who cannot separate the
-// two colours -- colour alone would make this unplayable for them.
+    // Hazard shape. Lethal bodies wear a closed, spiked ring; edible ones
+    // stay smooth. That is a SHAPE channel, so threat stays readable for
+    // anyone who cannot separate the two hues -- colour alone is unusable
+    // for them. Drawn as one closed polygon rather than radiating rays,
+    // which read as a cartoon sunburst.
     if (ratio > 0.95 && !e.civ) {
       const pulse = 0.35 + 0.35 * Math.sin(elapsed * 5 + e.phase);
-      ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${pulse.toFixed(3)})`;
-      ctx.lineWidth = Math.max(0.8, e.r * 0.05);
-      ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 1.16, 0, TAU); ctx.stroke();
-
-      const spikes = 8;
-      const inner = e.r * 1.30;
-      const outer = e.r * 1.62;
-      ctx.lineWidth = Math.max(1, e.r * 0.07);
-      ctx.strokeStyle = `hsla(${hue}, 100%, 80%, ${(0.45 + pulse * 0.5).toFixed(3)})`;
+      const teeth = 12;
+      const rIn = e.r * 1.10;
+      const rOut = e.r * (1.26 + pulse * 0.10);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineWidth = Math.max(1, e.r * 0.055);
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${(0.45 + pulse * 0.45).toFixed(3)})`;
       ctx.beginPath();
-      for (let k = 0; k < spikes; k++) {
-        const a = (k / spikes) * TAU + e.phase * 0.4;
-        ctx.moveTo(e.x + Math.cos(a) * inner, e.y + Math.sin(a) * inner);
-        ctx.lineTo(e.x + Math.cos(a) * outer, e.y + Math.sin(a) * outer);
+      for (let k = 0; k < teeth * 2; k++) {
+        const a = (k / (teeth * 2)) * TAU + e.phase * 0.4;
+        const rr = (k & 1) ? rOut : rIn;
+        const px = e.x + Math.cos(a) * rr, py = e.y + Math.sin(a) * rr;
+        if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
       }
+      ctx.closePath();
       ctx.stroke();
+      ctx.lineJoin = 'miter';
+      ctx.globalCompositeOperation = 'source-over';
     }
-    ctx.globalCompositeOperation = 'source-over';
   }
 }
 
@@ -2278,18 +2765,231 @@ function drawSlugs() {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-// Relativistic Doppler beaming factor for a point on a ring. The side of
-// the ring rotating toward the observer is boosted steeply while the
-// receding side dims. ((1+cos)/2)^2 is a cheap stand-in for the true
-// D^(3+alpha) boost, and it is what gives every real black-hole image
-// (M87*, Sgr A*) its characteristic one-sided brightness.
-function doppler(angle, beamDir) {
-  const c = Math.cos(angle - beamDir);
-  return Math.pow(Math.max(0, (1 + c) / 2), 2);
+// ============================================================
+// THE BLACK HOLE
+//
+// Everything below is drawn with continuous gradients. The previous version
+// stroked thirty separate arc segments for the photon ring and another thirty
+// for the lensed disk, which stacked into a ring of hard-edged blocks and
+// read as a brass gear or a clock face rather than as gas falling into a
+// hole -- and its "near side" was a flat metallic-looking bar.
+//
+// The structure now is the one every real image shows (M87*, Sgr A*, and the
+// Gargantua render everyone has seen):
+//   * a perfectly black shadow
+//   * a thin, brilliant photon ring hugging its edge
+//   * a thin accretion disk seen almost edge-on, crossing in FRONT of the
+//     shadow, hottest along its centre line and cooling outward
+//   * the far side of that same disk lensed up over the top and down under
+//     the bottom, because gravity bends its light around the hole
+//   * Doppler beaming, so the limb rotating toward the camera is far
+//     brighter than the one receding -- this is what makes a real
+//     black-hole image lopsided instead of symmetric
+// ============================================================
+const DISK_FLAT = 0.115;   // sin(inclination): how edge-on the disk sits
+const DISK_OUT = 3.1;      // outer disk radius, in shadow radii
+
+// One side of the disk is always brighter. Which one is set by the fixed
+// scene light direction so it stays consistent with every other body.
+function beamSide() {
+  return Math.cos(Math.atan2(LIGHT.y, LIGHT.x)) >= 0 ? 1 : -1;
+}
+
+// A thin, near-edge-on accretion disk. Projected through scale(1, DISK_FLAT)
+// a radial gradient becomes an elliptical band, which is exactly the shape
+// of a real disk seen from just above its plane -- and because the gradient
+// is continuous there is no segmentation anywhere in it.
+//
+// One subtlety: a single projected circle has a HARD top and bottom edge,
+// because the radial gradient is still ~85% opaque where the ellipse clip
+// slices through it. A real disk fades vertically. So we stack a few
+// ellipses of decreasing flatness at partial strength; their union ramps
+// the opacity down through the vertical limb instead of stepping off a
+// cliff, which is what stops the disk reading as a flat metallic bar.
+const DISK_LAYERS = [1.00, 0.72, 0.44];
+function drawDisk(r, beam, cx, cy) {
+  const R = r * DISK_OUT;
+  const ox = cx === undefined ? p.x : cx;
+  const oy = cy === undefined ? p.y : cy;
+  const share = 1 / DISK_LAYERS.length;
+
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.globalCompositeOperation = 'lighter';
+
+  for (const flat of DISK_LAYERS) {
+    ctx.save();
+    ctx.scale(1, DISK_FLAT * flat);
+
+    // Temperature: white-hot near the hole, cooling outward to deep orange.
+    const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+    rg.addColorStop(0.00, 'rgba(255,255,255,' + (0.90 * share).toFixed(3) + ')');
+    rg.addColorStop(0.14, 'rgba(255,252,242,' + (0.84 * share).toFixed(3) + ')');
+    rg.addColorStop(0.36, 'rgba(255,232,190,' + (0.56 * share).toFixed(3) + ')');
+    rg.addColorStop(0.62, 'rgba(255,192,118,' + (0.28 * share).toFixed(3) + ')');
+    rg.addColorStop(0.85, 'rgba(255,150,72,' + (0.11 * share).toFixed(3) + ')');
+    rg.addColorStop(1.00, 'rgba(255,120,45,0)');
+    ctx.fillStyle = rg;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+
+  // Doppler beaming. t = 0 at the left limb, 1 at the right. Applied once
+  // over the whole band so the asymmetry stays smooth across the layers.
+  ctx.save();
+  ctx.scale(1, DISK_FLAT);
+  const dg = ctx.createLinearGradient(-R, 0, R, 0);
+  if (beam > 0) {
+    dg.addColorStop(0.00, 'rgba(255,228,190,0.00)');
+    dg.addColorStop(0.34, 'rgba(255,232,196,0.06)');
+    dg.addColorStop(0.72, 'rgba(255,240,212,0.30)');
+    dg.addColorStop(1.00, 'rgba(255,248,230,0.62)');
+  } else {
+    dg.addColorStop(0.00, 'rgba(255,248,230,0.62)');
+    dg.addColorStop(0.28, 'rgba(255,240,212,0.30)');
+    dg.addColorStop(0.66, 'rgba(255,232,196,0.06)');
+    dg.addColorStop(1.00, 'rgba(255,228,190,0.00)');
+  }
+  ctx.fillStyle = dg;
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// Light from the far side of the disk, bent up over the top of the shadow and
+// down under the bottom. Brightest at the pole and fading out toward the
+// equator, which is where the lensed image piles up in a real photograph.
+function drawLensedArcs(r, beam) {
+  const inner = r * 1.02;
+  const outer = r * 1.62;
+  ctx.globalCompositeOperation = 'lighter';
+  for (const s of [-1, 1]) {
+    ctx.save();
+    ctx.translate(p.x, p.y);
+
+    // Half-plane, then annulus: only the arc outside the shadow survives.
+    ctx.beginPath();
+    ctx.rect(-outer, s < 0 ? -outer : 0, outer * 2, outer);
+    ctx.clip();
+    ctx.beginPath();
+    ctx.arc(0, 0, outer, 0, TAU);
+    ctx.arc(0, 0, inner, 0, TAU, true);
+    ctx.clip();
+
+    const g = ctx.createRadialGradient(0, s * r * 1.02, r * 0.02, 0, s * r * 1.02, r * 1.30);
+    g.addColorStop(0.00, 'rgba(255,253,247,0.62)');
+    g.addColorStop(0.30, 'rgba(255,238,208,0.34)');
+    g.addColorStop(0.70, 'rgba(255,190,124,0.12)');
+    g.addColorStop(1.00, 'rgba(255,150,90,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(-outer, -outer, outer * 2, outer * 2);
+
+    // Same Doppler asymmetry as the disk itself.
+    const dg = ctx.createLinearGradient(-outer, 0, outer, 0);
+    if (beam > 0) {
+      dg.addColorStop(0.00, 'rgba(0,0,0,0)');
+      dg.addColorStop(1.00, 'rgba(255,232,196,0.30)');
+    } else {
+      dg.addColorStop(0.00, 'rgba(255,232,196,0.30)');
+      dg.addColorStop(1.00, 'rgba(0,0,0,0)');
+    }
+    ctx.fillStyle = dg;
+    ctx.fillRect(-outer, -outer, outer * 2, outer * 2);
+    ctx.restore();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// Light that has orbited the hole and escaped. Thin, continuous, and carried
+// by a single linear gradient so the beaming runs smoothly around it with no
+// visible segment joins.
+function drawPhotonRing(r, beam) {
+  const rr = r * 1.045;
+  const g = ctx.createLinearGradient(p.x - rr, 0, p.x + rr, 0);
+  const lo = beam > 0 ? 0.20 : 0.95;
+  const hi = beam > 0 ? 0.95 : 0.20;
+  g.addColorStop(0.00, 'rgba(255,216,180,' + lo.toFixed(3) + ')');
+  g.addColorStop(0.50, 'rgba(255,247,234,1)');
+  g.addColorStop(1.00, 'rgba(255,216,180,' + hi.toFixed(3) + ')');
+
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = g;
+  // A soft wide pass for the glow, then the crisp core on top.
+  ctx.globalAlpha = 0.22;
+  ctx.lineWidth = Math.max(2, r * 0.075);
+  ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = Math.max(1, r * 0.035);
+  ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.stroke();
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// ============================================================
+//   Light wrapping around the hole.
+//
+//   Photons from the sky behind the hole are bent around it, so the
+//   background piles up into concentric arcs hugging the shadow. Each
+//   successive band is the same sky bent further round the hole:
+//   fainter, thinner, and closer in. That stack of rings is the thing
+//   that reads as "a black hole" more than the disk does.
+// ============================================================
+const EINSTEIN_BANDS = [
+  { k: 1.26, a: 0.165, w: 0.026 },
+  { k: 1.44, a: 0.100, w: 0.019 },
+  { k: 1.66, a: 0.058, w: 0.014 },
+  { k: 1.94, a: 0.032, w: 0.011 }
+];
+
+function drawEinsteinRings(r, beam, cx, cy) {
+  const ox = cx === undefined ? p.x : cx;
+  const oy = cy === undefined ? p.y : cy;
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < EINSTEIN_BANDS.length; i++) {
+    const b = EINSTEIN_BANDS[i];
+    // A little breathing. Static rings read as a painted archery target;
+    // a slow drift reads as fluid.
+    const rad = r * b.k * (1 + Math.sin(elapsed * 0.6 - i * 0.9) * 0.012);
+    // Each band is a CRESCENT, not a ring: the beamed limb is several times
+    // brighter than the receding one, so the light looks like it is being
+    // dragged around the hole rather than painted on as a circle.
+    const lo = beam > 0 ? b.a * 0.15 : b.a;
+    const hi = beam > 0 ? b.a : b.a * 0.15;
+    const g = ctx.createLinearGradient(ox - rad, 0, ox + rad, 0);
+    g.addColorStop(0.00, 'rgba(255,214,178,' + lo.toFixed(3) + ')');
+    g.addColorStop(0.50, 'rgba(255,240,220,' + (b.a * 0.45).toFixed(3) + ')');
+    g.addColorStop(1.00, 'rgba(255,214,178,' + hi.toFixed(3) + ')');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = Math.max(1, r * b.w);
+    ctx.beginPath(); ctx.arc(ox, oy, rad, 0, TAU); ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// The far side of the disk, bent right around the shadow until it comes
+// back out as a small bright knot clinging to the limb. In the reference
+// this is the little highlight that drifts around the edge of the shadow.
+function drawSecondaryImage(r, beam, cx, cy) {
+  const ox = cx === undefined ? p.x : cx;
+  const oy = cy === undefined ? p.y : cy;
+  const dir = beam > 0 ? 1 : -1;
+  const ang = elapsed * 0.35 * dir;
+  const ax = ox + Math.cos(ang) * r * 1.02;
+  const ay = oy + Math.sin(ang) * r * 1.02;
+  const rad = r * 0.34;
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(ax, ay, 0, ax, ay, rad);
+  g.addColorStop(0.00, 'rgba(255,252,242,0.88)');
+  g.addColorStop(0.45, 'rgba(255,226,186,0.34)');
+  g.addColorStop(1.00, 'rgba(255,190,130,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(ax, ay, rad, 0, TAU); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 function drawPlayer() {
   const r = p.r;
+  const beam = beamSide();
 
   // Relativistic polar jets once the hole is accreting hard enough to power
   // an active galactic nucleus. Real supermassive black holes do exactly
@@ -2317,15 +3017,39 @@ function drawPlayer() {
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  // A warm, faint outer halo -- the lensed glow of the background starfield.
+  // A faint halo -- background starlight dragged around the well. Kept very
+  // low: this and the lensing bands together were inflating the whole object
+  // into a fuzzy torus, when the reference is a hard shadow with THIN arcs.
   ctx.globalCompositeOperation = 'lighter';
-  const halo = ctx.createRadialGradient(p.x, p.y, r * 1.0, p.x, p.y, r * 1.7);
-  halo.addColorStop(0.00, 'rgba(255,200,170,0.40)');
-  halo.addColorStop(0.55, 'rgba(255,160,130,0.16)');
-  halo.addColorStop(1.00, 'rgba(255,140,110,0)');
+  const halo = ctx.createRadialGradient(p.x, p.y, r * 1.02, p.x, p.y, r * 1.50);
+  halo.addColorStop(0.00, 'rgba(255,198,156,0.075)');
+  halo.addColorStop(0.45, 'rgba(255,150,110,0.022)');
+  halo.addColorStop(1.00, 'rgba(255,132,100,0)');
   ctx.fillStyle = halo;
-  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.7, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.50, 0, TAU); ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
+
+  // Relativistic beaming. Light piles up in the direction you are travelling,
+  // so a hole at speed wears a brighter cap on its leading edge. Without this
+  // there is no way to read speed off the screen at all: the camera is pinned
+  // to the hole, so motion at 900 units/s looks identical to motion at 90.
+  const spd = Math.hypot(p.vx, p.vy);
+  if (spd > 1) {
+    const sf = clamp(spd / (SPEED_REF * P0 * 2.2), 0, 1);
+    if (sf > 0.03) {
+      const ux = p.vx / spd, uy = p.vy / spd;
+      const gx = p.x + ux * r * 0.85;
+      const gy = p.y + uy * r * 0.85;
+      ctx.globalCompositeOperation = 'lighter';
+      const bg = ctx.createRadialGradient(gx, gy, 0, gx, gy, r * 2.1);
+      bg.addColorStop(0.00, 'rgba(190,235,255,' + (0.20 * sf).toFixed(3) + ')');
+      bg.addColorStop(0.50, 'rgba(150,205,255,' + (0.07 * sf).toFixed(3) + ')');
+      bg.addColorStop(1.00, 'rgba(120,180,255,0)');
+      ctx.fillStyle = bg;
+      ctx.beginPath(); ctx.arc(gx, gy, r * 2.1, 0, TAU); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  }
 
   // Pulsar-shield ring, when active.
   if (shield > 0) {
@@ -2336,91 +3060,39 @@ function drawPlayer() {
     ctx.globalCompositeOperation = 'source-over';
   }
 
+  // The bent background. These live outside the shadow, so they go down
+  // first -- the hole then punches its black disc out of the middle of them,
+  // which is exactly the "light wrapping around" silhouette.
+  drawEinsteinRings(r, beam);
+
   // The shadow -- pure black. (The observable "shadow" is about 2.6x the
   // Schwarzschild radius; we treat p.r as that shadow radius.)
   ctx.fillStyle = '#000';
   ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fill();
 
-  const beamDir = Math.atan2(LIGHT.y, LIGHT.x);
-  ctx.globalCompositeOperation = 'lighter';
+  // Lensed far side first: it lives outside the shadow, so it can go down
+  // before the disk crosses in front.
+  drawLensedArcs(r, beam);
 
-  // ---- Photon ring ---------------------------------------------------
-  // Light that has orbited the hole and escaped. Very thin, hugging the
-  // shadow edge. Segmented so it can carry relativistic Doppler beaming:
-  // the side rotating toward us is boosted, the receding side is dimmed.
-  const SEG = 30;
-  const ringR = r * 1.045;
-  const ringW = Math.max(1, r * 0.055);
-  for (let i = 0; i < SEG; i++) {
-    const a0 = (i / SEG) * TAU;
-    const a1 = ((i + 1) / SEG) * TAU + 0.02;      // slight overlap, no seams
-    const mid = (a0 + a1) / 2;
-    const boost = doppler(mid, beamDir);
-    const alpha = 0.20 + 0.78 * boost;
-    const gg = Math.round(226 + 26 * boost);
-    const bb = Math.round(212 + 42 * boost);
-    ctx.strokeStyle = `rgba(255,${gg},${bb},${alpha.toFixed(3)})`;
-    ctx.lineWidth = ringW;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, ringR, a0, a1);
-    ctx.stroke();
-  }
+  // The near side of the disk passes between us and the hole, so it is drawn
+  // ON TOP of the black sphere and splits it in two. That is the single most
+  // recognisable feature of the whole object.
+  drawDisk(r, beam);
 
-  // ---- Lensed accretion disk: the light-wrapping effect ---------------
-  // Gravity bends the far side of the disk up over the top of the hole and
-  // down under the bottom, so the disk appears to wrap right around the
-  // sphere instead of stopping at the edges. This is the Gargantua /
-  // Interstellar look and it is what real lensing actually does.
-  const wrapR = r * 1.34;
-  const wrapW = Math.max(1.5, r * 0.20);
-  const ARCS = 30;
-  for (let i = 0; i < ARCS; i++) {
-    const a0 = (i / ARCS) * TAU;
-    const a1 = ((i + 1) / ARCS) * TAU + 0.02;
-    const mid = (a0 + a1) / 2;
-    // Brightest at top and bottom, where the lensed image piles up.
-    const wrap = Math.pow(Math.abs(Math.sin(mid)), 1.4);
-    const boost = doppler(mid, beamDir);
-    const alpha = (0.10 + 0.62 * wrap) * (0.35 + 0.75 * boost);
-    if (alpha < 0.012) continue;
-    const gg = Math.round(198 + 48 * boost);
-    const bb = Math.round(188 + 62 * boost);
-    ctx.strokeStyle = `rgba(255,${gg},${bb},${alpha.toFixed(3)})`;
-    ctx.lineWidth = wrapW;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, wrapR, a0, a1);
-    ctx.stroke();
-  }
+  // The far side of the disk, having wrapped right round the hole, lands on
+  // the limb as a bright knot. Drawn over the shadow because it clings to it.
+  drawSecondaryImage(r, beam);
 
-  // ---- Near side of the disk, crossing in FRONT of the shadow ---------
-  // In a real image the near edge of the disk passes between us and the
-  // hole, so it is drawn on top of the black sphere.
-  const bandW = r * 2.9;
-  const bandH = Math.max(1.2, r * 0.15);
-  const bg = ctx.createLinearGradient(p.x - bandW / 2, 0, p.x + bandW / 2, 0);
-  bg.addColorStop(0.00, 'rgba(255,238,220,0)');
-  bg.addColorStop(0.30, 'rgba(255,244,232,0.50)');
-  bg.addColorStop(0.50, 'rgba(255,251,242,0.72)');
-  bg.addColorStop(0.70, 'rgba(255,244,232,0.42)');
-  bg.addColorStop(1.00, 'rgba(255,238,220,0)');
-  ctx.fillStyle = bg;
-  ctx.beginPath();
-  ctx.ellipse(p.x, p.y, bandW / 2, bandH, 0, 0, TAU);
-  ctx.fill();
-
-  // ---- Faint outer lensing halo --------------------------------------
-  ctx.strokeStyle = 'rgba(228,240,255,0.30)';
-  ctx.lineWidth = Math.max(0.8, r * 0.022);
-  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.64, 0, TAU); ctx.stroke();
+  drawPhotonRing(r, beam);
 
   // Invulnerability flash overrides the whole assembly.
   if (invuln > 0 && Math.floor(invuln * 18) % 2 === 0) {
+    ctx.globalCompositeOperation = 'lighter';
     ctx.strokeStyle = 'rgba(255,255,255,0.85)';
     ctx.lineWidth = Math.max(1, r * 0.06);
-    ctx.beginPath(); ctx.arc(p.x, p.y, ringR, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.045, 0, TAU); ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
   }
-
-  ctx.globalCompositeOperation = 'source-over';
 }
 
 function drawParts() {
@@ -2450,6 +3122,38 @@ function drawWaves() {
 /* ============================================================
    HUD + LOOP
    ============================================================ */
+const COMPASS = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'];
+const PIP_COUNT = 20;
+
+function buildPips() {
+  if (!el.comboBar) return;
+  el.comboBar.innerHTML = '';
+  for (let i = 0; i < PIP_COUNT; i++) el.comboBar.appendChild(document.createElement('i'));
+}
+
+// Nearest lethal body, its size relative to yours, and which way it lies.
+// The danger arrows already knew this; a number makes it learnable.
+function threatLine() {
+  let bestD2 = Infinity, ratio = 0, ang = 0;
+  const reach = viewWorldRadius();
+  const reach2 = reach * reach;
+  for (const e of ents) {
+    if (e.r <= p.r * 0.95) continue;
+    const dx = e.x - p.x, dy = e.y - p.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > reach2 || d2 >= bestD2) continue;
+    bestD2 = d2;
+    ratio = e.r / p.r;
+    ang = Math.atan2(dy, dx);
+  }
+  if (bestD2 === Infinity) return 'CLEAR';
+  const dir = COMPASS[Math.round(mod(ang, TAU) / (TAU / 8)) % 8];
+  return 'THREAT ' + ratio.toFixed(1) + '× ' + dir;
+}
+
+// Only touch the DOM when something actually changed -- this runs every frame.
+const hudCache = { chips: '', threat: '', warn: null, crit: null, pips: -1 };
+
 function updateHUD() {
   // Don't let the rolling counter keep easing while paused -- nothing should
   // animate on screen when the game is stopped.
@@ -2460,12 +3164,67 @@ function updateHUD() {
   }
   el.hudBest.textContent = fmt(best);
 
+  // Low-mass warning state: amber, then red, with a heartbeat.
+  const warn = nearDeath > 0.45;
+  const crit = nearDeath > 0.78;
+  if (warn !== hudCache.warn) {
+    el.hudScore.classList.toggle('warn', warn);
+    hudCache.warn = warn;
+  }
+  if (crit !== hudCache.crit) {
+    el.hudScore.classList.toggle('crit', crit);
+    hudCache.crit = crit;
+  }
+
+  // Chips answer "why did I survive that?" and "what stage am I in?".
+  const chips = [];
+  if (shield > 0) chips.push('shield|SHIELD');
+  chips.push('era|' + ERAS[era % ERAS.length]);
+  chips.push('|' + (CTRL_LABEL[controlMode] || 'STICK'));
+  const chipKey = chips.join(',');
+  if (chipKey !== hudCache.chips) {
+    hudCache.chips = chipKey;
+    el.chips.innerHTML = '';
+    for (const c of chips) {
+      const parts = c.split('|');
+      const d = document.createElement('div');
+      d.className = 'chip' + (parts[0] ? ' ' + parts[0] : '');
+      d.textContent = parts[1];
+      el.chips.appendChild(d);
+    }
+  }
+
+  const threat = (threatReadout && state === 'play') ? threatLine() : '';
+  if (threat !== hudCache.threat) {
+    hudCache.threat = threat;
+    el.threatOut.textContent = threat;
+  }
+
   const on = combo >= 3 && comboT > 0;
   el.comboWrap.classList.toggle('on', on);
   if (on) {
-    el.comboValue.textContent = 'COMBO ' + combo + '  ×' + comboMult().toFixed(1);
-    el.comboBar.firstElementChild.style.transform =
-      'scaleX(' + (comboT / COMBO_WINDOW).toFixed(3) + ')';
+    const intoWave = combo % PIP_COUNT;
+    el.comboValue.textContent =
+      'COMBO ' + combo + '  ×' + comboMult().toFixed(1) +
+      '  ·  WAVE IN ' + (PIP_COUNT - intoWave);
+    // Combo heat: the text grows and runs hotter toward the shockwave, then
+    // pops when it fires.
+    const heat = clamp(intoWave / PIP_COUNT, 0, 1);
+    const pop = comboPopT > 0 ? comboPopT : 0;
+    el.comboValue.style.transform =
+      'scale(' + (1 + heat * 0.30 + pop * 0.55).toFixed(3) + ')';
+    el.comboValue.style.color = highContrast
+      ? ''
+      : 'rgb(' + Math.round(79 + heat * 176) + ',' +
+        Math.round(240 - heat * 40) + ',' +
+        Math.round(255 - heat * 70) + ')';
+    if (intoWave !== hudCache.pips) {
+      hudCache.pips = intoWave;
+      const kids = el.comboBar.children;
+      for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('on', i < intoWave);
+    }
+  } else {
+    hudCache.pips = -1;
   }
 }
 
@@ -2509,18 +3268,53 @@ function start() {
   reset();
   state = 'play';
   panel = null;
-  hide(el.menu); hide(el.over); hide(el.pause); hide(el.settings); show(el.hud);
+  overGuardT = 0;
+  hide(el.menu); hide(el.over); hide(el.pause); hide(el.settings);
+  hide(el.eventPanel);
+  show(el.hud); show(el.keysLegend);
   Snd.setDrone(true, 0);
+}
+
+function renderHistory() {
+  if (!el.histStrip) return;
+  el.histStrip.innerHTML = '';
+  if (!history.length) return;
+  let top = 1;
+  for (const h of history) if (h.s > top) top = h.s;
+  for (const h of history) {
+    const d = new Date(h.t || Date.now());
+    const cell = document.createElement('div');
+    cell.className = 'hist';
+
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.style.height = Math.max(4, Math.round((h.s / top) * 26)) + 'px';
+
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.textContent = fmt(h.s);
+
+    const dt = document.createElement('div');
+    dt.className = 'd';
+    dt.textContent = (d.getMonth() + 1) + '/' + d.getDate();
+
+    cell.appendChild(bar); cell.appendChild(n); cell.appendChild(dt);
+    el.histStrip.appendChild(cell);
+  }
 }
 
 function toMenu() {
   commitBest();
   state = 'menu';
   panel = null;
-  hide(el.over); hide(el.hud); hide(el.pause); hide(el.settings); show(el.menu);
+  hide(el.over); hide(el.hud); hide(el.pause); hide(el.settings);
+  hide(el.eventPanel); hide(el.keysLegend);
+  show(el.menu);
   el.menuBest.textContent = best > 0 ? 'BEST ' + fmt(best) : '';
+  renderHistory();
+  syncControlPick();
   Snd.setDrone(false, 0);
-  if (el.toast) el.toast.classList.remove('show');
+  clearToasts();
 }
 
 function pauseGame() {
@@ -2537,20 +3331,107 @@ function resumeGame() {
   if (state !== 'paused') return;
   panel = null;
   state = 'play';
-  hide(el.pause); hide(el.settings);
+  hide(el.pause); hide(el.settings); hide(el.eventPanel);
   last = performance.now();          // don't hand the sim one giant dt
   Snd.setDrone(true, combo);
 }
 
-function openSettings() {
+// Settings is reachable from the menu as well as from pause, so remember
+// where we came from and hand control back there.
+let settingsFrom = 'pause';
+
+function openSettings(from) {
+  settingsFrom = from || (state === 'play' || state === 'paused' ? 'pause' : 'menu');
   panel = 'settings';
-  hide(el.pause); show(el.settings);
+  hide(el.pause); hide(el.menu); hide(el.eventPanel);
+  show(el.settings);
   syncSettingsUI();
 }
 
 function closeSettings() {
-  panel = 'pause';
-  hide(el.settings); show(el.pause);
+  hide(el.settings);
+  if (settingsFrom === 'menu') {
+    panel = null;
+    state = 'menu';
+    show(el.menu);
+    renderHistory();
+    syncControlPick();
+  } else {
+    panel = 'pause';
+    show(el.pause);
+  }
+}
+
+/* ---------- first-encounter panels ---------- */
+// The rarest content in the game used to be missable mid-chaos. The first
+// time each thing shows up we stop the world and say one line about it.
+const EVENTS = {
+  pulsar: {
+    title: 'PULSAR',
+    body: 'A neutron star spinning hundreds of times a second, sweeping the field with twin beams. ' +
+          'Eat it and you steal a shield that absorbs your next impact.'
+  },
+  wormhole: {
+    title: 'WORMHOLE',
+    body: 'Two mouths, one throat. Touch it and you are thrown across the field instantly. ' +
+          'Useful for escaping — disorienting every time.'
+  },
+  civ: {
+    title: 'SOMETHING NOTICED YOU',
+    body: 'A civilisation is building countermeasures: deflector domes, gravity projectors, ' +
+          'mass drivers, arks running for the edge. None of it is food.'
+  }
+};
+
+function openEventPanel(key, ex, ey) {
+  const info = EVENTS[key];
+  if (!info) return;
+  eventKey = key;
+  state = 'paused';
+  panel = 'event';
+  if (el.eventTitle) el.eventTitle.textContent = info.title;
+  if (el.eventBody) el.eventBody.textContent = info.body;
+
+  // Frame the encounter: park the camera between the hole and the thing we
+  // are talking about and pull in a little, so the explainer is about
+  // something you can actually see. update() is frozen while this is open,
+  // and both ease back to normal the moment play resumes.
+  if (typeof ex === 'number' && isFinite(ex)) {
+    cam.x = p.x + (ex - p.x) * 0.55;
+    cam.y = p.y + (ey - p.y) * 0.55;
+  }
+  cam.zoom *= 1.5;
+
+  hide(el.pause); hide(el.settings);
+  show(el.eventPanel);
+  Snd.setDrone(false, 0);
+}
+
+// One stop per event per session: the first time you meet something rare we
+// stop the world, later ones just play out.
+const seenEvents = { pulsar: false, wormhole: false, civ: false };
+
+// How close an encounter has to be before we interrupt. It has to be close
+// enough that it is plainly ON SCREEN and about to matter -- an explainer
+// that fires the instant something wanders into range stops a run dead in
+// the opening seconds, which is worse than the content being missable.
+const ENCOUNTER_REACH = 6;
+
+function firstEncounter(key, ex, ey) {
+  if (seenEvents[key]) return;
+  if (panel === 'event') return;      // one explainer at a time; retry later
+  seenEvents[key] = true;
+  if (pauseOnEvent && state === 'play') openEventPanel(key, ex, ey);
+  else toast(EVENTS[key].title, 2.2);
+}
+
+function closeEventPanel() {
+  if (panel !== 'event') return;
+  hide(el.eventPanel);
+  panel = null;
+  state = 'play';
+  last = performance.now();
+  Snd.setDrone(true, combo);
 }
 
 function syncSettingsUI() {
@@ -2558,19 +3439,55 @@ function syncSettingsUI() {
   if (el.motionBtn) el.motionBtn.textContent = 'MOTION: ' + (motion ? 'ON' : 'OFF');
   if (el.cbBtn) el.cbBtn.textContent = 'COLOUR: ' + (CB_LABEL[cbMode] || 'NORMAL');
   if (el.ctrlBtn) {
-    el.ctrlBtn.textContent = 'CONTROL: ' + (CTRL_LABEL[controlMode] || 'JOYSTICK');
+    el.ctrlBtn.textContent = 'CONTROL: ' + (CTRL_LABEL[controlMode] || 'STICK');
   }
+  if (el.hapticBtn) el.hapticBtn.textContent = 'HAPTICS: ' + (HAPTIC_LABEL[haptics] || 'OFF');
+  if (el.textBtn) el.textBtn.textContent = 'TEXT: ' + (textLarge ? 'LARGE' : 'NORMAL');
+  if (el.contrastBtn) el.contrastBtn.textContent = 'CONTRAST: ' + (highContrast ? 'HIGH' : 'OFF');
+  if (el.threatBtn) el.threatBtn.textContent = 'THREAT: ' + (threatReadout ? 'ON' : 'OFF');
+  if (el.eventBtn) el.eventBtn.textContent = 'EVENT PAUSE: ' + (pauseOnEvent ? 'ON' : 'OFF');
+  if (el.musicRange) el.musicRange.value = String(Math.round(Snd.musicVol * 100));
+  if (el.sfxRange) el.sfxRange.value = String(Math.round(Snd.sfxVol * 100));
+  if (el.musicVal) el.musicVal.textContent = Math.round(Snd.musicVol * 100) + '%';
+  if (el.sfxVal) el.sfxVal.textContent = Math.round(Snd.sfxVol * 100) + '%';
+  syncControlPick();
 }
 
 /* ============================================================
    INPUT
    ============================================================ */
-// Three control schemes. The README described drag-to-move while the code
-// only ever had a joystick -- both now exist and are selectable in Settings.
+// Three control schemes, all touch-first, all selectable from the menu and
+// from Settings. There is deliberately no MOUSE mode: this ships as an Android
+// app, and a mouse-steering channel that only exists on desktop made the same
+// hole handle differently depending on the device.
 const CTRL_ORDER = ['joystick', 'follow', 'relative'];
-const CTRL_LABEL = { joystick: 'JOYSTICK', follow: 'FOLLOW', relative: 'RELATIVE' };
+const CTRL_LABEL = { joystick: 'STICK', follow: 'FOLLOW', relative: 'DRAG' };
+const CTRL_HINT = {
+  joystick: 'push the stick at the bottom of the screen',
+  follow: 'the hole chases your fingertip',
+  relative: 'drag anywhere; the hole tracks the gesture'
+};
 let controlMode = lsGet('control', 'joystick');
 if (CTRL_ORDER.indexOf(controlMode) < 0) controlMode = 'joystick';
+
+function syncControlPick() {
+  if (el.ctrlPick) {
+    for (const b of el.ctrlPick.querySelectorAll('button')) {
+      b.classList.toggle('on', b.dataset.ctrl === controlMode);
+    }
+  }
+  if (el.ctrlHint) el.ctrlHint.textContent = CTRL_HINT[controlMode] || '';
+}
+
+function setControl(m) {
+  if (CTRL_ORDER.indexOf(m) < 0) return;
+  controlMode = m;
+  lsSet('control', m);
+  // Drop any in-flight input so the schemes cannot fight each other.
+  joy.active = false; joy.dx = 0; joy.dy = 0;
+  drag.active = false;
+  syncSettingsUI();
+}
 
 // Screen-space anchor used by the two drag schemes.
 const drag = { active: false, sx: 0, sy: 0, ax: 0, ay: 0, wx: 0, wy: 0 };
@@ -2582,20 +3499,44 @@ function screenToWorld(cx, cy) {
   };
 }
 
+// Turn a screen point into stick state. The knob follows the raw direction so
+// it stays glued to the finger, while joy.dx/dy carry the EFFECTIVE thrust --
+// deadzone removed and the remainder rescaled to 0..1. Rescaling matters: if
+// the output simply jumped from 0 to JOY_DEADZONE at the threshold, the hole
+// would lurch the instant you crossed it and fine control would be impossible.
+function updateJoyFromPoint(px, py) {
+  const vx = (px - JOY_BASE_X) / JOY_R;
+  const vy = (py - JOY_BASE_Y) / JOY_R;
+  const raw = Math.hypot(vx, vy);
+  const ux = raw > 0 ? vx / raw : 0;
+  const uy = raw > 0 ? vy / raw : 0;
+
+  const kMag = Math.min(1, raw);
+  joy.kx = JOY_BASE_X + ux * kMag * JOY_R;
+  joy.ky = JOY_BASE_Y + uy * kMag * JOY_R;
+
+  if (raw <= JOY_DEADZONE) { joy.dx = 0; joy.dy = 0; return; }
+  const t = Math.min(1, (raw - JOY_DEADZONE) / (1 - JOY_DEADZONE));
+  joy.dx = ux * t;
+  joy.dy = uy * t;
+}
+
 cvs.addEventListener('pointerdown', (e) => {
   ensureAudio();
   try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
-  clearHover();   // an explicit press always supersedes hover steering
+
+  lastInput = (e.pointerType === 'mouse') ? 'mouse' : 'touch';
+  pointer.x = e.clientX; pointer.y = e.clientY;
+  pointer.on = true; pointer.down = true;
 
   if (controlMode === 'joystick') {
-    // Floating joystick: it anchors wherever you actually touch. A fixed
-    // left-hand zone meant any tap in the middle of the screen did nothing
-    // at all, which just reads as "the game is broken". There is no dead
-    // zone now -- anywhere you put a finger works.
+    // The base is pinned to the bottom centre, so a press ANYWHERE on the
+    // screen drives it -- you never have to find the stick first, and you
+    // never lose it mid-dodge. The throw is measured from the base, not from
+    // wherever the finger happened to land.
     joy.active = true;
-    joy.bx = e.clientX; joy.by = e.clientY;
-    joy.kx = e.clientX; joy.ky = e.clientY;
-    joy.dx = 0; joy.dy = 0;
+    joy.bx = JOY_BASE_X; joy.by = JOY_BASE_Y;
+    updateJoyFromPoint(e.clientX, e.clientY);
     return;
   }
 
@@ -2611,16 +3552,12 @@ cvs.addEventListener('pointerdown', (e) => {
 });
 
 cvs.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'mouse') {
+    pointer.x = e.clientX; pointer.y = e.clientY; pointer.on = true;
+  }
   if (controlMode === 'joystick') {
     if (!joy.active) return;
-    joy.kx = e.clientX;
-    joy.ky = e.clientY;
-    let dx = (joy.kx - joy.bx) / JOY_R;
-    let dy = (joy.ky - joy.by) / JOY_R;
-    const m = Math.hypot(dx, dy);
-    if (m > 1) { dx /= m; dy /= m; }
-    joy.dx = dx;
-    joy.dy = dy;
+    updateJoyFromPoint(e.clientX, e.clientY);
     return;
   }
   if (!drag.active) return;
@@ -2641,29 +3578,23 @@ function pointerRelease() {
   joy.dx = 0;
   joy.dy = 0;
   drag.active = false;
+  pointer.down = false;
 }
 cvs.addEventListener('pointerup', pointerRelease);
 cvs.addEventListener('pointercancel', pointerRelease);
 
-// Desktop mouse hover steering (web debugging + desktop play). A mouse move
-// with no button held steers toward the cursor; touch/pen are ignored here
-// so taps never leave a phantom vector behind. Proportional within a radius
-// tied to the smaller screen dimension, with a small centre dead-zone.
+// Pointer tracking for the desktop/web build. There is deliberately no
+// mouse-steering here any more: the hole is driven by the stick (or the
+// keyboard), and a second, invisible steering channel made the same movement
+// feel different depending on how you happened to be holding the device.
 window.addEventListener('pointermove', (e) => {
   if (e.pointerType && e.pointerType !== 'mouse') return;
-  if ((e.buttons || 0) !== 0) return;             // a drag owns the input
-  if (joy.active || drag.active) return;
-  if (state !== 'play') { clearHover(); return; }
-  const dx = e.clientX - W / 2, dy = e.clientY - H / 2;
-  const dist = Math.hypot(dx, dy);
-  if (dist < 12) { clearHover(); return; }
-  const m = Math.min(1, dist / (Math.max(1, MIN) * 0.25)) / (dist || 1);
-  hover.dx = dx * m;
-  hover.dy = dy * m;
-  hover.on = true;
+  pointer.x = e.clientX; pointer.y = e.clientY;
+  pointer.on = true;
+  lastInput = 'mouse';
 });
-document.documentElement.addEventListener('pointerleave', clearHover);
-window.addEventListener('blur', clearHover);
+document.documentElement.addEventListener('pointerleave', () => { pointer.on = false; });
+window.addEventListener('blur', () => { pointer.on = false; });
 
 document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -2674,13 +3605,19 @@ window.addEventListener('keydown', (e) => {
   if (k === 'arrowdown' || k === 's') keys.down = true;
   if (k === 'arrowleft' || k === 'a') keys.left = true;
   if (k === 'arrowright' || k === 'd') keys.right = true;
+  if (k === 'arrowup' || k === 'arrowdown' || k === 'arrowleft' || k === 'arrowright' ||
+      k === 'w' || k === 'a' || k === 's' || k === 'd') {
+    lastInput = 'key';
+  }
   if (k === ' ' || k === 'enter') {
     if (state !== 'play') { e.preventDefault(); start(); }
   }
   if (k === 'escape' || k === 'p') {
     if (state === 'play') pauseGame();
     else if (state === 'paused') {
-      if (panel === 'settings') closeSettings(); else resumeGame();
+      if (panel === 'settings') closeSettings();
+      else if (panel === 'event') closeEventPanel();
+      else resumeGame();
     }
   }
   if (k === 'm') el.muteBtn.click();
@@ -2694,16 +3631,34 @@ window.addEventListener('keyup', (e) => {
 });
 
 el.playBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
-el.againBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
-el.over.addEventListener('click', () => start());
+
+// Game-over used to restart on ANY tap, so one stray touch while reading the
+// score wiped the moment. 0.8 s of dead input costs nothing and saves runs.
+el.againBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (overGuardT <= 0) start();
+});
+el.over.addEventListener('click', () => { if (overGuardT <= 0) start(); });
+el.shareBtn.addEventListener('click', (e) => { e.stopPropagation(); shareRun(); });
 
 el.pauseBtn.addEventListener('click', (e) => { e.stopPropagation(); pauseGame(); });
 el.resumeBtn.addEventListener('click', (e) => { e.stopPropagation(); resumeGame(); });
 el.restartBtn.addEventListener('click', (e) => { e.stopPropagation(); start(); });
-el.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); openSettings(); });
+el.settingsBtn.addEventListener('click', (e) => { e.stopPropagation(); openSettings('pause'); });
+el.menuSettingsBtn.addEventListener('click', (e) => { e.stopPropagation(); openSettings('menu'); });
 el.homeBtn.addEventListener('click', (e) => { e.stopPropagation(); toMenu(); });
 el.overHomeBtn.addEventListener('click', (e) => { e.stopPropagation(); toMenu(); });
 el.settingsBackBtn.addEventListener('click', (e) => { e.stopPropagation(); closeSettings(); });
+el.eventOkBtn.addEventListener('click', (e) => { e.stopPropagation(); closeEventPanel(); });
+
+if (el.ctrlPick) {
+  el.ctrlPick.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('button[data-ctrl]') : null;
+    if (!b) return;
+    e.stopPropagation();
+    setControl(b.dataset.ctrl);
+  });
+}
 
 function toggleMute() {
   ensureAudio();
@@ -2717,11 +3672,18 @@ function toggleMute() {
 el.muteBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMute(); });
 el.soundBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMute(); });
 
+function applyA11y() {
+  document.body.classList.toggle('large', textLarge);
+  document.body.classList.toggle('hc', highContrast);
+}
+
 el.motionBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   motion = !motion;
   lsSet('motion', motion ? '1' : '0');
-  if (!motion) { shakeMag = 0; camRoll = 0; }     // also kills the tilt
+  // MOTION: OFF must also kill the fullscreen white strobe -- that flash, not
+  // the shake, is the actual photosensitivity risk.
+  if (!motion) { shakeMag = 0; camRoll = 0; flashT = 0; eraFx = 0; }
   syncSettingsUI();
 });
 
@@ -2736,13 +3698,177 @@ el.cbBtn.addEventListener('click', (e) => {
 el.ctrlBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   const i = CTRL_ORDER.indexOf(controlMode);
-  controlMode = CTRL_ORDER[(i + 1) % CTRL_ORDER.length];
-  lsSet('control', controlMode);
-  // Drop any in-flight input so the schemes cannot fight each other.
-  joy.active = false; joy.dx = 0; joy.dy = 0;
-  drag.active = false;
+  setControl(CTRL_ORDER[(i + 1) % CTRL_ORDER.length]);
+});
+
+el.hapticBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const i = HAPTIC_ORDER.indexOf(haptics);
+  haptics = HAPTIC_ORDER[(i + 1) % HAPTIC_ORDER.length];
+  lsSet('haptic', haptics);
+  buzz(30);
   syncSettingsUI();
 });
+
+el.textBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  textLarge = !textLarge;
+  lsSet('text', textLarge ? '1' : '0');
+  applyA11y();
+  syncSettingsUI();
+});
+
+el.contrastBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  highContrast = !highContrast;
+  lsSet('contrast', highContrast ? '1' : '0');
+  applyA11y();
+  syncSettingsUI();
+});
+
+el.threatBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  threatReadout = !threatReadout;
+  lsSet('threat', threatReadout ? '1' : '0');
+  syncSettingsUI();
+});
+
+el.eventBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  pauseOnEvent = !pauseOnEvent;
+  lsSet('eventPause', pauseOnEvent ? '1' : '0');
+  syncSettingsUI();
+});
+
+if (el.musicRange) {
+  el.musicRange.addEventListener('input', () => {
+    ensureAudio();
+    const v = clamp(parseInt(el.musicRange.value, 10) / 100 || 0, 0, 1);
+    Snd.setMusicVol(v);
+    lsSet('music', v);
+    if (el.musicVal) el.musicVal.textContent = Math.round(v * 100) + '%';
+  });
+}
+if (el.sfxRange) {
+  el.sfxRange.addEventListener('input', () => {
+    ensureAudio();
+    const v = clamp(parseInt(el.sfxRange.value, 10) / 100 || 0, 0, 1);
+    Snd.setSfxVol(v);
+    lsSet('sfx', v);
+    if (el.sfxVal) el.sfxVal.textContent = Math.round(v * 100) + '%';
+    Snd.blip(4);              // audition the level while you drag
+  });
+}
+
+/* ---------- share card ---------- */
+// One button that renders the run to an image. Free distribution.
+function shareRun() {
+  try {
+    const w = 1000, h = 525;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    if (!g) { toast('SHARE UNAVAILABLE'); return; }
+
+    const bg = g.createLinearGradient(0, 0, w, h);
+    bg.addColorStop(0, '#04050d');
+    bg.addColorStop(1, '#120b24');
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+
+    for (let i = 0; i < 220; i++) {
+      g.fillStyle = 'rgba(198,228,255,' + (0.12 + Math.random() * 0.5).toFixed(2) + ')';
+      g.beginPath();
+      g.arc(Math.random() * w, Math.random() * h, Math.random() * 1.5 + 0.3, 0, TAU);
+      g.fill();
+    }
+
+    // A miniature of the hole itself.
+    const bx = w - 190, by = h / 2, br = 96;
+    g.globalCompositeOperation = 'lighter';
+    const halo = g.createRadialGradient(bx, by, br * 0.9, bx, by, br * 2.1);
+    halo.addColorStop(0, 'rgba(255,196,150,0.34)');
+    halo.addColorStop(1, 'rgba(255,130,100,0)');
+    g.fillStyle = halo;
+    g.beginPath(); g.arc(bx, by, br * 2.1, 0, TAU); g.fill();
+    g.globalCompositeOperation = 'source-over';
+
+    g.save();
+    g.translate(bx, by);
+    g.scale(1, 0.13);
+    const disk = g.createRadialGradient(0, 0, br * 0.9, 0, 0, br * 2.6);
+    disk.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+    disk.addColorStop(0.22, 'rgba(255,236,198,0.70)');
+    disk.addColorStop(0.60, 'rgba(255,168,86,0.30)');
+    disk.addColorStop(1.00, 'rgba(255,120,50,0)');
+    g.fillStyle = disk;
+    g.beginPath(); g.arc(0, 0, br * 2.6, 0, TAU); g.fill();
+    g.restore();
+
+    g.fillStyle = '#000';
+    g.beginPath(); g.arc(bx, by, br, 0, TAU); g.fill();
+    g.strokeStyle = 'rgba(255,240,220,0.85)';
+    g.lineWidth = 3;
+    g.beginPath(); g.arc(bx, by, br * 1.04, 0, TAU); g.stroke();
+
+    g.textBaseline = 'alphabetic';
+    g.fillStyle = 'rgba(79,240,255,0.95)';
+    g.font = '700 26px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.fillText('S I N G U L A R I T Y', 64, 96);
+
+    g.fillStyle = '#ffffff';
+    g.font = '800 84px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.fillText(fmt(score), 64, 200);
+    g.fillStyle = 'rgba(180,215,245,0.7)';
+    g.font = '700 20px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.fillText('MASS', 66, 232);
+
+    g.fillStyle = 'rgba(200,230,255,0.88)';
+    g.font = '700 24px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.fillText('COMBO ×' + runStats.peakCombo, 64, 320);
+    g.fillText(ERAS[runStats.era % ERAS.length], 64, 356);
+    g.fillStyle = 'rgba(255,176,87,0.95)';
+    g.fillText(runStats.cause || 'EVAPORATED', 64, 400);
+    g.fillStyle = 'rgba(150,185,215,0.5)';
+    g.font = '600 18px ui-monospace, SFMono-Regular, Menlo, monospace';
+    g.fillText('BEST ' + fmt(best), 64, 462);
+
+    const done = (blob) => {
+      if (!blob) { toast('SHARE UNAVAILABLE'); return; }
+      let file = null;
+      try { file = new File([blob], 'singularity.png', { type: 'image/png' }); } catch (_) {}
+      if (file && navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+        navigator.share({ files: [file], title: 'SINGULARITY', text: 'MASS ' + fmt(score) })
+          .catch(() => {});
+        return;
+      }
+      if (navigator.clipboard && window.ClipboardItem) {
+        navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })])
+          .then(() => toast('CARD COPIED', 1.8))
+          .catch(() => save());
+        return;
+      }
+      save();
+      function save() {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'singularity-' + Math.round(score) + '.png';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          if (a.parentNode) a.parentNode.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 1200);
+        toast('CARD SAVED', 1.8);
+      }
+    };
+
+    if (c.toBlob) c.toBlob(done, 'image/png');
+    else toast('SHARE UNAVAILABLE');
+  } catch (_) {
+    toast('SHARE UNAVAILABLE');
+  }
+}
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
@@ -2774,6 +3900,17 @@ window.addEventListener('error', (e) => fatal((e.error && e.error.stack) || e.me
 
 best = parseInt(lsGet('best', 0), 10) || 0;
 el.muteBtn.classList.toggle('off', Snd.muted);
+
+// Desktop-only affordance: the key legend along the bottom. A machine with no
+// touch points can still play with WASD, so it gets the legend even though the
+// stick is drawn for everyone.
+let hasTouch = false;
+try {
+  hasTouch = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+} catch (_) {}
+
+applyA11y();
+buildPips();
 syncSettingsUI();
 if (el.buildTag) el.buildTag.textContent = 'build ' + BUILD_ID;
 

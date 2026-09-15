@@ -13,13 +13,44 @@ submission path.**
 
 ## Play
 
-The hole follows your finger with a touch of inertia. Tap **TAP TO BEGIN** on
-the menu, then drag around. Things in cool colours (cyan → violet) are edible;
-anything in warm colours (amber → red) will hurt you and you'll lose mass.
+Tap **TAP TO BEGIN** on the menu, then push the stick at the bottom of the
+screen. Things in cool colours (cyan → violet) and *without* spikes are edible;
+anything warm (amber → red) that wears a **spiked ring** will hurt you and cost
+you mass. Shape carries the threat, not just hue, so the game is playable with
+any colour vision.
 
-Every chain of consumes builds a combo (shown top-centre). Every 20 combos
-unleashes a shockwave that vaporises nearby dangers. Combo carries a
-multiplier up to ×8.
+Every chain of consumes builds a combo (shown top-centre, with the bar split
+into twenty pips counting down to the next pulse). Every 20 combos unleashes
+a shockwave that vaporises nearby dangers. Combo carries a multiplier up to
+×8.
+
+Three control schemes, pickable from the menu or from Settings. All three are
+touch-first — this ships as an Android app:
+
+| Scheme | How it works |
+| --- | --- |
+| `STICK` | the stick is fixed at the bottom centre; press anywhere to drive it |
+| `FOLLOW` | the hole chases your fingertip |
+| `DRAG` | relative drag; the hole tracks the gesture |
+
+WASD / arrows, `Space` to start, `P` to pause and `M` to mute always work.
+
+### How the hole moves
+
+Movement is thrust-and-inertia, not cursor-following. The stick applies an
+acceleration; the resulting velocity has to be carried around, so nothing
+changes direction within a frame. Two rules fall out of that:
+
+- **Top speed is `SPEED_REF * r`** and nothing else. This is the number that
+  sets how fast the hole can ever go, so the difficulty curve and the
+  reachability of food are independent of the feel tuning.
+- **Mass dulls response, not top speed.** A small hole reaches 53% of its top
+  speed in 0.4 s; a hole four times larger reaches only 28% in the same time,
+  and coasts roughly twice as long after you let go. You keep the speed you
+  earned by growing — you just take longer to get there and longer to stop.
+
+Turn `DRIFT_EXP` down if big holes feel too ponderous; set it to 0 and every
+size responds identically. `SPEED_REF` is the one to touch for overall pace.
 
 ## Layout
 
@@ -147,16 +178,57 @@ loops calls "gentle urgency" — the thing that makes it feel alive.
 
 - No external assets — fully offline after first load (service worker
   precaches everything).
-- Keyboard fallback (WASD / arrows) for desktop testing.
-- Mute button persisted across sessions (`localStorage`).
-- Personal best persisted across sessions.
+- Keyboard fallback (WASD / arrows) for desktop testing, plus a footer key
+  legend on wide screens. There is no custom cursor: the hole is driven by the
+  stick or the keyboard, so hiding the OS pointer would leave a desktop player
+  with no pointer and nothing drawn in its place.
+- **Hazard shape, not just hue** — lethal bodies wear a closed spiked ring,
+  edible ones stay smooth, so no mode depends on colour alone.
+- **COLOUR** presets: normal / deutan / protan / tritan palettes.
+- **MOTION: OFF** kills shake, camera tilt *and* the fullscreen white strobe
+  (the flash is the real photosensitivity risk, not the shake).
+- **TEXT: LARGE** and **CONTRAST: HIGH** presets for sunlight and low vision.
+- **MUSIC** and **SFX** have separate sliders; **HAPTICS** has three
+  strengths, because mute-everything is a blunt tool.
+- **EVENT PAUSE** stops the world the first time you meet a pulsar, a
+  wormhole or a civilisation, with a one-line explainer — the rarest content
+  in the game used to be missable mid-chaos.
 - Page Visibility pauses the audio drone.
 - All UI text is real DOM (not canvas), so screen readers can see it.
 
+### Rendering the black hole
+
+The hole is drawn entirely with continuous gradients: a pure-black shadow, a
+thin photon ring hugging its edge, a near-edge-on accretion disk crossing in
+front of the shadow (hottest along its centre line, cooling outward), the
+far side of that disk lensed up over the top and under the bottom, and
+Doppler beaming so the approaching limb is far brighter than the receding
+one. Nothing is segmented — stroked arc segments stack into visible blocks
+and read as a gear or a clock face rather than as gas.
+
+**Light wrapping.** The signature of the object is not the disk, it is the
+background being bent around the hole. Photons from the sky behind it are
+dragged into concentric arcs, each band being the same sky bent further
+round: fainter, thinner and closer in. `EINSTEIN_BANDS` stacks four of them
+between 1.26x and 1.94x the shadow radius, and `drawSecondaryImage` puts the
+lensed far side of the disk back on the limb as a bright knot that drifts
+around the edge. Two things matter for it to read correctly:
+
+- **The bands must be crescents, not rings.** A uniform circle looks like a
+  painted archery target. Each band's gradient runs from ~15% to 100% across
+  its width, so the beamed limb is several times brighter and the light looks
+  dragged around rather than stamped on.
+- **They need dark space between them.** Bands packed tight against the
+  photon ring merge into one bright collar and the whole object inflates into
+  a fuzzy torus. The first band sits at 1.26x for exactly this reason.
+
+The halo is kept very low (0.075 alpha, capped at 1.5x) for the same reason —
+this plus the bands is all the "glow" the object can carry before the hard
+black shadow stops reading as black. Both holes share this structure, so a
+rival reads as the same class of object rather than a different sprite.
+
 ## Not done
 
-- No tutorial. The first 5 seconds are deliberately safe — danger ratio
-  is ~4% at `elapsed = 0`, rising to ~22% by 80s.
 - No difficulty modes. The curve is tuned in `pickRadius` and `decay`
   constants at the top of `game.js`.
 - No level / chapter system. The "eras" are pure visual.
