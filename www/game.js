@@ -3414,7 +3414,8 @@ function drawPick() {
     const cx = W / 2 + (i - 1) * W * 0.30;
     const frac = clamp(holds[i] / 0.35, 0, 1);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(8,14,26,0.82)';
+    // 40% opacity background like real mobile games
+    ctx.fillStyle = 'rgba(8,14,26,0.40)';
     ctx.strokeStyle = i === 1 ? 'rgba(79,240,255,0.75)' : 'rgba(150,200,230,0.45)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();

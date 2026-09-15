@@ -156,6 +156,9 @@ html, body {
   justify-content: space-between;
   align-items: flex-start;
   gap: var(--s-2);
+  padding: var(--s-1) var(--s-2);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .hud-block {
@@ -185,6 +188,11 @@ html, body {
   align-items: flex-end;
   text-align: right;
   margin-right: 48px;
+}
+
+/* On small screens, the pause/mute buttons crowd the right column. */
+@media (max-width: 380px) {
+  .hud-block.right { margin-right: 36px; }
 }
 
 .hud-value {
@@ -334,7 +342,7 @@ html, body {
 /* ---------- Menu / game over ---------- */
 .title {
   font-family: var(--font-display);
-  font-size: var(--t-display);
+  font-size: clamp(18px, 6vw, 32px);
   font-weight: 900;
   line-height: 1;
   letter-spacing: var(--ls-display);
@@ -343,9 +351,6 @@ html, body {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  /* drop-shadow rather than text-shadow: the glyphs are transparent (the fill
-     comes from the background clip), so a text-shadow would paint a blurred
-     silhouette rather than a clean halo. */
   filter: drop-shadow(0 0 30px rgba(79, 240, 255, .4));
 }
 
@@ -365,6 +370,7 @@ html, body {
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
   color: var(--amber);
+  text-align: center;
 }
 
 .score-big {
@@ -436,19 +442,22 @@ html, body {
   z-index: 1;
   width: 100%;
   max-width: 400px;
-  max-height: 100%;
+  max-height: 85vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-2);
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-2);
   border-radius: var(--r-lg);
   background: linear-gradient(160deg, rgba(24, 34, 54, .74), rgba(9, 14, 26, .68));
   -webkit-backdrop-filter: blur(16px) saturate(120%);
   backdrop-filter: blur(16px) saturate(120%);
   box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .07) inset;
+  scrollbar-width: none;
 }
+
+#menuCard::-webkit-scrollbar { display: none; }
 
 /* 1px gradient border. border-image cannot round corners, so this is the
    masked-pseudo-element technique instead. */
@@ -472,11 +481,11 @@ html, body {
    card, because the title is centred and nearly fills the card's width. */
 .gear-btn {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + var(--s-1));
-  right: var(--s-1);
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  right: 6px;
   z-index: 2;
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -487,7 +496,7 @@ html, body {
   cursor: pointer;
   transition: color .16s ease-out, background .16s ease-out;
 }
-.gear-btn svg { width: 20px; height: 20px; display: block; }
+.gear-btn svg { width: 18px; height: 18px; display: block; }
 .gear-btn:hover { color: rgba(220, 240, 255, .92); }
 .gear-btn:active { background: rgba(255, 255, 255, .07); }
 
@@ -606,7 +615,7 @@ body.no-motion .segmented::before { transition: none; }
 #howto {
   display: flex;
   flex-direction: column;
-  gap: var(--s-1);
+  gap: 4px;
   text-align: left;
   width: 100%;
 }
@@ -616,17 +625,20 @@ body.no-motion .segmented::before { transition: none; }
 .how-row {
   display: flex;
   align-items: center;
-  gap: var(--s-1);
-  padding: var(--s-1);
-  font-size: var(--t-body);
-  line-height: 1.45;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.3;
   color: rgba(190, 215, 240, .78);
   background: var(--c-panel);
   border-left: 2px solid currentColor;
-  border-radius: 0 10px 10px 0;
+  border-radius: 0 8px 8px 0;
+  overflow: hidden;
 }
 
-.how-row b { color: #eaf6ff; letter-spacing: var(--ls-label); font-size: var(--t-label); }
+.how-row b { color: #eaf6ff; letter-spacing: var(--ls-label); font-size: 10px; flex-shrink: 0; }
+
+.how-row span { word-break: break-word; overflow-wrap: break-word; }
 
 .how-ico {
   flex: 0 0 20px;
@@ -727,12 +739,12 @@ body.no-motion .segmented::before { transition: none; }
   gap: var(--s-1);
   justify-content: center;
   width: 100%;
-  margin-top: var(--s-1);
+  margin-top: 2px;
 }
 
 .meta-btn {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -744,7 +756,7 @@ body.no-motion .segmented::before { transition: none; }
   transition: color .16s ease-out, background .16s ease-out, border-color .16s ease-out;
 }
 
-.meta-btn svg { width: 18px; height: 18px; display: block; }
+.meta-btn svg { width: 16px; height: 16px; display: block; }
 .meta-btn:hover { color: rgba(220, 240, 255, .92); border-color: rgba(79, 240, 255, .35); }
 .meta-btn:active { background: rgba(79, 240, 255, .1); }
 
@@ -888,6 +900,10 @@ body.no-motion .segmented::before { transition: none; }
 }
 
 /* ---------- Pause / settings panels ---------- */
+#hud {
+  z-index: 5;
+}
+
 .overlay { z-index: 30; }
 
 .panel {
