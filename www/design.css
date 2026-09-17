@@ -465,3 +465,93 @@ body.hc .run-mission, body.hc .run-goal-label, body.hc .fg-fact, body.hc .fg-beh
 }
 body.no-motion .btn:active, body.no-motion .btn.ghost:active,
 body.no-motion .btn.cta:active, body.no-motion .toast-item { transform: none !important; }
+
+/* ---------- Field-manual polish: layout before decoration ---------- */
+/* Child touch-action cannot undo an ancestor's `none`. Canvas retains it. */
+html, body { touch-action: auto; }
+.layer.center { touch-action: pan-y pinch-zoom; }
+#menuCard, .glass-card {
+  touch-action: pan-y pinch-zoom;
+  min-width: 0;
+  scroll-padding-block: 16px;
+}
+#menu, .layer.center {
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+#hud { padding-right: max(12px, env(safe-area-inset-right, 0px)); }
+
+/* A quiet plate edge and aligned masthead, not another light effect. */
+#menuCard { border-top-color: var(--bone-faint); }
+.title-kicker { padding-right: 52px; color: var(--bone-dim); }
+.gear-btn { top: 0; right: 0; border-radius: 4px; }
+.home-guide { font-size: var(--t-body); }
+.home-details summary { padding-inline: 6px; font-size: var(--t-label); }
+.home-details summary::marker { color: var(--orange-soft); }
+.home-details[open] summary { color: var(--bone); border-bottom: 1px solid var(--c-panel-line); }
+.home-details-body { display: flex; flex-direction: column; gap: 12px; padding-block: 14px; }
+.meta-btn { min-width: 0; line-height: 1.4; }
+.meta-btn span { max-width: 100%; overflow-wrap: anywhere; }
+#buildTag:empty, .foot-chip:empty { display: none; }
+#histStrip { max-width: 100%; flex-wrap: wrap; }
+.hist .n { color: var(--bone-dim); }
+
+/* Cells own selected state: no drifting pill when large labels wrap. */
+.segmented::before { display: none; }
+.segmented button, .segmented.cols4 button, .segmented:not(.cols4) button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+  font-size: var(--t-micro);
+  border-radius: 2px;
+  line-height: 1.4;
+}
+.segmented button.on { background: var(--orange); font-weight: 700; }
+.glass-title, .panel-title { margin-right: 0; max-width: 100%; overflow-wrap: anywhere; }
+.glass-btn-row { width: 100%; }
+.btn, .btn.ghost { max-width: 100%; overflow-wrap: anywhere; }
+.setting-name { text-align: left; }
+.setting-val, .slider-row .val { flex-shrink: 0; }
+#skinPickerLabel { display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left; }
+#skinPicker { width: 100%; max-width: 100%; min-width: 0; }
+#dailyRewardBtn { min-height: 48px; }
+
+/* Inset focus stays visible inside scrollports and segmented tracks. */
+button:focus-visible, select:focus-visible, input[type=range]:focus-visible,
+.home-details summary:focus-visible {
+  outline: 2px solid var(--bone);
+  outline-offset: -4px;
+}
+.home-details summary:active { background: var(--ink-3); }
+.btn:active, .btn.cta:active, .btn.ghost:active { transform: none; }
+.btn:disabled:active, .btn.cta:disabled:hover { background: var(--orange); }
+.btn.ghost:disabled:active, .btn.ghost:disabled:hover { background: transparent; }
+@media (hover: hover) and (pointer: fine) {
+  .home-details summary:hover { background: var(--ink-2); color: var(--bone); }
+}
+@media (hover: none) {
+  /* Do not leave a sticky hover highlight after a tap. */
+  .btn.cta:hover { background: var(--orange); }
+  .btn.ghost:hover { background: transparent; }
+  .meta-btn:hover { background: var(--c-panel); border-color: var(--c-panel-line); color: var(--c-text-secondary); }
+}
+@media (max-height: 560px) {
+  .layer.center { padding-top: max(8px, env(safe-area-inset-top, 0px)); }
+  #menu, .layer.center { padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+  .title-emblem { width: 32px; height: 32px; margin-bottom: 4px; }
+  .home-guide { font-size: var(--t-label); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .layer.center, .layer.center *, .layer.center *::before, .layer.center *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+body.no-motion .layer.center, body.no-motion .layer.center *,
+body.no-motion .layer.center *::before, body.no-motion .layer.center *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}

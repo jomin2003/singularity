@@ -174,4 +174,16 @@ test('malformed weeklyScores cannot break the death path', ({ q, w }) => {
   g.close();
 });
 
+test('dwarf density and immediate feeding keep mass finite', ({ q }) => {
+  q('start(); pauseOnEvent=false;');
+  for (const [type, density] of [['rocky', 1], ['whiteDwarf', 4], ['brownDwarf', 2]]) {
+    const before = q('p.mass');
+    q(`window.meal={x:p.x,y:p.y,r:P0/2,vx:0,vy:0,spin:0,phase:0,
+      body:{type:'${type}',variant:0,spin:0}}; ents=[meal]; consume(meal,0);`);
+    assert.ok(Number.isFinite(q('p.mass')));
+    assert.ok(Math.abs(q('p.mass') - before - 2.5 * density * q('CONSUME_YIELD')) < 1e-10);
+    assert.equal(q('p.r'), q('p.mass * RS_PER_MASS'));
+  }
+});
+
 console.log(passed + '/' + passed + ' feel checks passed');

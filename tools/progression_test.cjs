@@ -104,7 +104,7 @@ test('upgrades apply modest actual effects on next ordinary run only', ({q}) => 
   assert.ok(Math.abs(q('p.r') - 24.2) < 1e-8);
   assert.ok(Math.abs(q('COMBO_WINDOW_V()/VARMODS[variant].comboWin') - 1.25) < 1e-8);
   q("hurt({x:100,y:0,vx:0,vy:0,body:{type:'rocky'}})");
-  assert.ok(Math.abs(q('p.area') - 24.2**2 * 0.8) < 1e-8);
+  assert.ok(Math.abs(q('p.mass') - 11 * 0.8) < 1e-8);
   q("start(); ents=[]; pauseOnEvent=false; update(0.01)");
   assert.ok(Math.abs(q('drainRate') - q('HAWKING_BASE * Math.pow(P0 / 24.2, 3) * 0.85')) < 1e-8);
   q('seedOverride=123; start()');

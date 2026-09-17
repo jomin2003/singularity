@@ -54,7 +54,7 @@ window.__probe = {
   speedRef: function () { return SPEED_REF; },
   dragExp: function () { return DRIFT_EXP; },
   radius: function () { return p.r; },
-  setRadius: function (v) { p.r = v; p.area = v * v; },
+  setRadius: function (v) { p.r = v; p.mass = v / RS_PER_MASS; },
   setVel: function (x, y) { p.vx = x; p.vy = y; },
   vel: function () { return { x: p.vx, y: p.vy }; },
   push: function (x, y) { joy.active = true; joy.dx = x; joy.dy = y; },
@@ -83,7 +83,7 @@ window.__probe = {
   },
   startAt: function (r, zoom) {
     start();
-    p.r = r; p.area = r * r; p.x = 0; p.y = 0; p.vx = 0; p.vy = 0;
+    p.r = r; p.mass = r / RS_PER_MASS; p.x = 0; p.y = 0; p.vx = 0; p.vy = 0;
     cam.x = 0; cam.y = 0; cam.zoom = zoom || 1;
   }
 };
@@ -654,7 +654,7 @@ run(`start(); ents = []; satiatedT = 10; shield = 1; combo = 5; comboT = 1;
     r: 100, phase: 0, body: {type: 'rocky'}});
   update(1 / 60);`);
 check('shield: two same-frame impacts consume the shield without mass loss or combo break',
-  run('shield === 0 && combo === 5 && p.area === P0 * P0 * VARMODS[variant].startMul'));
+  run('shield === 0 && combo === 5 && p.mass === M0 * VARMODS[variant].startMul'));
 check('shield: absorption grants a short invulnerability window', run('invuln > 0 && invuln <= 0.5'));
 run(`ents = []; update(0.15);`);
 check('shield: grace period survives a subsequent frame', run('invuln > 0'));

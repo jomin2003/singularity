@@ -2015,7 +2015,7 @@ function reset() {
   runSeed = nextRunSeed();
   seedRng(runSeed);
   // Variants change the starting rules, never the ladder: Titan opens heavy.
-  const startMass = M0 * VARMODS[variant].startMul * Math.pow(1 + 0.02 * runUpgrades.gravity, 2);
+  const startMass = M0 * VARMODS[variant].startMul * (1 + 0.02 * runUpgrades.gravity);
   runDustScore = 0; runEaten = 0; lastMealT = 0;
   rareWindowActive = false; rareWindowT = 0; rareSpawnT = 0;
   pendingWave = 0; greedE = null; nextSystemId = 1; eventKey = null;
@@ -2247,13 +2247,23 @@ function disrupt(e, idx) {
   ents.splice(idx, 1);
 }
 
+// Shared by ingestion and gravity: scripted/rare bodies may be consumed
+// before their first entity update. Never let an absent mass poison the run.
+function bodyMass(e) {
+  if (Number.isFinite(e.mass) && e.mass > 0) return e.mass;
+  const type = e.body && e.body.type;
+  const density = type === 'whiteDwarf' ? 4 : type === 'brownDwarf' ? 2 : 1;
+  e.mass = (e.r / P0) ** 2 * M0 * density;
+  return e.mass;
+}
+
 function consume(e, idx) {
   const type = e.body && e.body.type;
   const wasStar = type === 'star';
   const wasPulsar = type === 'pulsar';
   const wasWormhole = type === 'wormhole';
 
-  p.mass += e.mass * CONSUME_YIELD;
+  p.mass += bodyMass(e) * CONSUME_YIELD;
   p.r = p.mass * RS_PER_MASS;
   combo++;
   comboT = COMBO_WINDOW_V();
@@ -2424,7 +2434,7 @@ function hurt(e) {
   if (prof.msg) toast(prof.msg, 1.6);
 }
 
-function AGN feedback() {
+function pulse() {
   // Jets strengthen with spin (Blandford–Znajek): a spun-up hole clears
   // a wider field, so angular momentum pays out visibly.
   const R = p.r * 13 * (1 + spinA * 0.3);
@@ -2890,7 +2900,7 @@ function update(dt) {
         addPart({ x: p.x + Math.cos(a) * p.r * 6, y: p.y + Math.sin(a) * p.r * 6,
                   vx: 0, vy: 0, life: 0, max: 0.3, r: 2, hue: 190, mode: 0 });
       }
-      if (pendingWave <= 0) { pendingWave = 0; AGN feedback(); }
+      if (pendingWave <= 0) { pendingWave = 0; pulse(); }
     }
     if (p.mass < (DEATH_AREA / (P0*P0)) * M0) die();
   }
@@ -2931,12 +2941,7 @@ function updateEnts(dt) {
 
   for (let i = ents.length - 1; i >= 0; i--) {
     const e = ents[i];
-    if (e.mass === undefined) {
-      let mult = 1;
-      if (e.type === 'whiteDwarf') mult = 4;
-      else if (e.type === 'brownDwarf') mult = 2;
-      e.mass = ((e.r * e.r) / (P0 * P0)) * M0 * mult;
-    }
+    bodyMass(e);
 
     // Orbital motion: planets track their parent star. If the parent has been
     // eaten or despawned, they are flung free with tangential velocity.
@@ -4951,7 +4956,7 @@ function pickAbsorb() {
     if (dx * dx + dy * dy > R2) continue;
     if (o.darkMatter || (o.civ && o.civ !== 'ark') || !edibleAt(o)) continue;
     const gain = Math.max(1, Math.round(o.r * 0.42 * comboMult()));
-    p.mass += o.mass * CONSUME_YIELD;
+    p.mass += bodyMass(o) * CONSUME_YIELD;
     score += gain;
     total += gain;
     burstFx(o.x, o.y, 6, o.r, 0.9, entHue(o.r / p.r));
@@ -5547,7 +5552,26 @@ if ('serviceWorker' in navigator) {
    ============================================================ */
 
 /* ---------- Stardust + Upgrades ---------- */
-let stardust = Math.max(0, parseInt(lsGet('stardust', 0), 10) || 0);
+// Save data is untrusted. Accept finite numeric values (including legacy
+// numeric strings), never coercible arrays/objects or partial parseInt values.
+function progressionNumber(value, integer = true) {
+  if (typeof value !== 'number' && typeof value !== 'string') return 0;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(Number.MAX_SAFE_INTEGER, integer ? Math.floor(n) : n);
+}
+function progressionFlags(value, keys) {
+  const result = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return result;
+  for (const key of keys) if (value[key] === true) result[key] = true;
+  return result;
+}
+function saveProgression(values) {
+  Object.assign(save, values);
+  saveSet('v', SAVE_VER); // one complete snapshot, not several partial writes
+}
+
+let stardust = progressionNumber(lsGet('stardust', 0));
 let upgrades = lsGet('upgrades', { gravity: 0, accretion: 0, horizon: 0, singularity: 0 });
 if (typeof upgrades !== 'object' || upgrades === null || Array.isArray(upgrades)) upgrades = { gravity: 0, accretion: 0, horizon: 0, singularity: 0 };
 
@@ -5563,28 +5587,35 @@ const UPGRADE_DEFS = [
 ];
 
 function upgradeCost(level) { return (level + 1) * 10; }
-function upgradeLevel(key) { return clamp(Math.floor(Number(upgrades[key])) || 0, 0, 5); }
+function upgradeLevel(key) { return Math.min(5, progressionNumber(upgrades[key])); }
 for (const def of UPGRADE_DEFS) upgrades[def.key] = upgradeLevel(def.key);
 
 // Settle score milestones for ALL score sources, once per run. A large meal
 // can cross several hundreds; effects and mission bonuses count as well.
 function settleScoreDust() {
-  const reached = Math.max(0, Math.floor(score / 100));
+  if (!Number.isFinite(score) || score < 0) return;
+  const reached = Math.floor(score / 100);
   if (reached > runDustScore) earnStardust(reached - runDustScore);
   runDustScore = Math.max(runDustScore, reached);
 }
 
 function earnStardust(amount) {
   if (!Number.isFinite(amount) || amount <= 0) return;
-  stardust += Math.floor(amount);
+  stardust = Math.min(Number.MAX_SAFE_INTEGER, stardust + Math.floor(amount));
   try { saveSet('stardust', stardust); } catch (_) {}
 }
 
 /* ---------- Daily Rewards (28-day cumulative) ---------- */
-let dailyRewards = Array.isArray(save.dailyRewards) ? save.dailyRewards.slice() : [];
+let dailyRewards = Array.isArray(save.dailyRewards) ? [...new Set(save.dailyRewards.filter((day) =>
+  (Number.isInteger(day) && day >= 0 && day < 28) || validClaimDate(day)))].slice(-28) : [];
 // Keep legacy modulo indices as history, not as a permanent claim lock.
-let dailyStreak = Math.max(dailyRewards.length, parseInt(lsGet('dailyStreak', 0), 10) || 0);
-let dailyLastClaim = lsGet('dailyLastClaim', '');
+let dailyStreak = Math.max(dailyRewards.length, progressionNumber(lsGet('dailyStreak', 0)));
+let dailyLastClaim = validClaimDate(lsGet('dailyLastClaim', '')) ? save.dailyLastClaim : '';
+function validClaimDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(value + 'T12:00:00');
+  return Number.isFinite(d.getTime()) && localDateKey(d) === value;
+}
 function localDateKey(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
@@ -5613,13 +5644,27 @@ function claimDailyReward() {
   dailyLastClaim = today;
   dailyRewards.push(today);
   dailyRewards = dailyRewards.slice(-28);
-  dailyStreak++;
-  saveSet('dailyLastClaim', dailyLastClaim);
+  dailyStreak = Math.min(Number.MAX_SAFE_INTEGER, dailyStreak + 1);
   const reward = dailyRewardForDay((dailyStreak - 1) % 28 + 1);
-  earnStardust(reward.stardust);
-  if (reward.skin) unlockSkin(reward.skin);
-  try { saveSet('dailyRewards', dailyRewards); saveSet('dailyStreak', dailyStreak); } catch (_) {}
-  checkDailyAchievements();
+  stardust = Math.min(Number.MAX_SAFE_INTEGER, stardust + reward.stardust);
+  // Persist the lock, payout and unlocks together. A failed later write must
+  // not leave a claimed date on disk without its corresponding reward.
+  saveProgression({ dailyLastClaim, dailyRewards, dailyStreak, stardust,
+    skins: { ...skins, ...(reward.skin ? { [reward.skin]: true } : {}) },
+    achievements: { ...achievements, ...(dailyStreak >= 7 ? { daily7: true } : {}),
+      ...(dailyStreak >= 28 ? { daily28: true } : {}) } });
+  // Reflect the full unlock snapshot in memory before notification helpers
+  // can persist either map again (notably when both daily badges unlock).
+  const newSkin = reward.skin && !skins[reward.skin];
+  const newBadges = ['daily7', 'daily28'].filter((id) => save.achievements[id] && !achievements[id]);
+  skins = { ...save.skins };
+  achievements = { ...save.achievements };
+  if (newSkin) { toast('SKIN UNLOCKED', 2.0); Snd.sting('mission'); }
+  for (const id of newBadges) {
+    toast('ACHIEVEMENT: ' + ACH_DEFS[id].name, 2.6);
+    Snd.sting('mission');
+    buzz(60);
+  }
   toast('+' + reward.stardust + ' STARDUST', 2.2);
   Snd.sting('mission');
   renderDailyReward();
@@ -5632,6 +5677,7 @@ if (typeof skins !== 'object' || skins === null) skins = { default: true };
 
 const SKIN_HUES = { default: null, red_giant: 12, veteran: 45, quasar: 195,
   nebula: 280, pulsar: 215, feast: 145, fasting: 310 };
+skins = progressionFlags(skins, Object.keys(SKIN_HUES));
 skins.default = true;
 if (!Object.prototype.hasOwnProperty.call(SKIN_HUES, activeSkin) || !skins[activeSkin]) activeSkin = 'default';
 
@@ -5673,7 +5719,7 @@ function renderSkinPicker() {
 }
 
 function unlockSkin(id) {
-  if (skins[id]) return;
+  if (!Object.prototype.hasOwnProperty.call(SKIN_HUES, id) || skins[id]) return;
   skins[id] = true;
   try { saveSet('skins', skins); } catch (_) {}
   toast('SKIN UNLOCKED', 2.0);
@@ -5706,8 +5752,10 @@ const ACH_DEFS = {
   daily28: { name: 'Committed', desc: 'Claim 28 daily rewards' }
 };
 
+achievements = progressionFlags(achievements, Object.keys(ACH_DEFS));
+
 function unlockAchievement(id) {
-  if (achievements[id]) return;
+  if (!Object.prototype.hasOwnProperty.call(ACH_DEFS, id) || achievements[id]) return;
   achievements[id] = true;
   try { saveSet('achievements', achievements); } catch (_) {}
   const def = ACH_DEFS[id];
@@ -5774,8 +5822,10 @@ const FIELD_GUIDE_BEHAVIOR = {
   darkMatter: 'Pulls you nearby and cannot be eaten. Discover by approaching within five player radii.'
 };
 
+fieldGuide = progressionFlags(fieldGuide, FIELD_GUIDE_BODIES);
+
 function discoverBody(type) {
-  if (fieldGuide[type]) return;
+  if (!FIELD_GUIDE_BODIES.includes(type) || fieldGuide[type]) return;
   fieldGuide[type] = true;
   try { saveSet('fieldGuide', fieldGuide); } catch (_) {}
   toast('FIELD GUIDE: ' + (BODY_NAME[type] || type), 2.0);
@@ -5783,40 +5833,42 @@ function discoverBody(type) {
 
 /* ---------- Weekly Leaderboard ---------- */
 let weeklyScores = Array.isArray(save.weeklyScores) ? save.weeklyScores : [];
-// A hand-edited or truncated save used to throw in submitScore on the death
-// path: the first entry must carry a numeric week and a scores array, and
-// every stored score must be a finite number.
-weeklyScores = weeklyScores.filter((w) => w && typeof w.week === 'number' &&
-  Array.isArray(w.scores));
-for (const w of weeklyScores) w.scores = w.scores.filter((s) => typeof s === 'number' && isFinite(s));
-let myWeeklyBest = parseInt(lsGet('myWeeklyBest', 0), 10) || 0;
-let totalEaten = parseInt(lsGet('totalEaten', 0), 10) || 0;
-let totalRuns = parseInt(lsGet('totalRuns', 0), 10) || 0;
-let totalPlayTime = parseInt(lsGet('totalPlayTime', 0), 10) || 0;
-
-function weekKey() {
-  const d = new Date();
-  const onejan = new Date(d.getFullYear(), 0, 1);
-  return Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+// A local Sunday-start calendar week, identified by its start DATE. This
+// stays stable across DST and New Year; legacy week numbers lack a year and
+// cannot safely be attributed to this week.
+function weekKey(d = new Date()) {
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12);
+  start.setDate(start.getDate() - start.getDay());
+  return localDateKey(start);
 }
-
-function submitScore(sc) {
-  sc = typeof sc === 'number' && isFinite(sc) ? Math.round(sc) : 0;
+function normalizeWeeklyScores() {
   const wk = weekKey();
-  if (!weeklyScores.length || typeof weeklyScores[0] !== 'object' ||
-      weeklyScores[0] === null || typeof weeklyScores[0].week !== 'number' ||
-      !Array.isArray(weeklyScores[0].scores) || weeklyScores[0].week !== wk) {
-    weeklyScores = [{ week: wk, scores: [] }];
+  const scores = weeklyScores.filter((w) => w && w.week === wk && Array.isArray(w.scores))
+    .flatMap((w) => w.scores).filter((s) => Number.isFinite(s) && s >= 0)
+    .map((s) => Math.min(Number.MAX_SAFE_INTEGER, Math.round(s)))
+    .sort((a, b) => b - a).slice(0, 10);
+  weeklyScores = [{ week: wk, scores }];
+  myWeeklyBest = scores[0] || 0;
+}
+let myWeeklyBest = 0;
+normalizeWeeklyScores();
+let totalEaten = progressionNumber(lsGet('totalEaten', 0));
+let totalRuns = progressionNumber(lsGet('totalRuns', 0));
+let totalPlayTime = progressionNumber(lsGet('totalPlayTime', 0), false);
+
+function submitScore(sc, stats = {}) {
+  normalizeWeeklyScores();
+  if (Number.isFinite(sc) && sc >= 0) {
+    weeklyScores[0].scores.push(Math.min(Number.MAX_SAFE_INTEGER, Math.round(sc)));
+    weeklyScores[0].scores.sort((a, b) => b - a);
+    weeklyScores[0].scores = weeklyScores[0].scores.slice(0, 10);
+    myWeeklyBest = weeklyScores[0].scores[0] || 0;
   }
-  weeklyScores[0].scores.push(sc);
-  weeklyScores[0].scores.sort((a, b) => b - a);
-  weeklyScores[0].scores = weeklyScores[0].scores.slice(0, 10);
-  if (sc > myWeeklyBest) myWeeklyBest = sc;
-  try { saveSet('weeklyScores', weeklyScores); saveSet('myWeeklyBest', myWeeklyBest); } catch (_) {}
+  saveProgression({ ...stats, weeklyScores, myWeeklyBest });
 }
 
 /* ---------- Rare Body Windows ---------- */
-let runsSinceLastRare = parseInt(lsGet('runsSinceLastRare', 0), 10) || 0;
+let runsSinceLastRare = progressionNumber(lsGet('runsSinceLastRare', 0));
 function checkRareWindow() {
   runsSinceLastRare++;
   // Decide only after reset has seeded this run. Pinned/daily fields do not
@@ -6040,6 +6092,7 @@ function renderDailyReward() {
 
 /* ---------- Leaderboard Panel ---------- */
 function openLeaderboard() {
+  normalizeWeeklyScores();
   clearInput();
   state = 'paused';
   panel = 'leaderboard';
@@ -6124,14 +6177,15 @@ consume = function(e, idx) {
 };
 
 // Hook into die() for near-miss feedback and stats
+let runProgressionSettled = false;
 const _origDie = die;
 die = function() {
-  if (state !== 'play') return;
+  if (state !== 'play' || runProgressionSettled) return;
+  runProgressionSettled = true;
   settleScoreDust();
-  totalRuns++;
-  totalPlayTime += elapsed;
-  submitScore(score);
-  try { saveSet('totalRuns', totalRuns); saveSet('totalPlayTime', totalPlayTime); } catch (_) {}
+  totalRuns = Math.min(Number.MAX_SAFE_INTEGER, totalRuns + 1);
+  totalPlayTime = Math.min(Number.MAX_SAFE_INTEGER, totalPlayTime + progressionNumber(elapsed, false));
+  submitScore(score, { totalRuns, totalPlayTime });
   // Veteran skin
   if (totalRuns >= 50) unlockSkin('veteran');
   // Near-miss feedback
@@ -6147,9 +6201,13 @@ die = function() {
 // Hook into start() for rare windows
 const _origStart = start;
 start = function() {
+  // Restart can replace a paused/live run without passing through death.
+  // Commit its score before reset clears the per-run milestone watermark.
+  if (state === 'play' || state === 'paused') commitBest();
   const seeded = seedOverride !== null || seedFromUrl() !== null;
   for (const def of UPGRADE_DEFS) runUpgrades[def.key] = seeded ? 0 : upgradeLevel(def.key);
   const result = _origStart.apply(this, arguments);
+  runProgressionSettled = false;
   if (seeded) {
     if (rng() < 0.25) { rareWindowActive = true; rareWindowT = 20; rareSpawnT = 5; }
   } else checkRareWindow();
