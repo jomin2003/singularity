@@ -46,6 +46,8 @@ if (!SCRIPT_TAG.test(html)) {
 // internals the movement checks need -- same trick the screenshot harness uses.
 const PROBE = `
 window.__probe = {
+  // Dev-only access for focused state fixtures; never shipped in game.js.
+  run: function (src) { return eval(src); },
   geom: function () {
     return { x: JOY_BASE_X, y: JOY_BASE_Y, r: JOY_R, knob: JOY_KNOB, dead: JOY_DEADZONE };
   },
@@ -194,13 +196,14 @@ const SMOKE_SEED = process.env.SMOKE_SEED || '20260915';
 const BASE_URL = process.env.SMOKE_URL || 'http://localhost/';
 const SMOKE_URL = BASE_URL + (BASE_URL.indexOf('?') >= 0 ? '&' : '?') + 'seed=' + SMOKE_SEED;
 
-const dom = new JSDOM(inlined, {
+function boot(saved) { return new JSDOM(inlined, {
   runScripts: 'dangerously',
   // Set SMOKE_URL to a file:// URL to exercise the double-click-to-open path,
   // where localStorage and service workers are unavailable.
   url: SMOKE_URL,
   virtualConsole: vc,
   beforeParse(window) {
+    if (saved) window.localStorage.setItem('singularity.save', JSON.stringify(saved));
     window.HTMLCanvasElement.prototype.getContext = function (type) {
       if (type !== '2d') return null;
       if (!this.__ctx) this.__ctx = makeCtx(this);
@@ -214,7 +217,8 @@ const dom = new JSDOM(inlined, {
       errors.push('error event: ' + ((e.error && e.error.stack) || e.message));
     });
   },
-});
+}); }
+const dom = boot();
 
 const { window } = dom;
 const doc = window.document;
@@ -276,6 +280,29 @@ check('menu: primary action is present and last in the card',
   $('menuCard').lastElementChild.classList.contains('menu-foot'));
 check('hud: combo bar built with 20 pips',
   $('comboBar').children.length === 20, $('comboBar').children.length + ' pips');
+
+/* ---- 0b. panel structure ----
+   Every overlay is a positioned .layer that holds one scrollable card. The
+   card owns the surface, the padding, the scroll container and the entrance
+   animation; a .layer has its own padding and a full-screen scrim. An overlay
+   that *is* a card gets both treatments at once -- its padding is applied
+   twice and max-height is measured against a box it is also padding -- which
+   is exactly the bug that had to be unwound in index.html. Pixel geometry is
+   not observable in jsdom, so assert the contract instead. */
+const OVERLAYS = ['menu', 'over', 'pause', 'settings', 'observe', 'eventPanel',
+                  'fieldguide', 'dailyreward', 'leaderboard', 'observatory'];
+check('structure: no overlay is itself a glass card',
+  OVERLAYS.every((id) => $(id) && !$(id).classList.contains('glass-card')));
+check('structure: every overlay holds exactly one card child',
+  OVERLAYS.every((id) => {
+    const cards = Array.prototype.filter.call($(id).children,
+      (n) => n.classList.contains('glass-card') || n.id === 'menuCard');
+    return cards.length === 1;
+  }));
+check('structure: the menu exposes its own scrim and card only',
+  $('menu').children.length === 2 &&
+  $('menu').children[0].id === 'menuAurora' &&
+  $('menu').children[1].id === 'menuCard');
 
 /* ---- 1. boot ---- */
 check('boot: menu layer visible', visible('menu'));
@@ -445,7 +472,14 @@ check('death: near-miss line present',
 
 /* ---- 6. restart ---- */
 // The game-over screen holds input for ~0.8s so one stray tap cannot wipe the
-// score you are still reading. Prove the guard exists, then wait it out.
+// score you are still reading. The guard is *time based*, so it can only be
+// asserted while its window is still open. The collapse above may have
+// happened several hundred frames ago (the civ / settings / event phases run
+// after the death frame), which left the window long expired and made this
+// assertion pass or fail depending on phase ordering. Arm a fresh death here
+// instead of restating the run -- re-running would also push a 0 score into
+// the history strip that the HOME checks below count.
+window.__probe.run("state = 'dead'; overGuardT = 0.8; show(el.over); hide(el.hud);");
 $('againBtn').click();
 check('game-over: input guard blocks an instant restart', visible('over'));
 step(70);                                   // 70 x 16.7ms > 0.8s
@@ -594,6 +628,106 @@ for (const p of androidXml) {
 }
 check('android: no "--" inside XML comments', xmlOffender === null,
   xmlOffender || androidXml.length + ' XML files clean');
+
+/* ---- 11. camera, shield, audio RNG and cross-run regressions ---- */
+const run = (src) => probe.run(src);
+const cameraSample = (hz, seconds) => run(`
+  start(); state = 'menu'; ents = []; p.x = 100; p.y = -80;
+  p.vx = 10; p.vy = -5; cam.x = 0; cam.y = 0;
+  for (let i = 0; i < ${Math.round(hz * seconds)}; i++) {
+    ents = []; update(${1 / hz});
+  }
+  [cam.x / (100 + 10 * CAM_LEAD), cam.y / (-80 - 5 * CAM_LEAD)];
+`);
+const camera60 = cameraSample(60, 1 / 60);
+check('camera: preserves the 0.35 follow coefficient at 60 Hz on both axes',
+  camera60.every((v) => Math.abs(v - 0.35) < 1e-12));
+const cameraRates = [30, 60, 120].map((hz) => cameraSample(hz, 0.1));
+check('camera: equal-time convergence at 30, 60 and 120 Hz',
+  cameraRates.every((xy) => xy.every((v) => Math.abs(v - (1 - Math.pow(0.65, 6))) < 1e-12)));
+run('cam.x = 0; cam.y = 0; ents = []; update(0)');
+check('camera: zero dt does not move the camera', run('cam.x === 0 && cam.y === 0'));
+
+// Drive the real reverse-order collision loop with two overlapping hazards.
+run(`start(); ents = []; satiatedT = 10; shield = 1; combo = 5; comboT = 1;
+  for (let i = 0; i < 2; i++) ents.push({x: 1, y: 0, vx: 0, vy: 0,
+    r: 100, phase: 0, body: {type: 'rocky'}});
+  update(1 / 60);`);
+check('shield: two same-frame impacts consume the shield without mass loss or combo break',
+  run('shield === 0 && combo === 5 && p.area === P0 * P0 * VARMODS[variant].startMul'));
+check('shield: absorption grants a short invulnerability window', run('invuln > 0 && invuln <= 0.5'));
+run(`ents = []; update(0.15);`);
+check('shield: grace period survives a subsequent frame', run('invuln > 0'));
+run(`ents = []; update(0.2);
+  p.vx = 0; p.vy = 0;
+  ents = [{x: p.x + 1, y: p.y, vx: 0, vy: 0, r: 100, phase: 0, body: {type: 'rocky'}}];
+  update(0);`);
+check('shield: impacts deal damage again after grace expires', run('combo === 0 && hitFx > 0'));
+
+const audioRng = run(`(() => {
+  const audio = Object.assign({}, Snd, {ac: null, muted: false});
+  seedRng(98765); const expected = rng(); seedRng(98765);
+  audio.ensure(); const initOK = rng() === expected;
+  seedRng(98765); audio.blip(4); const audibleOK = rng() === expected;
+  seedRng(98765); audio.muted = true; audio.blip(4); const mutedOK = rng() === expected;
+  return [initOK, audibleOK, mutedOK, !!audio.noise];
+})()`);
+check('audio: first ensure builds noise without consuming simulation RNG', audioRng[0] && audioRng[3]);
+check('audio: audible and muted blips leave the same next simulation draw', audioRng[1] && audioRng[2]);
+
+run(`start(); startPick(); resolvePick(1); start();`);
+check('reset: queued shockwave wind-up is cleared', run('pendingWave === 0'));
+run('ents = []; update(0.3)');
+check('reset: no previous-run shockwave fires in the new run', run('waves.length === 0'));
+run(`drag.active = true; drag.wx = 1000; drag.wy = 1000;
+  joy.active = true; joy.dx = 1; joy.kx = 30; start();`);
+check('reset: stale drag and stick input cannot steer the new run',
+  run('!drag.active && !joy.active && joy.kx === 0 && joy.ky === 0 && thrustVector().x === 0 && thrustVector().y === 0'));
+const sparseReset = run(`(() => {
+  let target = null;
+  const gain = Snd.musicBus.gain;
+  const original = gain.setTargetAtTime;
+  gain.setTargetAtTime = function(v) { target = v; };
+  try {
+    sparseOn = true; Snd.setSparse(true);
+    const ducked = target === Snd.musicVol * 0.35;
+    start(); return ducked && !sparseOn && target === Snd.musicVol;
+  } finally { gain.setTargetAtTime = original; }
+})()`);
+check('reset: restores the ducked music bus, not only the sparse flag', sparseReset);
+
+/* ---- 12. ghost preference migration and recording persistence ---- */
+// Use fresh boots so migration and reload are exercised, not imitated in a probe.
+// file:// deliberately denies storage; its normal boot is tested above instead.
+if (!SMOKE_URL.startsWith('file:')) {
+  const recording = { x: [0, 10, 20], y: [0, -10, -20], score: 321 };
+  for (const legacy of ['0', '1', recording]) {
+    const gd = boot({ v: 1, ghost: legacy });
+    const gp = gd.window.__probe;
+    check('ghost: migrates legacy ' + (typeof legacy === 'string' ? legacy : 'recording'),
+      gp.run('ghostOn') === (legacy !== '0') &&
+      gp.run('save.ghostOn') === (legacy === '0' ? '0' : '1') &&
+      JSON.stringify(gp.run('save.ghost')) === JSON.stringify(legacy));
+    gd.window.close();
+  }
+  let gd = boot({ v: 1, ghost: recording, ghostOn: '0' });
+  let gp = gd.window.__probe;
+  check('ghost: explicit preference wins over legacy recording', !gp.run('ghostOn'));
+  gd.window.document.getElementById('ghostBtn').click();
+  gd.window.document.getElementById('ghostBtn').click();
+  check('ghost: toggling twice preserves the recording',
+    JSON.stringify(gp.run('save.ghost')) === JSON.stringify(recording) && gp.run('save.ghostOn') === '0');
+  gp.run(`start(); score = bestAtRunStart + 100;
+    ghostRec = Array.from({length: 31}, (_, i) => [i / 10, i, -i]); die();`);
+  check('ghost: a new best recording does not overwrite the off preference',
+    gp.run('save.ghost.x.length === 31 && save.ghostOn === "0" && !ghostOn'));
+  const saved = JSON.parse(gd.window.localStorage.getItem('singularity.save'));
+  gd.window.close(); gd = boot(saved); gp = gd.window.__probe;
+  check('ghost: recording and off preference survive a reload',
+    gp.run('!ghostOn && ghostData.x.length === 31 && ghostData.y[30] === -30'));
+  gd.window.close();
+}
+check('regressions: no runtime errors', errors.length === 0);
 
 /* ---- output ---- */
 console.log('\n' + report.join('\n'));

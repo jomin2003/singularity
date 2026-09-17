@@ -27,6 +27,16 @@ jobs:
       - name: Install Capacitor dependencies
         run: npm ci
 
+      # Same fail-fast gate as build-apk.yml: a red suite means the release
+      # bundle would ship a broken game -- stop before Gradle runs.
+      - name: Run game test suites
+        run: |
+          node tools/smoke_test.cjs
+          node tools/progression_test.cjs
+          node tools/feel_test.cjs
+          node tools/design_test.cjs
+          node tools/rewarded_ads_test.cjs
+
       # MUST stay before the Gradle step. Three things it produces are
       # gitignored but required for the build to configure at all:
       #   1. app/src/main/assets/public            -- the actual game

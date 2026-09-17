@@ -78,10 +78,30 @@ introduce a raw value outside the scale.
   (the segmented track); everything else picks a step. Previously nearly every
   surface was a 100px pill, so shape communicated nothing.
 - **Weight carries emphasis, not glow.** `--w-body / label / strong / display`.
+- **Motion is a token scale too.** `--dur-fast / med / slow` and `--ease-out`,
+  and nothing animates permanently. An infinitely breathing primary button and
+  a 5s `drop-shadow` filter animation on the wordmark were removed: the first
+  moves the tap target out from under the thumb, the second repaints a blurred
+  layer every frame for no information. Panels get one ~200ms opacity+translate
+  entrance between them (the scrim fade and the card reveal used to double up,
+  and seven `animation-delay` rules for a child stagger that never existed were
+  removed as dead CSS).
+- **Reduced motion is answered twice over.** Both the OS setting and the in-game
+  MOTION toggle disable every animation and transition, and the list is
+  exhaustive rather than naming three selectors — an accessibility switch that
+  misses the panel reveal, both toast transitions and the low-mass heartbeat is
+  not an accessibility switch.
 
 The accessibility presets scale the **tokens**, not individual selectors. The
 large-text preset previously overrode ten elements by hand, which meant every
 new element silently opted out of it.
+
+**Overlays are a layer plus a card, never both.** `.layer` owns the scrim, the
+safe-area padding and the hit-testing; the card inside it owns the surface, the
+`max-height`, the scroll container and the entrance. An element that is both
+gets the two paddings stacked and measures its own `max-height` against a box it
+is also padding. `tools/smoke_test.cjs` asserts this shape, because it is easy
+to reintroduce and impossible to see in a diff.
 
 Menu styling is scoped to `#menu`. `.layer.center` is shared with the
 game-over, pause, settings and event panels, so nothing in the menu shell may
@@ -121,6 +141,9 @@ tools/
   make_icons.py            PWA icons (stdlib only)
   make_store_assets.py     Play feature graphic + 512 icon (needs Pillow)
   make_android_icons.py    launcher icons + splash screens (needs Pillow)
+  smoke_test.cjs           jsdom boot + physics/UI suite
+  progression_test.cjs     meta-progression, save and state-machine suite
+  visual_check.cjs         real-browser layout check + screenshots (CDP)
 .github/workflows/
   build-aab.yml            builds the signed release AAB
   pages.yml                hosts privacy.html on GitHub Pages
@@ -306,13 +329,25 @@ rival reads as the same class of object rather than a different sprite.
 
 The game has a full meta-progression layer that persists between runs:
 
-- **Stardust** — earn 1 per 100 score, plus bonuses for rare bodies (pulsar +5,
-  wormhole +3, magnetar +3, quasar +5, star +2). Spend at the Observatory on
-  permanent upgrades across four branches: Gravity Well, Accretion Disk,
-  Event Horizon, Singularity. Each has five levels.
-- **Daily Rewards** — a 28-day cumulative calendar. Missing a day costs you
-  that day only; no reset. Day 7 gives a skin, Day 14 a larger reward,
-  Day 28 a legendary skin.
+- **Stardust** — earn 1 per 100 score (settled as each 100-point threshold is
+  crossed, including multi-hundred gains in one bite), plus bonuses for rare
+  bodies (pulsar +5, wormhole +3, magnetar +3, quasar +5, star +2). Spend at
+  the Observatory on permanent upgrades across four branches, five levels each:
+
+  | Branch | Effect per level | At level 5 |
+  | --- | --- | --- |
+  | Gravity Well | +2% starting radius | +10% starting radius |
+  | Accretion Disk | +5% combo window | +25% combo window |
+  | Event Horizon | 4% less mass lost to impacts | 20% less |
+  | Singularity | 3% slower evaporation | 15% slower |
+
+  Upgrades apply to ordinary runs only. A seeded challenge (the daily run, or a
+  `?seed=` URL) runs the stock rules, so a shared seed means the same game for
+  everyone rather than the same game plus one player's upgrades.
+- **Daily Rewards** — a 28-day cumulative calendar keyed to the device's local
+  date. Missing a day costs you that day only; no reset and no lockout — the
+  cycle simply repeats. Day 7 gives a skin, Day 14 a larger reward, Day 28 a
+  legendary skin.
 - **Skins** — cosmetic variants for your black hole. Unlock by reaching eras,
   performing rare feats, lucky drops, or daily rewards.
 - **Achievements** — 12+ milestones from "First Meal" to "Committed". Each
@@ -350,9 +385,26 @@ The game has a full meta-progression layer that persists between runs:
 
 ## Testing status
 
-The game is exercised continuously: a jsdom smoke suite (`tools/smoke_test.cjs`)
-boots the real game, drives the frame loop, and checks the physics and UI
-(67/67 passing at b18), and the store screenshots in `store/screenshots/` are
-real renders from a headless browser. What has **still never happened** is a
-human playing it on a physical Android device. Install the closed-test build
-and play it before submitting to production.
+The game is exercised by two headless suites and one real-browser check:
+
+| Suite | What it proves | Command |
+| --- | --- | --- |
+| `tools/smoke_test.cjs` | boots the real game in jsdom, drives the frame loop, and checks physics, camera, shield, audio-RNG isolation, layout contracts and the boot/menu/play/death/restart path (75 checks) | `NODE_PATH=<dir with jsdom> node tools/smoke_test.cjs` |
+| `tools/progression_test.cjs` | seeded-run determinism, Stardust settlement, daily rewards, upgrades, rare windows, skins, state-machine edges (16 checks) | `node tools/progression_test.cjs` |
+| `tools/visual_check.cjs` | renders real frames in headless Chrome at phone, short-phone and landscape sizes and fails on any element that leaves the viewport; writes PNGs to `<temp>/singularity-shots` | `node tools/visual_check.cjs` |
+
+`npm test` runs the two jsdom suites; `npm run test:visual` runs the browser
+check (set `CHROME_PATH` if Chrome is not in the default location). jsdom is
+deliberately **not** a project dependency — install it wherever you like and
+point `NODE_PATH` at it.
+
+`visual_check.cjs` drives Chrome over the DevTools Protocol rather than with
+`--screenshot`, because plain headless `--screenshot` ignores `--window-size`
+for layout: the page lays out at the default window (measured 762x484) and the
+PNG is letterboxed into the size you asked for. Every measurement taken that
+way is wrong, which is how a "the card overflows the phone" report turns out to
+be an artifact of the harness.
+
+What has **still never happened** is a human playing it on a physical Android
+device. Install the closed-test build and play it before submitting to
+production.

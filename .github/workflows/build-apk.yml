@@ -36,6 +36,18 @@ jobs:
       - name: Install Capacitor dependencies
         run: npm ci
 
+      # Fail fast on game logic before spending any Android build time.
+      # jsdom ships as a regular dependency, so the suites run headless with
+      # no extra setup. A red suite here means the artifact would ship a
+      # broken game -- stop the job before Gradle ever runs.
+      - name: Run game test suites
+        run: |
+          node tools/smoke_test.cjs
+          node tools/progression_test.cjs
+          node tools/feel_test.cjs
+          node tools/design_test.cjs
+          node tools/rewarded_ads_test.cjs
+
       # MUST stay before the Gradle step -- see build-aab.yml for why
       # (it recreates gitignored-but-required directories).
       - name: Sync web assets into the Android project

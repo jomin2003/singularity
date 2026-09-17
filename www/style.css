@@ -78,10 +78,24 @@
   /* Surfaces. */
   --c-panel: rgba(255, 255, 255, .05);
   --c-panel-line: rgba(255, 255, 255, .09);
-  --c-scrim: rgba(6, 9, 18, .62);
+  --c-scrim: rgba(6, 9, 18, .78);
+  --c-text-secondary: #b8ccdf;
+  --c-text-muted: #9fb4c9;
+  --c-glass: linear-gradient(160deg, rgba(24, 34, 54, .88), rgba(9, 14, 26, .84));
 
   /* The one glow budget. Reserved for the primary action of a screen. */
   --glow-accent: 0 0 24px rgba(79, 240, 255, .28);
+
+  /* Motion scale. Three durations and one easing curve, reused everywhere.
+     Durations are short on purpose: this is a game, so every millisecond of
+     UI animation is a millisecond the player is not reading state. The
+     easing is decelerating (fast out, gentle settle), which is what makes a
+     panel feel placed rather than thrown. */
+  --dur-fast: 120ms;
+  --dur-med: 200ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-inout: cubic-bezier(.4, 0, .2, 1);
 }
 
 html, body {
@@ -118,7 +132,10 @@ html, body {
   inset: 0;
   pointer-events: none;
   z-index: 10;
-  padding: calc(env(safe-area-inset-top, 0px) + 16px) var(--s-3) var(--s-3);
+  padding: calc(env(safe-area-inset-top, 0px) + 16px)
+    calc(env(safe-area-inset-right, 0px) + var(--s-3))
+    calc(env(safe-area-inset-bottom, 0px) + var(--s-3))
+    calc(env(safe-area-inset-left, 0px) + var(--s-3));
 }
 
 .layer.center {
@@ -140,7 +157,7 @@ html, body {
     rgba(5, 6, 15, .80) 100%);
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
-  animation: fadeIn .28s ease-out;
+  animation: fadeIn var(--dur-med) var(--ease-out);
 }
 
 @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
@@ -152,14 +169,17 @@ html, body {
    starfield, which is the classic "no container, add a glow" fallback. They
    are now anchored instrument clusters: a real surface, a label, a value. */
 .hud-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--s-2);
-  padding: var(--s-1) var(--s-2);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
+  align-items: start;
+  gap: var(--s-1);
   width: 100%;
-  box-sizing: border-box;
 }
+
+.hud-top .hud-block { min-width: 0; }
+.hud-top .hud-block:first-child { justify-self: start; max-width: 100%; }
+.hud-top .hud-block.right { justify-self: end; max-width: 100%; }
+.hud-value, .hud-label { overflow-wrap: anywhere; }
 
 .hud-block {
   display: flex;
@@ -182,17 +202,18 @@ html, body {
   margin-bottom: 2px;
 }
 
-/* BEST used to sit directly under the pause circle and was half covered in
-   every screenshot. Reserve the button's column instead. */
+/* Pause owns a real grid column; readouts can wrap without covering it. */
 .hud-block.right {
   align-items: flex-end;
   text-align: right;
-  margin-right: 48px;
 }
 
-/* On small screens, the pause/mute buttons crowd the right column. */
-@media (max-width: 380px) {
-  .hud-block.right { margin-right: 36px; }
+@media (max-width: 420px) {
+  .hud-top { grid-template-columns: minmax(0, 1fr) minmax(64px, .65fr) 44px; }
+  .hud-block { padding: 8px; }
+  .hud-top .pause-btn { grid-column: 3; grid-row: 1; }
+  #chips { gap: 4px; }
+  .chip { padding: 2px 4px; letter-spacing: .02em; }
 }
 
 .hud-value {
@@ -264,19 +285,19 @@ html, body {
 .hud-label.dim { color: rgba(150, 185, 215, .45); margin-top: 6px; }
 
 /* ---------- Combo ---------- */
-/* Sits below the HUD clusters. Those are now bordered panels (~83px tall
-   including the chip row) rather than bare text, so the old 74px clearance
-   would put this straight through the chips. */
+/* Normal flow follows the tallest readout, including wrapped chips and large
+   text. The inset leaves room for the existing combo emphasis transform. */
 #comboWrap {
-  position: absolute;
-  left: 50%;
-  top: calc(env(safe-area-inset-top, 0px) + 120px);
-  transform: translateX(-50%);
-  width: 200px;
+  align-self: center;
+  width: 100%;
+  max-width: 320px;
+  padding: 8px 32px;
   opacity: 0;
-  transition: opacity .18s ease-out;
+  transition: opacity var(--dur-med) var(--ease-out);
   text-align: center;
 }
+
+#comboValue { max-width: 100%; line-height: 1.45; overflow-wrap: anywhere; }
 
 #comboWrap.on { opacity: 1; }
 
@@ -311,12 +332,12 @@ html, body {
   box-shadow: 0 0 6px rgba(79, 240, 255, .45);
 }
 
+#hud { display: flex; flex-direction: column; align-items: center; }
+
 .icon-btn {
-  position: absolute;
-  right: var(--s-3);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--s-3));
-  width: 40px;
-  height: 40px;
+  position: static;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: 1px solid var(--c-panel-line);
   background: rgba(10, 18, 32, .6);
@@ -339,12 +360,23 @@ html, body {
   margin: 0 auto;
 }
 
+.icon-btn:not(.pause-btn) {
+  position: fixed;
+  right: var(--s-3);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--s-3));
+}
+
 /* ---------- Menu / game over ---------- */
 .title {
   font-family: var(--font-display);
   font-size: clamp(18px, 6vw, 32px);
   font-weight: 900;
-  line-height: 1;
+  /* Orbitron Black paints well outside a 1em line box: its own ascent/descent
+     are larger than the em, so at line-height: 1 the glyphs overlapped the
+     subtitle underneath ("Consume. Grow. Survive." was drawn across the bottom
+     of the wordmark). 1.2 gives the face the room it actually needs, and the
+     subtitle no longer needs a negative margin to sit tight. */
+  line-height: 1.2;
   letter-spacing: var(--ls-display);
   margin-right: -.08em;
   background: linear-gradient(180deg, #ffffff 0%, var(--cyan) 55%, var(--violet) 100%);
@@ -358,7 +390,7 @@ html, body {
   font-size: var(--t-label);
   letter-spacing: var(--ls-label);
   color: rgba(170, 205, 235, .62);
-  margin-top: calc(var(--s-1) * -1);
+  margin-top: 2px;
 }
 
 /* Hierarchy on this screen: the SCORE is the hero and owns the only glow.
@@ -410,7 +442,7 @@ html, body {
    moving behind the glass is part of the look. */
 #menu {
   justify-content: flex-end;
-  padding-bottom: max(var(--s-4), 9vh);
+  padding-bottom: max(calc(env(safe-area-inset-bottom, 0px) + var(--s-4)), 9vh);
   background: radial-gradient(ellipse at 50% 64%,
     rgba(5, 6, 15, .70) 0%,
     rgba(5, 6, 15, .84) 58%,
@@ -442,7 +474,7 @@ html, body {
   z-index: 1;
   width: 100%;
   max-width: 400px;
-  max-height: 85vh;
+  max-height: 100%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -514,7 +546,7 @@ html, body {
   position: relative;
   overflow: hidden;
   width: 100%;
-  min-width: 240px;
+  min-width: 0;
   max-width: 288px;
   margin-top: 0;
   padding: 18px 32px;
@@ -527,12 +559,16 @@ html, body {
   background: linear-gradient(180deg, #7ceaff 0%, #35b6e4 52%, #1a7fae 100%);
   text-shadow: 0 1px 0 rgba(255, 255, 255, .35);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, .55) inset,
-    0 -2px 0 rgba(0, 0, 0, .18) inset,
-    0 10px 28px rgba(34, 167, 216, .45),
-    0 0 48px rgba(79, 240, 255, .35);
-  animation: ctaBreathe 2.4s ease-in-out infinite;
+    0 1px 0 rgba(255, 255, 255, .45) inset,
+    0 -2px 0 rgba(0, 0, 0, .16) inset,
+    0 8px 22px rgba(34, 167, 216, .34),
+    0 0 30px rgba(79, 240, 255, .22);
+  transition: transform var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out),
+              filter var(--dur-fast) var(--ease-out);
 }
+
+.btn.cta:hover { filter: brightness(1.06); }
 
 .btn.cta::after {
   content: '';
@@ -544,20 +580,13 @@ html, body {
   pointer-events: none;
 }
 
-@keyframes ctaBreathe {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.03); }
-}
-
-/* The press feedback must win over the breathing transform. */
-.btn.cta:active { animation: none; transform: scale(.96); }
-
-.title { animation: titleGlow 5s ease-in-out infinite; }
-
-@keyframes titleGlow {
-  0%, 100% { filter: drop-shadow(0 0 22px rgba(79, 240, 255, .32)); }
-  50%      { filter: drop-shadow(0 0 36px rgba(79, 240, 255, .52)); }
-}
+/* Press feedback is the only transform on the CTA. The button used to breathe
+   forever (scale 1 -> 1.03 -> 1, 2.4s, infinite), which meant the primary tap
+   target slid under the player's thumb and the compositor never idled. The
+   wordmark carried the same problem one layer up: a 5s drop-shadow *filter*
+   animation, which repaints a blurred layer every frame for no information.
+   Both are static now, and the glow is painted once as a fixed shadow. */
+.btn.cta:active { transform: scale(.97); }
 
 /* Footer: best score and history in a bordered chip, not loose dim text. */
 .menu-foot {
@@ -595,22 +624,64 @@ html, body {
    attributes instead. */
 
 /* ---------- Motion preferences ----------
-   The breathing CTA and the drifting aurora are decorative motion, so both the
-   OS setting and the in-game MOTION toggle must be able to stop them. */
+   Two switches, one effect: the OS setting and the in-game MOTION toggle both
+   have to stop motion. This list is exhaustive on purpose -- the previous
+   version only named the aurora, the CTA and the wordmark, so the panel
+   reveal, both toast transitions, the combo-ready pulse, the NEW BEST pulse
+   and the segmented pill kept moving for players who had explicitly asked
+   for stillness. Colour and opacity may change; position and scale may not. */
 @media (prefers-reduced-motion: reduce) {
-  #menuAurora, .btn.cta, .title { animation: none; }
-  .segmented::before { transition: none; }
+  #menuAurora,
+  .btn.cta,
+  .title,
+  .newbest,
+  .glass-card,
+  .layer.center,
+  .hud-value.warn,
+  .hud-value.crit,
+  #comboBar.ready i.on,
+  .toast-item,
+  .toast-item.show { animation: none !important; }
+
+  .segmented::before,
+  .btn,
+  .btn.ghost,
+  .meta-btn,
+  .gear-btn,
+  .icon-btn,
+  .setting,
+  .obs-upgrade-btn,
+  .toast-item,
+  #comboBar i { transition: none !important; }
 }
 
 body.no-motion #menuAurora,
 body.no-motion .btn.cta,
-body.no-motion .title { animation: none; }
-body.no-motion .segmented::before { transition: none; }
+body.no-motion .title,
+body.no-motion .newbest,
+body.no-motion .glass-card,
+body.no-motion .layer.center,
+body.no-motion .hud-value.warn,
+body.no-motion .hud-value.crit,
+body.no-motion #comboBar.ready i.on,
+body.no-motion .toast-item,
+body.no-motion .toast-item.show { animation: none !important; }
+
+body.no-motion .segmented::before,
+body.no-motion .btn,
+body.no-motion .btn.ghost,
+body.no-motion .meta-btn,
+body.no-motion .gear-btn,
+body.no-motion .icon-btn,
+body.no-motion .setting,
+body.no-motion .obs-upgrade-btn,
+body.no-motion .toast-item,
+body.no-motion #comboBar i { transition: none !important; }
 
 /* Short viewports (landscape phones): compact the card so the CTA stays
    on-screen without scrolling. */
 @media (max-height: 560px) {
-  #menu { padding-bottom: var(--s-2); }
+  #menu { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--s-2)); }
   #menuCard { gap: var(--s-1); padding: var(--s-2); }
   #menuCard .title { font-size: clamp(24px, 6vh, 32px); }
   .btn.cta { padding: 14px 24px; }
@@ -706,15 +777,39 @@ body.no-motion .segmented::before { transition: none; }
   font-size: var(--t-label);
   font-weight: 700;
   letter-spacing: var(--ls-label);
-  padding: 10px 8px;
+  padding: 12px 8px;
+  /* 44px is the usable minimum for a thumb. The two pickers on the menu are
+     the first controls a new player touches, and they were 38px tall. */
+  min-height: 44px;
   background: transparent;
   border: 0;
   color: rgba(190, 220, 245, .6);
   cursor: pointer;
-  transition: color .18s ease-out;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .segmented button.on { color: #eaf6ff; }
+
+/* Four short labels in equal columns. "STANDARD" is the longest word in the
+   whole UI and it broke mid-word into "STANDAR / D" inside the pill at phone
+   width, because the readability pass set overflow-wrap: anywhere on every
+   segmented button. A hyphenless break inside a pill reads as a rendering
+   fault, so this picker gets the micro size, tight tracking, less side padding
+   and an explicit no-wrap -- it fits, and it fails predictably if it ever
+   does not. */
+.segmented.cols4 button {
+  font-size: var(--t-micro);
+  letter-spacing: var(--ls-tight);
+  padding-left: 4px;
+  padding-right: 4px;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ctrl picker: three labels, so it can afford the normal size. */
+.segmented:not(.cols4) button { white-space: nowrap; overflow-wrap: normal; }
 
 /* ---------- Best history strip ---------- */
 #histStrip {
@@ -750,8 +845,8 @@ body.no-motion .segmented::before { transition: none; }
 }
 
 .meta-btn {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -760,7 +855,9 @@ body.no-motion .segmented::before { transition: none; }
   background: rgba(255, 255, 255, .04);
   color: rgba(170, 205, 235, .6);
   cursor: pointer;
-  transition: color .16s ease-out, background .16s ease-out, border-color .16s ease-out;
+  transition: color var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
 }
 
 .meta-btn svg { width: 16px; height: 16px; display: block; }
@@ -862,17 +959,25 @@ body.no-motion .segmented::before { transition: none; }
   flex-direction: column;
   align-items: center;
   gap: 7px;
+  padding: 0 var(--s-2);
 }
 
 /* A toast is a notification, so it gets a surface to sit on. It used to be
    bare glowing text, which competed with the HUD and with each other when
-   three stacked up. */
+   three stacked up.
+   It wraps now. `white-space: nowrap` meant a long message -- "SOMETHING
+   NOTICED YOU", an achievement name -- ran off both edges of a 360px phone
+   with no ellipsis and no scroll, so the text was simply unreadable. */
 .toast-item {
   font-family: var(--font-ui);
   font-size: var(--t-label);
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  line-height: 1.45;
+  max-width: min(340px, calc(100vw - 2 * var(--s-2)));
   color: #eaf6ff;
   padding: 6px var(--s-2);
   border-radius: var(--r-sm);
@@ -881,8 +986,9 @@ body.no-motion .segmented::before { transition: none; }
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   opacity: 0;
-  transform: translateY(-6px) scale(.96);
-  transition: opacity .25s ease-out, transform .25s ease-out;
+  transform: translateY(-10px) scale(.96);
+  transition: opacity var(--dur-med) var(--ease-out),
+              transform var(--dur-med) var(--ease-out);
 }
 
 .toast-item.show { opacity: 1; transform: none; }
@@ -946,6 +1052,7 @@ body.no-motion .segmented::before { transition: none; }
   gap: 12px;
   width: 100%;
   min-width: 0;
+  min-height: 44px;
   padding: 12px 16px;
   font-family: var(--font-ui);
   text-align: left;
@@ -954,7 +1061,7 @@ body.no-motion .segmented::before { transition: none; }
   border-radius: var(--r-md);
   color: inherit;
   cursor: pointer;
-  transition: background .12s ease-out;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 
 .setting:active { background: rgba(255, 255, 255, .09); }
@@ -1028,13 +1135,43 @@ body.no-motion .segmented::before { transition: none; }
   font-variant-numeric: tabular-nums;
 }
 
+/* Static grid placement inside .hud-top (position: static), with safe-area
+   padding still handled by #hud via .layer. */
 .icon-btn.pause-btn {
-  top: calc(env(safe-area-inset-top, 0px) + 20px);
-  bottom: auto;
-  right: 20px;
+  justify-self: end;
   font-size: var(--t-label);
   letter-spacing: var(--ls-tight);
 }
+
+/* ---------- Readability and keyboard navigation ---------- */
+.hint { color: rgba(190, 215, 240, .82); }
+.hint.dim { color: rgba(170, 205, 235, .78); }
+.segmented button { color: rgba(190, 220, 245, .82); min-width: 0; overflow-wrap: anywhere; }
+.segmented button.on { color: #eaf6ff; }
+.gear-btn, .meta-btn { color: rgba(190, 220, 245, .82); }
+.icon-btn.off { color: rgba(150, 175, 195, .75); }
+.setting[aria-pressed="false"] .setting-val { color: rgba(170, 205, 235, .78); }
+#keysLegend { color: rgba(190, 215, 240, .78); text-shadow: 0 1px 4px #000; }
+
+/* :focus also provides a fallback for older WebViews without :focus-visible. */
+button:focus, input[type=range]:focus {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+button:focus:not(:focus-visible), input[type=range]:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Scroll content, rather than compressing controls to fit a short viewport. */
+#menuCard > *, .glass-card > * { flex-shrink: 0; }
+#menuCard, .glass-card {
+  min-height: 0;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scroll-padding-block: var(--s-2);
+}
+.glass-btn-row { flex-wrap: wrap; }
+.slider-row input[type=range] { min-width: 0; }
 
 /* ---------- Accessibility presets ----------
    The large-text preset scales the TYPE SCALE, not ten individual selectors.
@@ -1153,7 +1290,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   z-index: 1;
   width: 100%;
   max-width: 400px;
-  max-height: 92vh;
+  max-height: 100%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1165,7 +1302,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   -webkit-backdrop-filter: blur(16px) saturate(120%);
   backdrop-filter: blur(16px) saturate(120%);
   box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .07) inset;
-  animation: cardReveal .35s cubic-bezier(.2, .8, .2, 1) both;
+  animation: cardReveal var(--dur-med) var(--ease-out) both;
 }
 
 /* 1px gradient border via masked pseudo-element (border-image can't round corners) */
@@ -1185,18 +1322,15 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 }
 
 @keyframes cardReveal {
-  from { opacity: 0; transform: translateY(24px) scale(.97); }
+  from { opacity: 0; transform: translateY(10px) scale(.992); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* Stagger children so they arrive in sequence */
-.glass-card > *:nth-child(1) { animation-delay: .00s; }
-.glass-card > *:nth-child(2) { animation-delay: .04s; }
-.glass-card > *:nth-child(3) { animation-delay: .08s; }
-.glass-card > *:nth-child(4) { animation-delay: .12s; }
-.glass-card > *:nth-child(5) { animation-delay: .16s; }
-.glass-card > *:nth-child(6) { animation-delay: .20s; }
-.glass-card > *:nth-child(7) { animation-delay: .24s; }
+/* There used to be seven rules here handing animation-delays to .glass-card
+   children. Nothing ever gave those children an animation, so the "stagger"
+   was dead CSS -- and a bare animation-delay still creates a containing and
+   stacking context on some older WebViews, so it was not free either.
+   Entrance is now exactly one motion, on the card itself. */
 
 /* Glass card title */
 .glass-title {
@@ -1293,25 +1427,15 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
    Toasts now slide from the top with a slight overshoot instead
    of just fading in place.
    ============================================================ */
-.toast-item {
-  font-family: var(--font-ui);
-  font-size: var(--t-label);
-  font-weight: var(--w-label);
-  letter-spacing: var(--ls-label);
-  white-space: nowrap;
-  color: #eaf6ff;
-  padding: 6px var(--s-2);
-  border-radius: var(--r-sm);
-  background: rgba(8, 14, 26, .74);
-  border: 1px solid var(--c-panel-line);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  opacity: 0;
-  transform: translateY(-12px) scale(.92);
-  transition: opacity .25s ease-out, transform .3s cubic-bezier(.2, .8, .2, 1);
-}
-
-.toast-item.show { opacity: 1; transform: translateY(0) scale(1); }
+/* ============================================================
+   Duplicate .toast-item removed.
+   The meta-progression pass appended a second, complete copy of the toast
+   definition here. Because it came later in the file it silently won every
+   property it declared -- including an entrance of translateY(-12px) scale(.92)
+   instead of the intended (-6px, .96) -- so the toast that shipped was not the
+   toast that was designed, and tuning either copy looked like a no-op.
+   The single definition lives next to #toasts above.
+   ============================================================ */
 
 /* ============================================================
    NEW: Combo milestone pulse
@@ -1390,7 +1514,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
    NEW: Observatory panel
    A glass card showing real astronomical readouts.
    ============================================================ */
-#observe.glass-card {
+#observe > .glass-card {
   max-width: 360px;
 }
 
@@ -1398,7 +1522,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
    NEW: Field Guide panel
    Collection album showing discovered bodies.
    ============================================================ */
-#fieldguide.glass-card {
+#fieldguide > .glass-card {
   max-width: 420px;
 }
 
@@ -1461,7 +1585,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
    NEW: Daily Reward panel
    28-day cumulative calendar.
    ============================================================ */
-#dailyreward.glass-card {
+#dailyreward > .glass-card {
   max-width: 420px;
 }
 
@@ -1539,7 +1663,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
    NEW: Leaderboard panel
    Weekly rankings.
    ============================================================ */
-#leaderboard.glass-card {
+#leaderboard > .glass-card {
   max-width: 420px;
 }
 
@@ -1648,7 +1772,9 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 }
 
 .obs-upgrade-btn {
-  padding: 6px 12px;
+  padding: 6px 14px;
+  min-height: 40px;
+  min-width: 64px;
   font-size: var(--t-micro);
   font-weight: var(--w-strong);
   border-radius: var(--r-sm);
@@ -1657,7 +1783,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   color: var(--cyan);
   cursor: pointer;
   white-space: nowrap;
-  transition: background .12s ease-out;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 
 .obs-upgrade-btn:hover { background: rgba(79, 240, 255, .2); }
@@ -1665,6 +1791,102 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   opacity: .4;
   cursor: not-allowed;
 }
+
+/* ============================================================
+   Horizon accent picker + daily reward shortcut (Observatory)
+   Both elements are created at runtime by renderSkinPicker(), so before this
+   block existed they rendered as raw platform controls: a native blue-on-white
+   <select> and a default browser <button> sitting in the middle of a dark glass
+   panel. Nothing in the design system was reaching them.
+   ============================================================ */
+#skinPickerLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-1);
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-line);
+  font-size: var(--t-micro);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  color: rgba(150, 185, 215, .65);
+  text-align: left;
+}
+
+#skinPicker {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  max-width: 55%;
+  padding: 6px 10px;
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  font-weight: var(--w-strong);
+  color: #eaf6ff;
+  background: rgba(10, 18, 32, .85);
+  border: 1px solid var(--c-panel-line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* The popup list is drawn by the OS, so it needs explicit colours or it opens
+   as a white sheet on a dark screen in some WebViews. */
+#skinPicker option { background: #0a1220; color: #eaf6ff; }
+#skinPicker option:disabled { color: rgba(150, 185, 215, .45); }
+
+#dailyRewardBtn {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  font-family: var(--font-ui);
+  font-size: var(--t-label);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--ls-label);
+  color: #cfe6f7;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(150, 200, 230, .26);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+#dailyRewardBtn:hover { background: rgba(255, 255, 255, .08); }
+#dailyRewardBtn:active { background: rgba(255, 255, 255, .02); }
+
+/* ---------- Long-string safety ----------
+   Panels show player-adjacent text of unpredictable length: era names, body
+   type names, achievement descriptions, session scores with separators. A
+   single unbroken token used to widen its flex row and push the panel into
+   horizontal overflow, which `body { overflow: hidden }` then clipped with no
+   way to scroll to it. Anywhere is correct here -- these are labels, not
+   prose meant to hyphenate. */
+.glass-title,
+.glass-body,
+.glass-row-key,
+.glass-row-val,
+.setting-name,
+.setting-val,
+.obs-upgrade-name,
+.obs-upgrade-desc,
+.fg-name,
+.dr-info,
+.lb-name,
+.toast-item,
+.hint,
+#overGap,
+.report { overflow-wrap: anywhere; }
+
+/* Values that are numbers or single short words must not be broken mid-word,
+   so they opt back out. */
+.setting-val,
+.glass-row-val,
+.lb-score,
+.obs-upgrade-level { overflow-wrap: normal; }
 
 /* ============================================================
    NEW: Fatal error surface

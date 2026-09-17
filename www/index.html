@@ -12,10 +12,11 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=b20">
+<link rel="stylesheet" href="style.css?v=b23">
+<link rel="stylesheet" href="design.css?v=b23">
 </head>
 <body>
-<canvas id="game"></canvas>
+<canvas id="game" aria-label="Singularity game field. Consume smaller bodies and avoid spiked hazards. Move with the selected touch controls or WASD and arrow keys.">Your browser needs canvas support to display the Singularity game field.</canvas>
 
 <div id="hud" class="layer hidden">
   <div class="hud-top">
@@ -34,11 +35,6 @@
            number and a wider camera; this is what makes it legible. -->
       <div class="hud-label dim" id="scaleOut"></div>
     </div>
-  </div>
-  <div id="comboWrap">
-    <div id="comboValue"></div>
-    <div id="comboBar"></div>
-  </div>
   <!-- Icons are the same inline-SVG set as the settings gear, same stroke
        weight, because text glyphs (&#10074;&#10074;, &#9834;) render with the
        metrics of whatever font the WebView falls back to. -->
@@ -48,6 +44,16 @@
             stroke-width="2.6" stroke-linecap="round"/>
     </svg>
   </button>
+  </div>
+  <div class="run-goal">
+    <div id="runGoalLabel" class="run-goal-label"></div>
+    <div class="run-goal-track" aria-hidden="true"><div id="runGoalFill"></div></div>
+    <div id="runMission" class="run-mission"></div>
+  </div>
+  <div id="comboWrap">
+    <div id="comboValue"></div>
+    <div id="comboBar"></div>
+  </div>
   <button id="muteBtn" class="icon-btn" aria-label="Mute sound" aria-pressed="false">
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M4.6 9.6v4.8h3.5l4.4 3.7V5.9L8.1 9.6H4.6Z" fill="none" stroke="currentColor"
@@ -78,9 +84,13 @@
       </button>
     </div>
 
-    <!-- Three visual rows instead of one dense hint line: a single sentence
-         never taught anybody what the colours mean. Icons are inline SVG so
-         there is still nothing external to load. -->
+    <p class="home-guide">Guide your black hole. Consume smaller bodies. Escape the spikes.</p>
+    <button id="playBtn" class="btn cta">PLAY</button>
+    <button id="dailyBtn" class="btn ghost wide">DAILY RUN</button>
+
+    <details id="runSetup" class="home-details">
+      <summary>Run setup &amp; missions</summary>
+      <div class="home-details-body">
     <div id="howto">
       <div class="how-row">
         <span class="how-ico eat" aria-hidden="true">
@@ -89,7 +99,7 @@
             <circle cx="8" cy="8" r="2.4" fill="currentColor"/>
           </svg>
         </span>
-        <span><b>EAT</b> &middot; cyan, smooth ones smaller than you</span>
+        <span><b>EAT</b> &middot; smooth ones, smaller than you</span>
       </div>
       <div class="how-row">
         <span class="how-ico grow" aria-hidden="true">
@@ -109,11 +119,12 @@
             <circle cx="8" cy="11.7" r=".95" fill="currentColor"/>
           </svg>
         </span>
-        <span><b>FLEE</b> the amber, spiked ones &mdash; they eat you</span>
+        <span><b>FLEE</b> the spiked ones &mdash; they eat you</span>
       </div>
     </div>
 
     <!-- Control picker lives on the menu, not two taps deep in pause-settings. -->
+    <div class="section-label">CONTROLS</div>
     <div id="ctrlPick" class="segmented" role="group" aria-label="Control scheme">
       <button type="button" data-ctrl="joystick">STICK</button>
       <button type="button" data-ctrl="follow">FOLLOW</button>
@@ -123,6 +134,7 @@
 
     <!-- Pre-run variant pick: starting rules, never stat unlocks. A second
          segmented control reusing the same sliding-pill pattern. -->
+    <div class="section-label">FLIGHT PROFILE</div>
     <div id="varPick" class="segmented cols4" role="group" aria-label="Run variant">
       <button type="button" data-var="normal">STANDARD</button>
       <button type="button" data-var="titan">TITAN</button>
@@ -134,10 +146,8 @@
     <!-- Parametric missions, three at a time. Rendered by renderMissions(). -->
     <div id="missions" aria-label="Missions"></div>
 
-    <!-- Primary action sits last in the card so it lands in the thumb zone
-         rather than dead centre of the screen. -->
-    <button id="playBtn" class="btn cta">BEGIN</button>
-    <button id="dailyBtn" class="btn ghost wide">DAILY</button>
+      </div>
+    </details>
 
     <div class="menu-foot">
       <div class="foot-chip">
@@ -154,9 +164,8 @@
       </div>
       <div id="histStrip"></div>
       <div class="hint dim" id="buildTag"></div>
-    </div>
 
-    <!-- Meta-progression buttons row -->
+    <!-- Meta-progression buttons row (part of the footer) -->
     <div class="menu-meta-row">
       <button id="menuObservatoryBtn" class="meta-btn" aria-label="Observatory" title="Observatory">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -177,6 +186,7 @@
           <path d="M5 6H3v2a3 3 0 0 0 3 3M19 6h2v2a3 3 0 0 1-3 3" fill="none" stroke="currentColor" stroke-width="1.2"/>
         </svg>
       </button>
+    </div>
     </div>
   </div>
 </div>
@@ -213,7 +223,8 @@
      readouts about whatever is on screen: field of view, nearest body, the
      hole's true size. The player has chosen to look, so this is the only
      place where annotated numbers feel like a feature rather than noise. -->
-<div id="observe" class="layer center overlay hidden glass-card">
+<div id="observe" class="layer center overlay hidden">
+  <div class="glass-card">
   <div class="glass-title">OBSERVING</div>
   <div class="glass-row"><span class="glass-row-key">FIELD</span><span class="glass-row-val" id="obsFov"></span></div>
   <div class="glass-row"><span class="glass-row-key">NEAREST</span><span class="glass-row-val" id="obsNearest"></span></div>
@@ -221,6 +232,7 @@
   <div class="glass-row"><span class="glass-row-key">ERA</span><span class="glass-row-val" id="obsEra"></span></div>
   <div class="glass-row"><span class="glass-row-key">SPIN</span><span class="glass-row-val" id="obsSpin"></span></div>
   <div class="hint dim" id="obsHint">Press O or tap to resume</div>
+  </div>
 </div>
 
 <div id="settings" class="layer center overlay hidden">
@@ -270,43 +282,53 @@
         <span class="setting-val">On</span>
       </button>
     </div>
+    <button id="adPrivacyBtn" class="btn ghost wide hidden" type="button">AD PRIVACY CHOICES</button>
     <button id="settingsBackBtn" class="btn wide">BACK</button>
   </div>
 </div>
 
-<div id="eventPanel" class="layer center overlay hidden glass-card">
+<div id="eventPanel" class="layer center overlay hidden">
+  <div class="glass-card">
   <div class="glass-title" id="eventTitle">EVENT</div>
   <div class="glass-body" id="eventBody"></div>
   <button id="eventOkBtn" class="btn">CONTINUE</button>
+  </div>
 </div>
 
 <!-- Field Guide: collection album of discovered bodies -->
-<div id="fieldguide" class="layer center overlay hidden glass-card">
+<div id="fieldguide" class="layer center overlay hidden">
+  <div class="glass-card">
   <div class="glass-title">FIELD GUIDE</div>
   <div class="fg-progress" id="fgProgress">0 / 20 discovered</div>
   <div class="fg-grid" id="fgGrid"></div>
   <button id="fgCloseBtn" class="btn wide">CLOSE</button>
+  </div>
 </div>
 
 <!-- Daily Reward: 28-day cumulative calendar -->
-<div id="dailyreward" class="layer center overlay hidden glass-card">
+<div id="dailyreward" class="layer center overlay hidden">
+  <div class="glass-card">
   <div class="glass-title">DAILY REWARDS</div>
   <div class="dr-info" id="drInfo"></div>
   <div class="dr-calendar" id="drCalendar"></div>
   <button id="drClaimBtn" class="btn wide">CLAIM</button>
   <button id="drCloseBtn" class="btn ghost wide">CLOSE</button>
+  </div>
 </div>
 
 <!-- Leaderboard: weekly rankings -->
-<div id="leaderboard" class="layer center overlay hidden glass-card">
+<div id="leaderboard" class="layer center overlay hidden">
+  <div class="glass-card">
   <div class="glass-title">LEADERBOARD</div>
   <div class="dr-info" id="lbInfo">This week</div>
   <div id="lbList"></div>
   <button id="lbCloseBtn" class="btn wide">CLOSE</button>
+  </div>
 </div>
 
 <!-- Observatory panel: shows astronomical readouts -->
-<div id="observatory" class="layer center overlay hidden glass-card">
+<div id="observatory" class="layer center overlay hidden">
+  <div class="glass-card">
   <div class="glass-title">OBSERVATORY</div>
   <div class="glass-row"><span class="glass-row-key">Stardust</span><span class="glass-row-val" id="obsStardust">0</span></div>
   <div class="glass-row"><span class="glass-row-key">Runs</span><span class="glass-row-val" id="obsRuns">0</span></div>
@@ -314,12 +336,20 @@
   <div class="glass-row"><span class="glass-row-key">Time Played</span><span class="glass-row-val" id="obsTime">0:00</span></div>
   <div style="width:100%;margin:8px 0;font-size:var(--t-label);color:rgba(150,185,215,.55);text-align:center;">UPGRADES</div>
   <div id="obsUpgrades"></div>
+  <section id="rewardOffer" class="reward-offer hidden" aria-label="Optional stardust bonus">
+    <p>Optional: watch an ad to earn 25 stardust for upgrades. You can also earn stardust by playing.</p>
+    <button id="rewardAdBtn" class="btn ghost" type="button">WATCH AD · +25 STARDUST</button>
+    <p id="rewardAdStatus" role="status" aria-live="polite"></p>
+  </section>
   <button id="obsCloseBtn" class="btn wide">CLOSE</button>
+  </div>
 </div>
 
 <div id="toasts"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="game.js?v=b20"></script>
+<script src="ads-config.js?v=b21"></script>
+<script src="rewarded-ads.js?v=b21"></script>
+<script src="game.js?v=b21"></script>
 </body>
 </html>

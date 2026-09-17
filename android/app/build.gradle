@@ -9,6 +9,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // Google sample app ID only; override explicitly with -PADMOB_APP_ID=... .
+        resValue "string", "admob_app_id", providers.gradleProperty("ADMOB_APP_ID").getOrElse("ca-app-pub-3940256099942544~3347511713")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

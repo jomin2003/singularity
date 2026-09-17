@@ -33,6 +33,8 @@ function rng() {
   return ((t ^ t >>> 14) >>> 0) / 4294967296;
 }
 const rand = (a, b) => a + rng() * (b - a);
+// Audio variation must not advance the seeded simulation stream.
+const cosmeticRandom = () => Math.random();
 
 // The seed a run was generated from. Kept so a run can be described exactly,
 // and so ?seed=NNN pins a field -- which turns "it broke when a giant spawned
@@ -108,7 +110,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b20';
+const BUILD_ID = 'b22';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -147,6 +149,11 @@ let W = 0, H = 0, MIN = 0, DPR = 1;
 
 /* ---------- state ---------- */
 let state = 'menu';
+// Run-scoped progression is reset with the simulation, not by wall timers.
+let runUpgrades = { gravity: 0, accretion: 0, horizon: 0, singularity: 0 };
+let runDustScore = 0, runEaten = 0, lastMealT = 0;
+let rareWindowActive = false, rareWindowT = 0, rareSpawnT = 0;
+const cosmeticRand = (a, b) => a + cosmeticRandom() * (b - a);
 let p, ents, parts, waves, shots, slugs, floats, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
@@ -166,6 +173,9 @@ let lastHurtT = -99;    // elapsed time of the last impact (death attribution)
 let overGuardT = 0;     // input guard so a stray tap cannot skip the score
 let drainRate = 0;      // current fractional decay, for the vignette pulse
 let eventKey = null;    // which first-encounter panel is open
+// What the world was doing before the panel froze it. closeEventPanel has to
+// restore THIS, not 'play' -- see the guard there.
+let eventReturnState = 'play';
 let coachStep = 0;      // first-run scripted hint index
 let bestAtRunStart = 0; // previous best, for the "N away from BEST" line
 let runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
@@ -378,18 +388,27 @@ if (save.motion === undefined) {
 // Best score is committed whenever a run could end, not only on death --
 // quitting or backgrounding mid-run used to throw the score away entirely.
 function commitBest() {
+  if (state === 'play' || state === 'paused') settleScoreDust();
   if (score > best) { best = score; saveSet('best', best); return true; }
   return false;
 }
 
-let motion = lsGet('motion', '1') === '1';
+const motionQuery = typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+let motionPreference = lsGet('motion', '1') === '1';
+let motion = motionPreference && !(motionQuery && motionQuery.matches);
 // Accessibility + comfort options. All persisted in the same versioned blob.
 let textLarge = lsGet('text', '0') === '1';
 let highContrast = lsGet('contrast', '0') === '1';
 let threatReadout = lsGet('threat', '0') === '1';
 let pauseOnEvent = lsGet('eventPause', '1') !== '0';
 let coachDone = lsGet('coach', '0') === '1';
-ghostOn = lsGet('ghost', '1') !== '0';
+// Older saves used ghost for BOTH the toggle string and the recording.
+// Migrate the preference only; never overwrite a surviving recording.
+if (save.ghostOn === undefined) {
+  saveSet('ghostOn', save.ghost === '0' ? '0' : '1');
+}
+ghostOn = lsGet('ghostOn', '1') !== '0';
 ghostData = loadGhost();
 
 // Run history: five scores with dates. A single BEST number has no story.
@@ -398,6 +417,11 @@ let history = Array.isArray(save.history) ? save.history.slice(0, HIST_MAX) : []
 history = history.filter((h) => h && typeof h.s === 'number');
 
 function pushHistory(s, when) {
+  // A run that ended without scoring is not a run worth charting. It used to
+  // be recorded anyway, so a first attempt that collapsed immediately wrote a
+  // zero-height bar into the footer while the BEST chip beside it still said
+  // "no runs yet" -- two readouts disagreeing about whether you had played.
+  if (!(s > 0)) return;
   history.unshift({ s: Math.round(s), t: when || Date.now() });
   history = history.slice(0, HIST_MAX);
   saveSet('history', history);
@@ -464,7 +488,7 @@ const Snd = {
     const len = Math.floor(ac.sampleRate * 0.5);
     const buf = ac.createBuffer(1, len, ac.sampleRate);
     const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (rng() * 2 - 1) * (1 - i / len);
+    for (let i = 0; i < len; i++) d[i] = (cosmeticRandom() * 2 - 1) * (1 - i / len);
     this.noise = buf;
 
     const dg = this.droneGain = ac.createGain();
@@ -541,7 +565,7 @@ const Snd = {
     const f = 196 * Math.pow(2, semi / 12);
     // Slight per-note detune so a fast chain of eats does not sound like the
     // same sample retriggered.
-    this.tone(f, 'triangle', 0.19, 0.008, 0.20, 6 + rng() * 8);
+    this.tone(f, 'triangle', 0.19, 0.008, 0.20, 6 + cosmeticRandom() * 8);
     this.tick(f * 6, 1.4, 0.045, 0.03);
   },
 
@@ -1615,13 +1639,13 @@ function buildStars() {
     const g = c.getContext('2d');
 
     for (let i = 0; i < cfg.n; i++) {
-      const x = rng() * px, y = rng() * px;
-      const cls = pickStarClass(rng());
+      const x = cosmeticRandom() * px, y = cosmeticRandom() * px;
+      const cls = pickStarClass(cosmeticRandom());
       // Luminosity drives size: hot stars are both brighter and larger, which
       // is what makes a real field read as having depth rather than being
       // scattered confetti.
-      const r = (rng() * cfg.maxR * cls.lum + 0.32) * DPR;
-      const a = Math.min(1, (rng() * 0.5 + 0.5) * cfg.a * (0.55 + cls.lum * 0.65));
+      const r = (cosmeticRandom() * cfg.maxR * cls.lum + 0.32) * DPR;
+      const a = Math.min(1, (cosmeticRandom() * 0.5 + 0.5) * cfg.a * (0.55 + cls.lum * 0.65));
       const spike = i < cfg.hero && cls.lum > 0.55;
 
       // Draw at nine offsets so a star crossing a tile edge reappears on the
@@ -1988,7 +2012,11 @@ function reset() {
   runSeed = nextRunSeed();
   seedRng(runSeed);
   // Variants change the starting rules, never the ladder: Titan opens heavy.
-  const startArea = P0 * P0 * VARMODS[variant].startMul;
+  const startArea = P0 * P0 * VARMODS[variant].startMul * Math.pow(1 + 0.02 * runUpgrades.gravity, 2);
+  runDustScore = 0; runEaten = 0; lastMealT = 0;
+  rareWindowActive = false; rareWindowT = 0; rareSpawnT = 0;
+  pendingWave = 0; greedE = null; nextSystemId = 1; eventKey = null;
+  clearInput();
   p = { x: 0, y: 0, vx: 0, vy: 0, r: Math.sqrt(startArea), area: startArea };
   ents = []; parts = []; waves = []; shots = []; slugs = []; floats = [];
   cam = { x: 0, y: 0, zoom: 1 };
@@ -1999,7 +2027,9 @@ function reset() {
   eraFx = 0; hitFx = 0; nearDeath = 0; lastHurtT = -99; comboPopT = 0;
   satiatedT = 0; drainRate = 0; spinA = 0;
   greedT = 0; pickT = 0; pickHold = null;
-  kilonovaWarned = false; lastBeatT = -99; sparseOn = false;
+  kilonovaWarned = false; lastBeatT = -99;
+  if (sparseOn) Snd.setSparse(false);
+  sparseOn = false;
   ghostRec = []; ghostClock = 0;
   coachStep = 0;
   runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '', finale: false };
@@ -2018,6 +2048,7 @@ function reset() {
     try { saveSet('missions', missions); } catch (_) {}
   }
   joy.active = false; joy.dx = 0; joy.dy = 0;
+  drag.active = false; joy.kx = 0; joy.ky = 0;
   for (let i = 0; i < ENT_TARGET; i++) spawn(rng() < 0.5 ? 1.15 : 1.7);
   cam.zoom = desiredZoom();
 }
@@ -2055,15 +2086,15 @@ function absorbFx(e) {
   // Matter spirals in rather than falling straight: add a tangential kick.
   const nx = -ty / d, ny = tx / d;
   for (let i = 0; i < n; i++) {
-    const a = rng() * TAU;
-    const sp = rand(0.5, 1.9) * p.r;
+    const a = cosmeticRandom() * TAU;
+    const sp = cosmeticRand(0.5, 1.9) * p.r;
     addPart({
       x: e.x + Math.cos(a) * e.r * 0.7,
       y: e.y + Math.sin(a) * e.r * 0.7,
       vx: -tx / d * sp * 0.55 + nx * sp * 0.85 + Math.cos(a) * sp * 0.4,
       vy: -ty / d * sp * 0.55 + ny * sp * 0.85 + Math.sin(a) * sp * 0.4,
-      life: 0, max: rand(0.28, 0.6),
-      r: rand(0.06, 0.2) * p.r + 0.8,
+      life: 0, max: cosmeticRand(0.28, 0.6),
+      r: cosmeticRand(0.06, 0.2) * p.r + 0.8,
       hue, mode: 0
     });
   }
@@ -2077,14 +2108,14 @@ function absorbFx(e) {
 function burstFx(x, y, n, spread, scale, hue) {
   const base = (hue === undefined) ? 196 : hue;
   for (let i = 0; i < n; i++) {
-    const a = rng() * TAU;
-    const sp = rand(0.6, 2.4) * (spread || p.r) * 1.4 * (scale || 1);
+    const a = cosmeticRandom() * TAU;
+    const sp = cosmeticRand(0.6, 2.4) * (spread || p.r) * 1.4 * (scale || 1);
     addPart({
       x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-      life: 0, max: rand(0.35, 0.9),
-      r: rand(0.08, 0.26) * p.r + 1,
+      life: 0, max: cosmeticRand(0.35, 0.9),
+      r: cosmeticRand(0.08, 0.26) * p.r + 1,
       // Scatter so the burst is not flat, but stay anchored to the source.
-      hue: base + rand(-18, 18), mode: 1
+      hue: base + cosmeticRand(-18, 18), mode: 1
     });
   }
 }
@@ -2095,11 +2126,22 @@ function burstFx(x, y, n, spread, scale, hue) {
 // star's life, and the fiction should survive a player who knows astronomy.
 const ERAS = ['NEBULA', 'STELLAR', 'INTERMEDIATE', 'SUPERMASSIVE',
               'QUASAR', 'BLAZAR', 'SINGULARITY'];
+const ERA_SCORE = 1200;
+function eraLabel(index) { return ERAS[clamp(Math.floor(index), 0, ERAS.length - 1)]; }
+function runGoal() {
+  // Read actual score, not the eased HUD score or last simulation frame's era.
+  const index = Math.max(0, Math.floor(score / ERA_SCORE));
+  const endless = index >= ERAS.length - 1;
+  const remaining = endless ? 0 : (index + 1) * ERA_SCORE - score;
+  return { endless, remaining, next: eraLabel(index + 1),
+    fill: endless ? 100 : clamp((score - index * ERA_SCORE) / ERA_SCORE * 100, 0, 100),
+    label: endless ? 'SINGULARITY · ENDLESS' : eraLabel(index + 1) + ' · ' + fmt(remaining) + ' points to go' };
+}
 
 // Human names for the run report card ("BIGGEST MEAL +320 (ice giant)").
 const BODY_NAME = {
   rocky: 'world', ice: 'ice world', ocean: 'ocean world', desert: 'desert world',
-  barren: 'dead world', asteroid: 'rubble', uranus: 'ice giant', neptune: 'ice giant',
+  barren: 'dead world', asteroid: 'rubble', uranus: 'Uranus', neptune: 'Neptune',
   giant: 'gas giant', lava: 'lava world', rogue: 'rogue planet', brownDwarf: 'brown dwarf',
   whiteDwarf: 'white dwarf', pulsar: 'pulsar', wormhole: 'wormhole',
   magnetar: 'magnetar', ark: 'ark ship', darkMatter: 'dark matter',
@@ -2134,8 +2176,7 @@ const CAUSE = {
 //             the explanation after an em dash when a headline needs one.
 // The old copy shouted everything, which is the single most recognisable
 // tell of sci-fi UI written by feel.
-const COACH = ['Push the stick to move', 'Chain eats to build a combo',
-               'Every 20th combo fires a shockwave'];
+const COACH = ['Push the stick to move', 'Chain eats to build a combo'];
 
 /* ---------- toasts ---------- */
 // A single slot meant era-up, KILONOVA and STAR CONSUMED clobbered each
@@ -2192,6 +2233,7 @@ function disrupt(e, idx) {
       vy: Math.sin(ax + spread) * sp + rand(-0.3, 0.3) * p.r,
       r: fr,
       spin: rand(-2, 2), phase: rng() * TAU,
+      pairAng: e.pairAng || 0, pairDist: e.pairDist || 0,
       body: { type: e.body.type, variant: (rng() * VARIANTS) | 0,
               spin: rand(-2, 2), sub: e.body.sub },
       frag: true
@@ -2267,7 +2309,7 @@ function consume(e, idx) {
     supernova(e.x, e.y, e.r);
     toast('STAR CONSUMED +' + fmt(gained));
   } else if (wasPulsar) {
-    shield = 1;
+    shield = 3;   // seconds of one-hit protection; impact consumes it
     toast('PULSAR ABSORBED — your next impact is shielded', 2.2);
     burstFx(e.x, e.y, 24, e.r, 1.4, 205);
   } else if (wasWormhole) {
@@ -2299,10 +2341,11 @@ function consume(e, idx) {
   } else if (type === 'ark') {
     toast('ARK CONSUMED +' + fmt(gained), 1.8);
     burstFx(e.x, e.y, 26, e.r, 1.2, entHue(e.r / p.r));
-  } else if (combo % WAVE_EVERY() === 0) {
-    // The shockwave cadence is the no-pause choice moment: steer the pick.
-    startPick();
   }
+  // The shockwave cadence is the no-pause choice moment, and it belongs to
+  // the COMBO, not to the body: a star or pulsar landing on the 20th used to
+  // swallow the milestone entirely.
+  if (combo > 0 && combo % WAVE_EVERY() === 0) startPick();
   // Big things break apart visibly instead of just vanishing.
   if (e.r > p.r * 0.55) burstFx(e.x, e.y, 14, e.r, 0.8, entHue(e.r / p.r));
 }
@@ -2329,7 +2372,8 @@ function hurt(e) {
   // Pulsar shield absorbs the next impact entirely, then is consumed.
   if (shield > 0) {
     shield = 0;
-    toast('PULSAR SHIELD', 1.4);
+    invuln = 0.3;   // grace period: overlapping bodies must not hit again this frame
+    toast('SHIELD — impact blocked', 1.4);
     if (Snd.ac) Snd.tone(520, 'sine', 0.18, 0.005, 0.16);
     burstFx(p.x, p.y, 22, p.r * 0.5, 1.2, 196);
     return;
@@ -2337,7 +2381,7 @@ function hurt(e) {
   const type = e.body && e.body.type;
   const prof = (type && IMPACT[type]) || IMPACT_DEFAULT;
 
-  p.area *= (1 - prof.frac);
+  p.area *= (1 - prof.frac * (1 - 0.04 * runUpgrades.horizon));
   p.r = Math.sqrt(p.area);
 
   const dx = p.x - e.x, dy = p.y - e.y;
@@ -2406,10 +2450,10 @@ function renderReport() {
   const mm = Math.floor(runStats.time / 60);
   const ss = Math.floor(runStats.time % 60);
   const time = mm + ':' + String(ss).padStart(2, '0');
-  const eraName = ERAS[runStats.era % ERAS.length];
+  const eraName = eraLabel(runStats.era);
 
   const lines = [
-    'TIME ' + time + '  ·  PEAK COMBO ×' + runStats.peakCombo,
+    'TIME ' + time + '  ·  PEAK CHAIN ' + runStats.peakCombo,
     'BIGGEST MEAL +' + fmt(runStats.biggest) +
       (runStats.biggestName ? ' (' + runStats.biggestName + ')' : '') +
       '  ·  ' + eraName
@@ -2426,6 +2470,7 @@ function renderReport() {
 }
 
 function die() {
+  clearInput();
   state = 'dead';
   Snd.collapse();
   Snd.sting('death');
@@ -2514,9 +2559,10 @@ function update(dt) {
   if (state === 'paused') return;      // frozen; render still draws the frame
   elapsed += dt;
   const prevEra = era;
-  era = Math.floor(score / 1200);
+  era = Math.floor(score / ERA_SCORE);
+  if (era !== prevEra && runStats) runStats.era = Math.max(runStats.era, era);
   if (era !== prevEra && era > 0) {
-    toast(ERAS[era % ERAS.length]);
+    toast(eraLabel(era));
     // Milestone celebration: the only progression system in the game
     // deserved more than a line of text.
     eraFx = 1;
@@ -2533,7 +2579,10 @@ function update(dt) {
       buzz(150);
       flashT = Math.max(flashT, 0.5);
       waves.push({ x: p.x, y: p.y, r: p.r, max: p.r * 20, t: 0, hue: 280 });
-      openEventPanel('finale');
+      // Only stop the world if there is still a world to stop. update() keeps
+      // running after death, so an era crossed on the fatal frame would
+      // otherwise open this explainer on top of the run report.
+      if (state === 'play') openEventPanel('finale');
     }
   }
 
@@ -2550,7 +2599,7 @@ function update(dt) {
     if (coachStep === 0 && elapsed > 1.2) { toast(COACH[0], 2.4); coachStep = 1; }
     else if (coachStep === 1 && combo >= 1) { toast(COACH[1], 2.4); coachStep = 2; }
     else if (coachStep === 2 && combo >= 5) {
-      toast(COACH[2], 2.6);
+      toast('Every ' + WAVE_EVERY() + ' chained eats offers a power choice', 2.6);
       coachStep = 3;
       coachDone = true;
       saveSet('coach', '1');
@@ -2660,7 +2709,9 @@ function update(dt) {
 
   // Frame-dragging: large bodies tilt the world subtly when close. Real
   // Kerr black holes drag spacetime around them; this is the cheap version.
-  let drag = 0;
+  // (fd, not drag: `drag` is the input object, and a local of the same name
+  // shadowed it and crashed Follow steering.)
+  let fd = 0;
   for (const e of ents) {
     const t = e.body && e.body.type;
     if (t !== 'star' && t !== 'giant' && t !== 'rival') continue;
@@ -2669,21 +2720,22 @@ function update(dt) {
     const reach = p.r * 5;
     if (d < reach) {
       const sign = (dx > 0) ? 1 : -1;
-      drag += sign * (1 - d / reach) * 0.14;
+      fd += sign * (1 - d / reach) * 0.14;
     }
   }
   // Spin-coupled drag: a Schwarzschild hole (spin 0) barely drags the frame;
   // a near-maximal Kerr hole does. Meals spin you up, so the tilt deepens
   // across a run instead of sitting at one flat value.
-  camRoll = lerp(camRoll, clamp(drag, -0.22, 0.22) * (0.3 + spinA), smooth(0.6, dt));
+  camRoll = motion ? lerp(camRoll, clamp(fd, -0.22, 0.22) * (0.3 + spinA), smooth(0.6, dt)) : 0;
 
   cam.zoom = lerp(cam.zoom, desiredZoom(), smooth(0.02, dt));
   // Snap the camera to the player. The old "smooth" follow lagged badly -- a few
   // quick moves and the player was drawn in the corner with the whole field
   // off-screen, which read as "the game is empty". 0.35 is snappy without
-  // being jittery at 60 fps.
-  cam.x = lerp(cam.x, p.x + p.vx * CAM_LEAD, 0.35);
-  cam.y = lerp(cam.y, p.y + p.vy * CAM_LEAD, 0.35);
+  // being jittery at 60 fps. Preserve that feel at any frame rate.
+  const follow = 1 - Math.pow(0.65, dt * 60);
+  cam.x = lerp(cam.x, p.x + p.vx * CAM_LEAD, follow);
+  cam.y = lerp(cam.y, p.y + p.vy * CAM_LEAD, follow);
 
   if (state === 'play') {
     // ---- Movement: thrust and inertia, not "seek a point" ---------------
@@ -2703,6 +2755,15 @@ function update(dt) {
     //
     // So a small hole is nimble and a grown hole is ponderous, but neither is
     // any slower flat out than it used to be.
+    // Follow: the target is the finger's screen position, and the camera moves
+    // under it every frame. Re-deriving the world point here (not only on
+    // pointermove) keeps a resting finger steering at the same spot -- the
+    // camera dragging used to bend the target with it. Runs before the thrust
+    // read so the same frame steers at where the finger is now.
+    if (controlMode === 'follow' && steerPointer !== null && pointer.down) {
+      const w = screenToWorld(pointer.x, pointer.y);
+      drag.wx = w.x; drag.wy = w.y;
+    }
     const tv = thrustVector();
     const maxV = SPEED_REF * p.r;
     // Wisp variant: nimbler hands, same top speed.
@@ -2743,6 +2804,7 @@ function update(dt) {
     if (VARMODS[variant].decayMul !== 1) decay *= VARMODS[variant].decayMul;
     if (satiatedT > 0) { satiatedT -= dt; decay = 0; }
     else if (combo >= 10 && comboT > 0) decay *= 0.55;
+    decay *= 1 - 0.03 * runUpgrades.singularity;
     drainRate = decay;
     p.area = Math.max(1, p.area - p.area * decay * dt);
     p.r = Math.sqrt(p.area);
@@ -2789,6 +2851,7 @@ function update(dt) {
           // horizon instead of vanishing whole. Fragments (flagged) never
           // shred again, or one planet would chain into confetti forever.
           if (!e.frag && !e.civ && !e.comet && !e.darkMatter &&
+              e.body && e.body.type !== 'wormhole' &&
               e.r > p.r * 0.45 && e.r > 6) {
             disrupt(e, i);
             continue;
@@ -2819,8 +2882,8 @@ function update(dt) {
     // biggest moment in the loop lands with anticipation, not just aftermath.
     if (pendingWave > 0) {
       pendingWave -= dt;
-      if (rng() < 10 * dt) {
-        const a = rng() * TAU;
+      if (cosmeticRandom() < 10 * dt) {
+        const a = cosmeticRandom() * TAU;
         addPart({ x: p.x + Math.cos(a) * p.r * 6, y: p.y + Math.sin(a) * p.r * 6,
                   vx: 0, vy: 0, life: 0, max: 0.3, r: 2, hue: 190, mode: 0 });
       }
@@ -2934,12 +2997,12 @@ function updateEnts(dt) {
           // ~3.5%/s at point blank -- meaningful pressure, not instant death.
           p.area = Math.max(1, p.area * (1 - (1 - d / reach) * 0.035 * dt));
           p.r = Math.sqrt(p.area);
-          if (rng() < 0.25) {
+          if (cosmeticRandom() < 0.25) {
             addPart({
               x: e.x, y: e.y,
               vx: -dx / d * p.r * 2, vy: -dy / d * p.r * 2,
               life: 0, max: 0.5,
-              r: rand(0.05, 0.12) * p.r + 0.8, hue: 275, mode: 1
+              r: cosmeticRand(0.05, 0.12) * p.r + 0.8, hue: 275, mode: 1
             });
           }
         }
@@ -2950,7 +3013,7 @@ function updateEnts(dt) {
           const sp = rand(3.5, 6.0) * p.r;
           slugs.push({
             x: e.x, y: e.y,
-            vx: -dx / d * sp, vy: -dy / d * sp,
+            vx: dx / d * sp, vy: dy / d * sp,
             r: p.r * 0.07, life: 0, max: 4
           });
           if (Snd.ac) Snd.tone(180, 'square', 0.10, 0.004, 0.10);
@@ -2971,7 +3034,7 @@ function updateEnts(dt) {
         p.vy += (-dy / d) * s;
         // Proximity rumble: you feel a rival through your hands before you
         // see what it is doing to your trajectory.
-        if (d < reachR * 0.6 && rng() < dt * 2) buzz(12);
+        if (d < reachR * 0.6 && cosmeticRandom() < dt * 2) buzz(12);
       }
     }
 
@@ -3025,6 +3088,7 @@ function updateEnts(dt) {
 
     // Dark matter: invisible, massive, pulls the player but is not pulled.
     if (e.darkMatter && state === 'play') {
+      if (!fieldGuide.darkMatter && d2 <= (p.r * 5) ** 2) discoverBody('darkMatter');
       const d = Math.sqrt(d2) || 1;
       const reach = p.r * 14;
       if (d < reach) {
@@ -3099,12 +3163,12 @@ function updateWaves(dt) {
 function updateShots(dt) {
   shotT -= dt;
   if (shotT <= 0) {
-    shotT = rand(5, 13);
-    const a = rand(-0.7, 0.3);
+    shotT = cosmeticRand(5, 13);
+    const a = cosmeticRand(-0.7, 0.3);
     shots.push({
-      x: rand(-0.1, 0.9) * W, y: rand(-0.1, 0.5) * H,
-      vx: Math.cos(a) * rand(500, 900), vy: Math.sin(a) * rand(500, 900),
-      life: 0, max: rand(0.5, 0.9), len: rand(60, 160)
+      x: cosmeticRand(-0.1, 0.9) * W, y: cosmeticRand(-0.1, 0.5) * H,
+      vx: Math.cos(a) * cosmeticRand(500, 900), vy: Math.sin(a) * cosmeticRand(500, 900),
+      life: 0, max: cosmeticRand(0.5, 0.9), len: cosmeticRand(60, 160)
     });
   }
   for (let i = shots.length - 1; i >= 0; i--) {
@@ -3172,7 +3236,7 @@ function render() {
   drawShots();
 
   let sx = 0, sy = 0;
-  if (motion && shakeMag > 0.2) { sx = rand(-shakeMag, shakeMag); sy = rand(-shakeMag, shakeMag); }
+  if (motion && shakeMag > 0.2) { sx = cosmeticRand(-shakeMag, shakeMag); sy = cosmeticRand(-shakeMag, shakeMag); }
 
   ctx.save();
   ctx.translate(W / 2 + sx, H / 2 + sy);
@@ -3412,7 +3476,7 @@ function drawPick() {
   ctx.textBaseline = 'middle';
   for (let i = 0; i < 3; i++) {
     const cx = W / 2 + (i - 1) * W * 0.30;
-    const frac = clamp(holds[i] / 0.35, 0, 1);
+    const frac = clamp(holds[i] / (i === 1 ? 0.6 : 0.35), 0, 1);
     ctx.globalCompositeOperation = 'source-over';
     // 40% opacity background like real mobile games
     ctx.fillStyle = 'rgba(8,14,26,0.40)';
@@ -3445,14 +3509,18 @@ function drawPick() {
 // simulation is needed -- just an index into the recording.
 function drawGhost() {
   if (!ghostOn || !ghostData || state !== 'play') return;
-  const gi = Math.floor(elapsed * 10);
+  const sample = elapsed * 10;
+  const gi = Math.floor(sample);
   if (gi < 0 || gi >= ghostData.x.length) return;
+  const next = Math.min(gi + 1, ghostData.x.length - 1);
+  const gx = lerp(ghostData.x[gi], ghostData.x[next], sample - gi);
+  const gy = lerp(ghostData.y[gi], ghostData.y[next], sample - gi);
   ctx.globalCompositeOperation = 'lighter';
   ctx.globalAlpha = 0.35;
   ctx.strokeStyle = 'rgba(79,240,255,0.8)';
   ctx.lineWidth = Math.max(1, p.r * 0.05);
   ctx.beginPath();
-  ctx.arc(ghostData.x[gi], ghostData.y[gi], Math.max(6, p.r * 0.45), 0, TAU);
+  ctx.arc(gx, gy, Math.max(6, p.r * 0.45), 0, TAU);
   ctx.stroke();
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
@@ -3601,7 +3669,7 @@ function drawEnts() {
       lg.addColorStop(1.00, 'rgba(160,210,255,0)');
       ctx.fillStyle = lg;
       ctx.fillRect(0, -e.r * 0.06, e.r * 2.2, e.r * 0.12);
-      ctx.rotate(Math.PI / 2);
+      ctx.rotate(Math.PI);
       ctx.fillRect(0, -e.r * 0.06, e.r * 2.2, e.r * 0.12);
       ctx.restore();
       ctx.globalCompositeOperation = 'source-over';
@@ -3839,24 +3907,19 @@ function drawDisk(r, beam, cx, cy) {
     ctx.restore();
   }
 
-  // Doppler beaming. t = 0 at the left limb, 1 at the right. Applied once
-  // over the whole band so the asymmetry stays smooth across the layers.
+  // The approaching gas is hotter and brighter, but emission must still
+  // fade to zero at the disk edge rather than outlining a solid ellipse.
   ctx.save();
   ctx.scale(1, DISK_FLAT);
-  const dg = ctx.createLinearGradient(-R, 0, R, 0);
-  if (beam > 0) {
-    dg.addColorStop(0.00, 'rgba(255,228,190,0.00)');
-    dg.addColorStop(0.34, 'rgba(255,232,196,0.06)');
-    dg.addColorStop(0.72, 'rgba(255,240,212,0.30)');
-    dg.addColorStop(1.00, 'rgba(255,248,230,0.62)');
-  } else {
-    dg.addColorStop(0.00, 'rgba(255,248,230,0.62)');
-    dg.addColorStop(0.28, 'rgba(255,240,212,0.30)');
-    dg.addColorStop(0.66, 'rgba(255,232,196,0.06)');
-    dg.addColorStop(1.00, 'rgba(255,228,190,0.00)');
-  }
+  const bx = (beam > 0 ? 1 : -1) * R * 0.35;
+  const br = R * 0.65;
+  const dg = ctx.createRadialGradient(bx, 0, 0, bx, 0, br);
+  dg.addColorStop(0.00, 'rgba(255,250,237,0.55)');
+  dg.addColorStop(0.30, 'rgba(255,237,209,0.38)');
+  dg.addColorStop(0.70, 'rgba(255,204,156,0.12)');
+  dg.addColorStop(1.00, 'rgba(255,175,112,0)');
   ctx.fillStyle = dg;
-  ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(bx, 0, br, 0, TAU); ctx.fill();
   ctx.restore();
 
   ctx.restore();
@@ -3872,6 +3935,7 @@ function drawLensedArcs(r, beam) {
   for (const s of [-1, 1]) {
     ctx.save();
     ctx.translate(p.x, p.y);
+    ctx.globalAlpha = s < 0 ? 1 : 0.38;
 
     // Half-plane, then annulus: only the arc outside the shadow survives.
     ctx.beginPath();
@@ -3978,10 +4042,16 @@ function drawSecondaryImage(r, beam, cx, cy) {
   const ox = cx === undefined ? p.x : cx;
   const oy = cy === undefined ? p.y : cy;
   const dir = beam > 0 ? 1 : -1;
-  const ang = elapsed * 0.35 * dir;
+  const ang = (motion ? elapsed * 0.35 : 0) * dir;
   const ax = ox + Math.cos(ang) * r * 1.02;
   const ay = oy + Math.sin(ang) * r * 1.02;
-  const rad = r * 0.34;
+  const rad = r * 0.22;
+  ctx.save();
+  // Higher-order disk light stays outside the apparent capture shadow.
+  ctx.beginPath();
+  ctx.arc(ox, oy, r * 1.30, 0, TAU);
+  ctx.arc(ox, oy, r * 1.015, 0, TAU, true);
+  ctx.clip();
   ctx.globalCompositeOperation = 'lighter';
   const g = ctx.createRadialGradient(ax, ay, 0, ax, ay, rad);
   g.addColorStop(0.00, 'rgba(255,252,242,0.88)');
@@ -3989,7 +4059,7 @@ function drawSecondaryImage(r, beam, cx, cy) {
   g.addColorStop(1.00, 'rgba(255,190,130,0)');
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(ax, ay, rad, 0, TAU); ctx.fill();
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
 }
 
 function drawPlayer() {
@@ -4054,6 +4124,16 @@ function drawPlayer() {
       ctx.beginPath(); ctx.arc(gx, gy, r * 2.1, 0, TAU); ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
     }
+  }
+
+  // Unlocked skins are cosmetic horizon accents, never gameplay modifiers.
+  const skinHue = SKIN_HUES[activeSkin];
+  if (skinHue !== null && skinHue !== undefined) {
+    ctx.save();
+    ctx.strokeStyle = 'hsla(' + skinHue + ',85%,70%,0.65)';
+    ctx.lineWidth = Math.max(1, r * 0.035);
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.8, 0, TAU); ctx.stroke();
+    ctx.restore();
   }
 
   // Pulsar-shield ring, when active.
@@ -4187,6 +4267,20 @@ function updateHUD() {
     el.hudScore.textContent = fmt(Math.round(shownScore));
   }
   el.hudBest.textContent = fmt(best);
+  const goal = runGoal();
+  const goalLabel = document.getElementById('runGoalLabel');
+  const goalFill = document.getElementById('runGoalFill');
+  const missionLabel = document.getElementById('runMission');
+  if (goalLabel && goalLabel.textContent !== goal.label) goalLabel.textContent = goal.label;
+  if (goalFill) goalFill.style.width = goal.fill + '%';
+  if (missionLabel) {
+    const current = missions.find((m) => !m.done && MISSION_DEF(m.id) &&
+      runMission && MISSION_DEF(m.id).prog() < MISSION_DEF(m.id).need);
+    const def = current && MISSION_DEF(current.id);
+    const text = def ? def.text + ' · ' + Math.max(0, Math.min(def.need, def.prog())) + '/' + def.need
+      : 'Run missions complete';
+    if (missionLabel.textContent !== text) missionLabel.textContent = text;
+  }
 
   // Low-mass warning state: amber, then red, with a heartbeat.
   const warn = nearDeath > 0.45;
@@ -4203,7 +4297,7 @@ function updateHUD() {
   // Chips answer "why did I survive that?" and "what stage am I in?".
   const chips = [];
   if (shield > 0) chips.push('shield|SHIELD');
-  chips.push('era|' + ERAS[era % ERAS.length]);
+  chips.push('era|' + eraLabel(era));
   if (spinA > 0.5) chips.push('spin|SPIN ' + spinA.toFixed(2));
   chips.push('|' + (CTRL_LABEL[controlMode] || 'STICK'));
   const chipKey = chips.join(',');
@@ -4241,7 +4335,7 @@ function updateHUD() {
     const intoWave = combo % WE;
     el.comboValue.textContent =
       'COMBO ' + combo + '  ×' + comboMult().toFixed(1) +
-      '  ·  WAVE IN ' + (WE - intoWave);
+      '  ·  CHOICE IN ' + (WE - intoWave);
     // Combo heat: the text grows and runs hotter toward the shockwave, then
     // pops when it fires.
     const heat = clamp(intoWave / WE, 0, 1);
@@ -4343,13 +4437,21 @@ function renderHistory() {
 }
 
 function toMenu() {
+  clearInput();
+  for (const id of ['observatory', 'fieldguide', 'dailyreward', 'leaderboard']) {
+    const node = document.getElementById(id);
+    if (node) hide(node);
+  }
   commitBest();
   state = 'menu';
   panel = null;
   hide(el.over); hide(el.hud); hide(el.pause); hide(el.settings);
   hide(el.eventPanel); hide(el.keysLegend);
   show(el.menu);
-  el.menuBest.textContent = best > 0 ? 'BEST ' + fmt(best) : '';
+  // The footer chip is an icon plus this string. On a first run it used to be
+  // set to '' , which left a trophy icon floating on its own above the build
+  // tag -- on the very first screen every new player sees.
+  el.menuBest.textContent = best > 0 ? 'BEST ' + fmt(best) : 'NO RUNS YET';
   renderHistory();
   renderMissions();
   renderDaily();
@@ -4361,6 +4463,7 @@ function toMenu() {
 
 function pauseGame() {
   if (state !== 'play') return;
+  clearInput();
   state = 'paused';
   panel = 'pause';
   commitBest();
@@ -4370,7 +4473,8 @@ function pauseGame() {
 }
 
 function resumeGame() {
-  if (state !== 'paused') return;
+  if (state !== 'paused' || !['pause', 'event', 'observe'].includes(panel)) return;
+  clearInput();
   panel = null;
   state = 'play';
   hide(el.pause); hide(el.settings); hide(el.eventPanel); hide(el.observe);
@@ -4413,7 +4517,7 @@ function computeObserveStats() {
   }
 
   el.obsSpan.textContent = scaleReadout();
-  el.obsEra.textContent = ERAS[era % ERAS.length];
+  el.obsEra.textContent = eraLabel(era);
   // Spin is what makes the camera tilt honest: Schwarzschild sits near zero,
   // a meal-fed hole climbs toward maximal Kerr.
   if (el.obsSpin) el.obsSpin.textContent = 'a/M ' + spinA.toFixed(3);
@@ -4422,6 +4526,7 @@ function computeObserveStats() {
 function openObserve() {
   if (state !== 'play') return;
   commitBest();
+  clearInput();
   state = 'paused';
   panel = 'observe';
   computeObserveStats();
@@ -4479,8 +4584,8 @@ const EVENTS = {
   },
   finale: {
     title: 'SINGULARITY',
-    body: 'Top of the mass ladder. Nothing left in this field out-masses you. ' +
-          'Continue to keep devouring the endless field.'
+    body: 'You reached the final score era. Larger bodies and evaporation remain dangerous. ' +
+          'Continue into Singularity Endless with the same survival rules.'
   },
   wormhole: {
     title: 'WORMHOLE',
@@ -4498,6 +4603,12 @@ function openEventPanel(key, ex, ey) {
   const info = EVENTS[key];
   if (!info) return;
   eventKey = key;
+  clearInput();
+  // Remember what we interrupted. update() does NOT early-return on 'dead', so
+  // a surprise that lands on the fatal frame can open an explainer while the
+  // run is already over; the panel must then close back to the run report
+  // rather than back into play.
+  eventReturnState = state === 'paused' ? 'play' : state;
   state = 'paused';
   panel = 'event';
   if (el.eventTitle) el.eventTitle.textContent = info.title;
@@ -4540,9 +4651,13 @@ function closeEventPanel() {
   if (panel !== 'event') return;
   hide(el.eventPanel);
   panel = null;
-  state = 'play';
+  // Restore the state we froze, not 'play'. Unconditionally resuming play let
+  // CONTINUE resurrect a run that had already died and had already committed
+  // its score: the run report stayed on screen, but the simulation went live
+  // again behind it.
+  state = (eventReturnState === 'paused' || !eventReturnState) ? 'play' : eventReturnState;
   last = performance.now();
-  Snd.setDrone(true, combo);
+  if (state === 'play') Snd.setDrone(true, combo);
 }
 
 // One place decides what every settings row says. Each row is a label plus a
@@ -4631,7 +4746,7 @@ const VARMODS = {
 const VARIANT_ORDER = ['normal', 'titan', 'wisp', 'monk'];
 let variant = lsGet('variant', 'normal');
 if (!VARMODS[variant]) variant = 'normal';
-function COMBO_WINDOW_V() { return VARMODS[variant].comboWin; }
+function COMBO_WINDOW_V() { return VARMODS[variant].comboWin * (1 + 0.05 * runUpgrades.accretion); }
 function WAVE_EVERY() { return VARMODS[variant].waveEvery; }
 // One lethality rule for the whole game: shockwaves, arrows, threat line,
 // gravity and collisions all read the same predicate, including greed gates.
@@ -4663,8 +4778,8 @@ function setVariant(m) {
 // cheapest answer and need no content pipeline -- every objective reads a
 // counter the game already tracks. Completed missions roll a fresh one.
 const MISSION_POOL = [
-  { id: 'era4',      need: 4,    text: 'Reach era 4',                  prog: () => runStats.era },
-  { id: 'combo15',   need: 15,   text: 'Peak combo ×15',               prog: () => runStats.peakCombo },
+  { id: 'era4',      need: 4,    text: 'Reach QUASAR (era 4)',                  prog: () => runStats.era },
+  { id: 'combo15',   need: 15,   text: 'Chain 15 eats in one run',               prog: () => runStats.peakCombo },
   { id: 'dwarf3',    need: 3,    text: 'Eat 3 white dwarfs in one run', prog: () => runMission.wd },
   { id: 'survive180', need: 180, text: 'Survive 3:00',                 prog: () => Math.floor(elapsed) },
   { id: 'wave8',     need: 8,    text: 'One shockwave kills 8',        prog: () => runMission.waveBest },
@@ -4750,7 +4865,10 @@ function dailySeedInt() {
 }
 function renderDaily() {
   if (!el.dailyBtn) return;
-  el.dailyBtn.textContent = (save.daily === todayStr()) ? 'DAILY ✓' : 'DAILY';
+  // "DAILY RUN", not "DAILY": the Observatory has its own daily *rewards*
+  // calendar, and two controls called DAILY on two different screens (one
+  // starting a seeded run, one opening a reward list) read as the same thing.
+  el.dailyBtn.textContent = (save.daily === todayStr()) ? 'DAILY RUN ✓' : 'DAILY RUN';
 }
 function startDaily() {
   if (save.daily === todayStr()) {
@@ -4769,9 +4887,9 @@ function startDaily() {
 // steering -- the input you are already holding. Timeout resolves to the
 // middle lane (the classic shockwave), so indecision costs nothing.
 const PICK_OPTS = [
-  { name: 'ABSORB', sub: 'eat all edibles in view' },
+  { name: 'ABSORB', sub: 'up to 15 nearby edibles; no special effects' },
   { name: 'SHOCK', sub: 'classic shockwave' },
-  { name: 'AEGIS', sub: 'ignore impacts 6s' }
+  { name: 'AEGIS', sub: 'block one impact within 6s' }
 ];
 function startPick() {
   if (state !== 'play') return;
@@ -4787,7 +4905,7 @@ function resolvePick(i) {
   if (i === 0) pickAbsorb();
   else if (i === 2) {
     shield = 3.6;   // ~6 s at the 0.6/s shield decay
-    toast('AEGIS — impacts ignored', 2.0);
+    toast('AEGIS — block one impact within 6s', 2.0);
     waves.push({ x: p.x, y: p.y, r: p.r, max: p.r * 6, t: 0, hue: 45 });
     if (Snd.ac) Snd.tone(520, 'sine', 0.16, 0.01, 0.4, 5);
   } else {
@@ -4854,9 +4972,14 @@ function updateJoyFromPoint(px, py) {
   joy.dy = uy * t;
 }
 
+let steerPointer = null;   // the one pointer that owns steering
+
 cvs.addEventListener('pointerdown', (e) => {
+  if (state !== 'play') return;
+  if (steerPointer !== null) return;   // a second finger never steals steering
   ensureAudio();
   try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
+  steerPointer = e.pointerId;
 
   lastInput = (e.pointerType === 'mouse') ? 'mouse' : 'touch';
   pointer.x = e.clientX; pointer.y = e.clientY;
@@ -4885,6 +5008,8 @@ cvs.addEventListener('pointerdown', (e) => {
 });
 
 cvs.addEventListener('pointermove', (e) => {
+  if (state !== 'play') return;
+  if (steerPointer !== null && e.pointerId !== steerPointer) return;
   if (e.pointerType === 'mouse') {
     pointer.x = e.clientX; pointer.y = e.clientY; pointer.on = true;
   }
@@ -4906,7 +5031,12 @@ cvs.addEventListener('pointermove', (e) => {
   }
 });
 
-function pointerRelease() {
+function pointerRelease(e) {
+  // Only the steering finger may release steering; a stray lift of the other
+  // thumb used to drop the stick mid-dodge.
+  if (e && e.pointerId !== undefined && steerPointer !== null &&
+      e.pointerId !== steerPointer) return;
+  steerPointer = null;
   joy.active = false;
   joy.dx = 0;
   joy.dy = 0;
@@ -4915,6 +5045,17 @@ function pointerRelease() {
 }
 cvs.addEventListener('pointerup', pointerRelease);
 cvs.addEventListener('pointercancel', pointerRelease);
+cvs.addEventListener('lostpointercapture', (e) => {
+  // Recapture can fire lostpointercapture for a pointer we never owned.
+  if (steerPointer !== null && e.pointerId !== steerPointer) return;
+  pointerRelease(e);
+});
+function clearInput() {
+  steerPointer = null;
+  pointerRelease();
+  pointer.on = false;
+  for (const key of Object.keys(keys)) keys[key] = false;
+}
 
 // Pointer tracking for the desktop/web build. There is deliberately no
 // mouse-steering here any more: the hole is driven by the stick (or the
@@ -4927,12 +5068,18 @@ window.addEventListener('pointermove', (e) => {
   lastInput = 'mouse';
 });
 document.documentElement.addEventListener('pointerleave', () => { pointer.on = false; });
-window.addEventListener('blur', () => { pointer.on = false; });
+window.addEventListener('blur', () => { clearInput(); if (state === 'play') pauseGame(); });
 
-document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+// Suppression must not swallow panel scrolling: cards scroll natively, so the
+// gesture block only applies to the canvas itself (and only mid-run).
+document.addEventListener('touchmove', (e) => {
+  if (state !== 'play' || e.target !== cvs) return;
+  e.preventDefault();
+}, { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 
 window.addEventListener('keydown', (e) => {
+  if (window.RewardedAds && window.RewardedAds.busy()) return;
   const k = e.key.toLowerCase();
   if (k === 'arrowup' || k === 'w') keys.up = true;
   if (k === 'arrowdown' || k === 's') keys.down = true;
@@ -4943,7 +5090,15 @@ window.addEventListener('keydown', (e) => {
     lastInput = 'key';
   }
   if (k === ' ' || k === 'enter') {
-    if (state !== 'play') { e.preventDefault(); start(); }
+    // Route by state, never "not play = start": Space on the pause screen used
+    // to throw the run away and start over, and Enter on the report card
+    // bypassed the 0.8 s guard that the tap path respects.
+    if (e.repeat) return;
+    if (state === 'menu') { e.preventDefault(); start(); }
+    else if (state === 'paused' && (panel === null || panel === 'pause')) {
+      e.preventDefault(); resumeGame();
+    }
+    else if (state === 'dead' && overGuardT <= 0) { e.preventDefault(); start(); }
   }
   if (k === 'escape' || k === 'p') {
     if (state === 'play') pauseGame();
@@ -5042,8 +5197,9 @@ function applyA11y() {
 
 el.motionBtn.addEventListener('click', (e) => {
   e.stopPropagation();
-  motion = !motion;
-  lsSet('motion', motion ? '1' : '0');
+  motionPreference = !motionPreference;
+  motion = motionPreference && !(motionQuery && motionQuery.matches);
+  lsSet('motion', motionPreference ? '1' : '0');
   // MOTION: OFF must also kill the fullscreen white strobe -- that flash, not
   // the shake, is the actual photosensitivity risk.
   if (!motion) { shakeMag = 0; camRoll = 0; flashT = 0; eraFx = 0; }
@@ -5108,7 +5264,7 @@ if (el.ghostBtn) {
   el.ghostBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     ghostOn = !ghostOn;
-    lsSet('ghost', ghostOn ? '1' : '0');
+    lsSet('ghostOn', ghostOn ? '1' : '0');
     syncSettingsUI();
   });
 }
@@ -5149,9 +5305,9 @@ function shareRun() {
     g.fillStyle = bg; g.fillRect(0, 0, w, h);
 
     for (let i = 0; i < 220; i++) {
-      g.fillStyle = 'rgba(198,228,255,' + (0.12 + rng() * 0.5).toFixed(2) + ')';
+      g.fillStyle = 'rgba(198,228,255,' + (0.12 + cosmeticRandom() * 0.5).toFixed(2) + ')';
       g.beginPath();
-      g.arc(rng() * w, rng() * h, rng() * 1.5 + 0.3, 0, TAU);
+      g.arc(cosmeticRandom() * w, cosmeticRandom() * h, cosmeticRandom() * 1.5 + 0.3, 0, TAU);
       g.fill();
     }
 
@@ -5198,7 +5354,7 @@ function shareRun() {
     g.fillStyle = 'rgba(200,230,255,0.88)';
     g.font = '700 24px ui-monospace, SFMono-Regular, Menlo, monospace';
     g.fillText('COMBO ×' + runStats.peakCombo, 64, 320);
-    g.fillText(ERAS[runStats.era % ERAS.length], 64, 356);
+    g.fillText(eraLabel(runStats.era), 64, 356);
     g.fillStyle = 'rgba(255,176,87,0.95)';
     g.fillText(runStats.cause || 'EVAPORATED', 64, 400);
     g.fillStyle = 'rgba(150,185,215,0.5)';
@@ -5279,6 +5435,7 @@ function shareRun() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    clearInput();
     commitBest();
     Snd.setDrone(false, 0);
     if (state === 'play') pauseGame();     // backgrounding must not cost you
@@ -5361,28 +5518,52 @@ if ('serviceWorker' in navigator) {
    ============================================================ */
 
 /* ---------- Stardust + Upgrades ---------- */
-let stardust = parseInt(lsGet('stardust', 0), 10) || 0;
+let stardust = Math.max(0, parseInt(lsGet('stardust', 0), 10) || 0);
 let upgrades = lsGet('upgrades', { gravity: 0, accretion: 0, horizon: 0, singularity: 0 });
-if (typeof upgrades !== 'object' || upgrades === null) upgrades = { gravity: 0, accretion: 0, horizon: 0, singularity: 0 };
+if (typeof upgrades !== 'object' || upgrades === null || Array.isArray(upgrades)) upgrades = { gravity: 0, accretion: 0, horizon: 0, singularity: 0 };
 
+// A lost arrow. These strings literally contained "?" where a separator was
+// meant ("+2% starting radius per level ? next run"), so the Observatory showed
+// a question mark mid-sentence -- which reads as a rendering fault or an
+// unfinished thought. Plain words instead, no glyph to lose in a font subset.
 const UPGRADE_DEFS = [
-  { key: 'gravity', name: 'Gravity Well', desc: '+5% starting radius, +10% consume range, +15% pull', max: 5 },
-  { key: 'accretion', name: 'Accretion Disk', desc: '+10% combo duration, +1 shockwave radius, -5% decay', max: 5 },
-  { key: 'horizon', name: 'Event Horizon', desc: '+1 shield, +20% pulsar shield, +1 magnetar clear', max: 5 },
-  { key: 'singularity', name: 'Singularity', desc: 'Faster eras, +1 rare spawn, +1 mission slot', max: 5 }
+  { key: 'gravity', name: 'Gravity Well', desc: '+2% starting radius per level, active next ordinary run', max: 5 },
+  { key: 'accretion', name: 'Accretion Disk', desc: '+5% combo duration per level, active next ordinary run', max: 5 },
+  { key: 'horizon', name: 'Event Horizon', desc: '4% less impact mass loss per level, active next ordinary run', max: 5 },
+  { key: 'singularity', name: 'Singularity', desc: '3% less evaporation per level, active next ordinary run', max: 5 }
 ];
 
 function upgradeCost(level) { return (level + 1) * 10; }
-function upgradeLevel(key) { return upgrades[key] || 0; }
+function upgradeLevel(key) { return clamp(Math.floor(Number(upgrades[key])) || 0, 0, 5); }
+for (const def of UPGRADE_DEFS) upgrades[def.key] = upgradeLevel(def.key);
+
+// Settle score milestones for ALL score sources, once per run. A large meal
+// can cross several hundreds; effects and mission bonuses count as well.
+function settleScoreDust() {
+  const reached = Math.max(0, Math.floor(score / 100));
+  if (reached > runDustScore) earnStardust(reached - runDustScore);
+  runDustScore = Math.max(runDustScore, reached);
+}
 
 function earnStardust(amount) {
-  stardust += amount;
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  stardust += Math.floor(amount);
   try { saveSet('stardust', stardust); } catch (_) {}
 }
 
 /* ---------- Daily Rewards (28-day cumulative) ---------- */
 let dailyRewards = Array.isArray(save.dailyRewards) ? save.dailyRewards.slice() : [];
-let dailyStreak = parseInt(lsGet('dailyStreak', 0), 10) || 0;
+// Keep legacy modulo indices as history, not as a permanent claim lock.
+let dailyStreak = Math.max(dailyRewards.length, parseInt(lsGet('dailyStreak', 0), 10) || 0);
+let dailyLastClaim = lsGet('dailyLastClaim', '');
+function localDateKey(d = new Date()) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function dailyClaimedToday() { return dailyLastClaim === localDateKey(); }
+function checkDailyAchievements() {
+  if (dailyStreak >= 7) unlockAchievement('daily7');
+  if (dailyStreak >= 28) unlockAchievement('daily28');
+}
 
 function dailyRewardForDay(day) {
   if (day <= 6) return { stardust: 5 + day, skin: null };
@@ -5395,18 +5576,21 @@ function dailyRewardForDay(day) {
 }
 
 function claimDailyReward() {
-  const today = new Date();
-  const dayIndex = Math.floor(today.getTime() / (24 * 60 * 60 * 1000)) % 28;
-  if (dailyRewards.includes(dayIndex)) {
+  const today = localDateKey();
+  if (dailyClaimedToday()) {
     toast('Already claimed today', 1.6);
     return;
   }
-  dailyRewards.push(dayIndex);
+  dailyLastClaim = today;
+  dailyRewards.push(today);
+  dailyRewards = dailyRewards.slice(-28);
   dailyStreak++;
-  const reward = dailyRewardForDay(dailyStreak);
+  saveSet('dailyLastClaim', dailyLastClaim);
+  const reward = dailyRewardForDay((dailyStreak - 1) % 28 + 1);
   earnStardust(reward.stardust);
   if (reward.skin) unlockSkin(reward.skin);
   try { saveSet('dailyRewards', dailyRewards); saveSet('dailyStreak', dailyStreak); } catch (_) {}
+  checkDailyAchievements();
   toast('+' + reward.stardust + ' STARDUST', 2.2);
   Snd.sting('mission');
   renderDailyReward();
@@ -5417,6 +5601,48 @@ let skins = lsGet('skins', { default: true });
 let activeSkin = lsGet('activeSkin', 'default');
 if (typeof skins !== 'object' || skins === null) skins = { default: true };
 
+const SKIN_HUES = { default: null, red_giant: 12, veteran: 45, quasar: 195,
+  nebula: 280, pulsar: 215, feast: 145, fasting: 310 };
+skins.default = true;
+if (!Object.prototype.hasOwnProperty.call(SKIN_HUES, activeSkin) || !skins[activeSkin]) activeSkin = 'default';
+
+function equipSkin(id) {
+  if (!Object.prototype.hasOwnProperty.call(SKIN_HUES, id) || !skins[id]) return false;
+  activeSkin = id;
+  saveSet('activeSkin', id);
+  return true;
+}
+
+function renderSkinPicker() {
+  if (!el2.obsUpgrades) return;
+  let label = document.getElementById('skinPickerLabel');
+  if (!label) {
+    label = document.createElement('label');
+    label.id = 'skinPickerLabel';
+    label.appendChild(document.createTextNode('Horizon accent (cosmetic) '));
+    const select = document.createElement('select');
+    select.id = 'skinPicker';
+    select.addEventListener('change', () => equipSkin(select.value));
+    label.appendChild(select);
+    el2.obsUpgrades.after(label);
+    const daily = document.createElement('button');
+    daily.type = 'button'; daily.id = 'dailyRewardBtn';
+    daily.textContent = 'Daily reward';
+    daily.addEventListener('click', () => { hide(el2.observatory); openDailyReward(); });
+    label.after(daily);
+  }
+  const select = label.querySelector('select');
+  select.replaceChildren();
+  for (const id of Object.keys(SKIN_HUES)) {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = id.replace(/_/g, ' ') + (skins[id] ? '' : ' (locked)');
+    option.disabled = !skins[id];
+    select.appendChild(option);
+  }
+  select.value = activeSkin;
+}
+
 function unlockSkin(id) {
   if (skins[id]) return;
   skins[id] = true;
@@ -5426,6 +5652,7 @@ function unlockSkin(id) {
 }
 
 function checkSkinUnlocks() {
+  if (state !== 'play') return;
   if (era >= 3) unlockSkin('red_giant');
   if (era >= 5) unlockSkin('quasar');
 }
@@ -5461,14 +5688,15 @@ function unlockAchievement(id) {
 }
 
 function checkAchievements() {
-  if (score > 0) unlockAchievement('first_eat');
+  if (state !== 'play') return;
+  if (totalEaten >= 1000) unlockAchievement('eat1000');
+  if (runEaten > 0) unlockAchievement('first_eat');
   if (era >= 1) unlockAchievement('first_era');
   if (era >= 5) unlockAchievement('era5');
   if (combo >= 20) unlockAchievement('combo20');
   if (elapsed >= 180) unlockAchievement('survive180');
   if (score >= 10000) unlockAchievement('score10k');
-  if (dailyRewards.length >= 7) unlockAchievement('daily7');
-  if (dailyRewards.length >= 28) unlockAchievement('daily28');
+  checkDailyAchievements();
 }
 
 /* ---------- Field Guide ---------- */
@@ -5504,6 +5732,19 @@ const FIELD_GUIDE_FACTS = {
   darkMatter: 'Invisible mass. You know it is there only by its gravity.'
 };
 
+const FIELD_GUIDE_BEHAVIOR = {
+  star: 'Consume when smaller for bonus score and a supernova; larger stars burn on impact.',
+  lava: 'Consume when smaller; larger lava worlds burn on impact.',
+  rival: 'Pulls you toward it. Consume when smaller; larger rivals hit hard.',
+  brownDwarf: 'Consume when smaller for double meal score.',
+  whiteDwarf: 'Consume when smaller for fourfold meal score; larger dwarfs hit hard.',
+  pulsar: 'Larger pulsars burn with their beams. Consume for a temporary one-impact shield.',
+  wormhole: 'Consume when small enough to teleport across the field.',
+  magnetar: 'Deflects you sideways nearby. Consume to clear nearby threats with a starquake.',
+  quasar: 'Consume when smaller; larger quasars cause severe impact damage.',
+  darkMatter: 'Pulls you nearby and cannot be eaten. Discover by approaching within five player radii.'
+};
+
 function discoverBody(type) {
   if (fieldGuide[type]) return;
   fieldGuide[type] = true;
@@ -5512,7 +5753,13 @@ function discoverBody(type) {
 }
 
 /* ---------- Weekly Leaderboard ---------- */
-let weeklyScores = Array.isArray(save.weeklyScores) ? save.weeklyScores.slice() : [];
+let weeklyScores = Array.isArray(save.weeklyScores) ? save.weeklyScores : [];
+// A hand-edited or truncated save used to throw in submitScore on the death
+// path: the first entry must carry a numeric week and a scores array, and
+// every stored score must be a finite number.
+weeklyScores = weeklyScores.filter((w) => w && typeof w.week === 'number' &&
+  Array.isArray(w.scores));
+for (const w of weeklyScores) w.scores = w.scores.filter((s) => typeof s === 'number' && isFinite(s));
 let myWeeklyBest = parseInt(lsGet('myWeeklyBest', 0), 10) || 0;
 let totalEaten = parseInt(lsGet('totalEaten', 0), 10) || 0;
 let totalRuns = parseInt(lsGet('totalRuns', 0), 10) || 0;
@@ -5525,8 +5772,11 @@ function weekKey() {
 }
 
 function submitScore(sc) {
+  sc = typeof sc === 'number' && isFinite(sc) ? Math.round(sc) : 0;
   const wk = weekKey();
-  if (!weeklyScores.length || weeklyScores[0].week !== wk) {
+  if (!weeklyScores.length || typeof weeklyScores[0] !== 'object' ||
+      weeklyScores[0] === null || typeof weeklyScores[0].week !== 'number' ||
+      !Array.isArray(weeklyScores[0].scores) || weeklyScores[0].week !== wk) {
     weeklyScores = [{ week: wk, scores: [] }];
   }
   weeklyScores[0].scores.push(sc);
@@ -5538,15 +5788,32 @@ function submitScore(sc) {
 
 /* ---------- Rare Body Windows ---------- */
 let runsSinceLastRare = parseInt(lsGet('runsSinceLastRare', 0), 10) || 0;
-let rareWindowActive = false;
-
 function checkRareWindow() {
   runsSinceLastRare++;
-  if (runsSinceLastRare >= 5 || (runsSinceLastRare >= 3 && rng() < 0.5)) {
+  // Decide only after reset has seeded this run. Pinned/daily fields do not
+  // depend on account history; ordinary runs retain the five-run pity rule.
+  const pinned = seedFromUrl() !== null || dailyRun;
+  if (pinned ? rng() < 0.25 : (runsSinceLastRare >= 5 || (runsSinceLastRare >= 3 && rng() < 0.5))) {
     rareWindowActive = true;
+    rareWindowT = 20;
+    rareSpawnT = 5;
     runsSinceLastRare = 0;
   }
-  try { saveSet('runsSinceLastRare', runsSinceLastRare); } catch (_) {}
+  saveSet('runsSinceLastRare', runsSinceLastRare);
+}
+
+function updateRareWindow(dt) {
+  if (state !== 'play' || !rareWindowActive) return;
+  rareWindowT -= dt;
+  rareSpawnT -= dt;
+  if (rareSpawnT <= 0 && rareWindowT > 0) {
+    rareSpawnT += 5;
+    const a = rng() * TAU, d = viewWorldRadius() * 0.85;
+    ents.push({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d,
+      vx: 0, vy: 0, r: p.r * 0.45, spin: 0, phase: 0,
+      body: { type: 'pulsar', variant: 0, spin: 0 }, pulseT: 1, beatMax: 2 });
+  }
+  if (rareWindowT <= 0) rareWindowActive = false;
 }
 
 /* ---------- Button Press Sounds ---------- */
@@ -5556,6 +5823,54 @@ document.addEventListener('click', (e) => {
     try { Snd.tick(880, 1.0, 0.04, 0.06); } catch (_) {}
   }
 });
+
+/* ---------- Rewarded Ad Offer (Observatory) ---------- */
+// Optional placement: explicit opt-in, plain-language disclosure, capped by
+// the ads service. Declining changes nothing; earned stardust never depends
+// on ads. Only a watch() === true (real earned callback, capped) pays out.
+(function initRewardedOffer() {
+  const offer = document.getElementById('rewardOffer');
+  const btn = document.getElementById('rewardAdBtn');
+  const status = document.getElementById('rewardAdStatus');
+  const privacyBtn = document.getElementById('adPrivacyBtn');
+  if (!offer || !btn) return;
+  const ads = window.RewardedAds;
+  if (!ads || !ads.available()) { offer.classList.add('hidden'); }
+  if (privacyBtn) privacyBtn.classList.toggle('hidden', !(ads && ads.privacy));
+  function refresh() {
+    const reward = (ads && ads.config.rewardAmount) || 25;
+    const daily = (ads && ads.config.dailyLimit) || 3;
+    const left = ads ? ads.remaining() : 0;
+    btn.disabled = !(ads && ads.available());
+    btn.textContent = 'WATCH AD · +' + reward + ' STARDUST' +
+      (left < daily ? ' (' + left + ' LEFT TODAY)' : '');
+    if (status && !(ads && ads.available())) {
+      status.textContent = left <= 0 ? 'Daily bonus used — back tomorrow.' : '';
+    }
+  }
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!ads || ads.busy() || btn.disabled) return;
+    btn.disabled = true;
+    if (status) status.textContent = 'Loading ad…';
+    let earned = false;
+    try { earned = await ads.watch(); } catch (_) { earned = false; }
+    if (earned) {
+      earnStardust((ads.config.rewardAmount) || 25);
+      renderObservatory();
+      if (status) status.textContent = '+' + ((ads.config.rewardAmount) || 25) + ' stardust added.';
+      toast('+' + ((ads.config.rewardAmount) || 25) + ' stardust', 1.8);
+    } else if (status) {
+      status.textContent = 'No ad available or closed early — stardust unchanged.';
+    }
+    refresh();
+  });
+  if (privacyBtn) privacyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try { await ads.privacy(); } catch (_) {}
+  });
+  refresh();
+})();
 
 /* ---------- New DOM references ---------- */
 const el2 = {};
@@ -5568,21 +5883,29 @@ const el2 = {};
 
 /* ---------- Observatory Panel ---------- */
 function openObservatory() {
+  clearInput();
   state = 'paused';
   panel = 'observatory';
   renderObservatory();
-  show(el.observatory);
+  show(el2.observatory);
   hide(el.menu); hide(el.pause); hide(el.settings);
   Snd.setDrone(false, 0);
 }
 
 function renderObservatory() {
+  renderSkinPicker();
   if (el2.obsStardust) el2.obsStardust.textContent = stardust;
   if (el2.obsRuns) el2.obsRuns.textContent = totalRuns;
   if (el2.obsEaten) el2.obsEaten.textContent = totalEaten;
   if (el2.obsTime) el2.obsTime.textContent = Math.floor(totalPlayTime / 60) + ':' + String(Math.floor(totalPlayTime % 60)).padStart(2, '0');
   if (!el2.obsUpgrades) return;
   el2.obsUpgrades.innerHTML = '';
+  const rules = document.createElement('p');
+  rules.className = 'obs-upgrade-rules';
+  rules.textContent = 'Upgrades apply to ordinary runs only, not daily or seeded challenges. ' +
+    'Earn 1 stardust per 100 score, plus special consumption bonuses: stars +2, ' +
+    'wormholes and magnetars +3, pulsars and quasars +5.';
+  el2.obsUpgrades.appendChild(rules);
   for (const def of UPGRADE_DEFS) {
     const lvl = upgrades[def.key] || 0;
     const cost = upgradeCost(lvl);
@@ -5600,7 +5923,7 @@ function renderObservatory() {
     const btn = row.querySelector('button');
     if (btn && !maxed) {
       btn.addEventListener('click', () => {
-        if (stardust >= cost && lvl < def.max) {
+        if (upgradeLevel(def.key) === lvl && stardust >= cost && lvl < def.max) {
           stardust -= cost;
           upgrades[def.key] = lvl + 1;
           try { saveSet('stardust', stardust); saveSet('upgrades', upgrades); } catch (_) {}
@@ -5616,10 +5939,11 @@ function renderObservatory() {
 
 /* ---------- Field Guide Panel ---------- */
 function openFieldGuide() {
+  clearInput();
   state = 'paused';
   panel = 'fieldguide';
   renderFieldGuide();
-  show(el.fieldguide);
+  show(el2.fieldguide);
   hide(el.menu); hide(el.pause); hide(el.settings);
   Snd.setDrone(false, 0);
 }
@@ -5633,9 +5957,19 @@ function renderFieldGuide() {
     if (discovered) found++;
     const cell = document.createElement('div');
     cell.className = 'fg-cell' + (discovered ? ' discovered' : ' locked');
+    cell.dataset.body = type;
     cell.innerHTML =
       '<div class="fg-swatch"></div>' +
       '<div class="fg-name">' + (discovered ? (BODY_NAME[type] || type) : '???') + '</div>';
+    if (discovered) {
+      for (const [className, text] of [['fg-fact', FIELD_GUIDE_FACTS[type]],
+        ['fg-behavior', FIELD_GUIDE_BEHAVIOR[type] || 'Consume when smaller; avoid when larger.']]) {
+        if (!text) continue;
+        const detail = document.createElement('div');
+        detail.className = className; detail.textContent = text;
+        cell.appendChild(detail);
+      }
+    }
     el2.fgGrid.appendChild(cell);
   }
   if (el2.fgProgress) el2.fgProgress.textContent = found + ' / ' + FIELD_GUIDE_BODIES.length + ' discovered';
@@ -5643,10 +5977,11 @@ function renderFieldGuide() {
 
 /* ---------- Daily Reward Panel ---------- */
 function openDailyReward() {
+  clearInput();
   state = 'paused';
   panel = 'dailyreward';
   renderDailyReward();
-  show(el.dailyreward);
+  show(el2.dailyreward);
   hide(el.menu); hide(el.pause); hide(el.settings);
   Snd.setDrone(false, 0);
 }
@@ -5654,9 +5989,11 @@ function openDailyReward() {
 function renderDailyReward() {
   if (!el2.drCalendar) return;
   el2.drCalendar.innerHTML = '';
-  const today = Math.floor(new Date().getTime() / (24 * 60 * 60 * 1000)) % 28;
+  const claimedToday = dailyClaimedToday();
+  const progress = dailyStreak % 28 || (claimedToday && dailyStreak ? 28 : 0);
+  const today = claimedToday ? progress - 1 : progress;
   for (let i = 0; i < 28; i++) {
-    const claimed = dailyRewards.includes(i);
+    const claimed = i < progress;
     const isToday = i === today;
     const future = i > today;
     const day = document.createElement('div');
@@ -5666,39 +6003,43 @@ function renderDailyReward() {
     el2.drCalendar.appendChild(day);
   }
   if (el2.drInfo) {
-    const nextClaim = dailyRewards.includes(today) ? 'Come back tomorrow!' : 'Claim your reward!';
-    el2.drInfo.textContent = 'Streak: ' + dailyStreak + ' days · ' + nextClaim;
+    const nextClaim = claimedToday ? 'Come back tomorrow!' : 'Claim your reward!';
+    el2.drInfo.textContent = 'Total claims: ' + dailyStreak + ' days · ' + nextClaim;
   }
-  if (el2.drClaimBtn) el2.drClaimBtn.style.display = dailyRewards.includes(today) ? 'none' : '';
+  if (el2.drClaimBtn) el2.drClaimBtn.style.display = claimedToday ? 'none' : '';
 }
 
 /* ---------- Leaderboard Panel ---------- */
 function openLeaderboard() {
+  clearInput();
   state = 'paused';
   panel = 'leaderboard';
   renderLeaderboard();
-  show(el.leaderboard);
+  show(el2.leaderboard);
   hide(el.menu); hide(el.pause); hide(el.settings);
   Snd.setDrone(false, 0);
 }
 
 function renderLeaderboard() {
+  const title = el2.leaderboard && el2.leaderboard.querySelector('.glass-title');
+  if (title) title.textContent = 'YOUR LOCAL RUNS';
+  if (el2.lbInfo) el2.lbInfo.textContent = 'This week · personal runs saved on this device only';
   if (!el2.lbList) return;
   el2.lbList.innerHTML = '';
   const wk = weekKey();
   const entry = weeklyScores.find((w) => w.week === wk);
   const scores = entry ? entry.scores : [];
   if (!scores.length) {
-    el2.lbList.innerHTML = '<div class="hint dim">No scores yet this week. Be the first!</div>';
+    el2.lbList.innerHTML = '<div class="hint dim">No local runs recorded this week.</div>';
     return;
   }
   for (let i = 0; i < scores.length; i++) {
-    const isMe = scores[i] === myWeeklyBest;
+    const isMe = i === 0;
     const row = document.createElement('div');
     row.className = 'lb-row' + (isMe ? ' me' : '');
     row.innerHTML =
       '<span class="lb-rank">' + (i + 1) + '</span>' +
-      '<span class="lb-name">' + (isMe ? 'You' : 'Player') + '</span>' +
+      '<span class="lb-name">' + (isMe ? 'Your best this week' : 'Your run') + '</span>' +
       '<span class="lb-score">' + fmt(scores[i]) + '</span>';
     el2.lbList.appendChild(row);
   }
@@ -5706,43 +6047,31 @@ function renderLeaderboard() {
 
 /* ---------- Near-Miss Death Feedback ---------- */
 function computeNearMiss() {
-  const lines = [];
-  const nextEraScore = (era + 1) * 1200;
-  const awayFromEra = nextEraScore - score;
-  if (awayFromEra > 0 && awayFromEra < 300) {
-    lines.push('One more eat would have reached ' + ERAS[(era + 1) % ERAS.length]);
-  }
-  for (const def of UPGRADE_DEFS) {
-    const lvl = upgrades[def.key] || 0;
-    if (lvl < def.max) {
-      const cost = upgradeCost(lvl);
-      if (cost - stardust > 0 && cost - stardust < 20) {
-        lines.push('Need ' + (cost - stardust) + ' more Stardust for ' + def.name);
-        break;
-      }
-    }
-  }
-  return lines[0] || '';
+  const goal = runGoal();
+  return !goal.endless && goal.remaining > 0 && goal.remaining < 300
+    ? fmt(goal.remaining) + ' points to ' + goal.next : '';
 }
 
 /* ---------- Wire up new buttons ---------- */
 if (el2.menuObservatoryBtn) el2.menuObservatoryBtn.addEventListener('click', (e) => { e.stopPropagation(); openObservatory(); });
 if (el2.menuFieldGuideBtn) el2.menuFieldGuideBtn.addEventListener('click', (e) => { e.stopPropagation(); openFieldGuide(); });
 if (el2.menuLeaderboardBtn) el2.menuLeaderboardBtn.addEventListener('click', (e) => { e.stopPropagation(); openLeaderboard(); });
-if (el2.fgCloseBtn) el2.fgCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el.fieldguide); show(el.menu); state = 'menu'; panel = null; toMenu(); });
-if (el2.drCloseBtn) el2.drCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el.dailyreward); show(el.menu); state = 'menu'; panel = null; toMenu(); });
+if (el2.fgCloseBtn) el2.fgCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el2.fieldguide); show(el.menu); state = 'menu'; panel = null; toMenu(); });
+if (el2.drCloseBtn) el2.drCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el2.dailyreward); show(el.menu); state = 'menu'; panel = null; toMenu(); });
 if (el2.drClaimBtn) el2.drClaimBtn.addEventListener('click', (e) => { e.stopPropagation(); claimDailyReward(); });
-if (el2.lbCloseBtn) el2.lbCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el.leaderboard); show(el.menu); state = 'menu'; panel = null; toMenu(); });
-if (el2.obsCloseBtn) el2.obsCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el.observatory); show(el.menu); state = 'menu'; panel = null; toMenu(); });
+if (el2.lbCloseBtn) el2.lbCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el2.leaderboard); show(el.menu); state = 'menu'; panel = null; toMenu(); });
+if (el2.obsCloseBtn) el2.obsCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el2.observatory); show(el.menu); state = 'menu'; panel = null; toMenu(); });
 
 /* ---------- Hook into existing systems ---------- */
 // Stardust earning: hook into consume() by wrapping the original
 const _origConsume = consume;
 consume = function(e, idx) {
+  if (state !== 'play' || !e || ents[idx] !== e) return;
   const type = e.body && e.body.type;
   const result = _origConsume.apply(this, arguments);
   // Earn stardust
-  let earned = Math.floor(score / 100) - Math.floor((score - (e.r * e.r * CONSUME_YIELD > 0 ? 1 : 0)) / 100);
+  settleScoreDust();
+  let earned = 0;
   if (type === 'pulsar') earned += 5;
   else if (type === 'wormhole') earned += 3;
   else if (type === 'magnetar') earned += 3;
@@ -5756,18 +6085,20 @@ consume = function(e, idx) {
   if (type === 'wormhole') unlockAchievement('eat_wormhole');
   if (type === 'magnetar') unlockAchievement('eat_magnetar');
   if (type === 'quasar') unlockAchievement('eat_quasar');
-  totalEaten++;
+  totalEaten++; runEaten++; lastMealT = elapsed;
   try { saveSet('totalEaten', totalEaten); } catch (_) {}
   // Skin: pulsar rare drop
-  if (type === 'pulsar' && rng() < 0.005) unlockSkin('pulsar');
+  if (type === 'pulsar' && cosmeticRandom() < 0.005) unlockSkin('pulsar');
   // Skin: feast (100 bodies in one run)
-  if (totalEaten >= 100) unlockSkin('feast');
+  if (runEaten >= 100) unlockSkin('feast');
   return result;
 };
 
 // Hook into die() for near-miss feedback and stats
 const _origDie = die;
 die = function() {
+  if (state !== 'play') return;
+  settleScoreDust();
   totalRuns++;
   totalPlayTime += elapsed;
   submitScore(score);
@@ -5776,9 +6107,9 @@ die = function() {
   if (totalRuns >= 50) unlockSkin('veteran');
   // Near-miss feedback
   const nearMiss = computeNearMiss();
-  if (el2.overNearMiss && nearMiss) el2.overNearMiss.textContent = nearMiss;
+  if (el2.overNearMiss) el2.overNearMiss.textContent = nearMiss;
   // Fasting skin: survived 120s without eating (check before death)
-  if (elapsed >= 120) unlockSkin('fasting');
+  if (elapsed - lastMealT >= 120) unlockSkin('fasting');
   checkAchievements();
   checkSkinUnlocks();
   return _origDie.apply(this, arguments);
@@ -5787,16 +6118,26 @@ die = function() {
 // Hook into start() for rare windows
 const _origStart = start;
 start = function() {
-  checkRareWindow();
-  return _origStart.apply(this, arguments);
+  const seeded = seedOverride !== null || seedFromUrl() !== null;
+  for (const def of UPGRADE_DEFS) runUpgrades[def.key] = seeded ? 0 : upgradeLevel(def.key);
+  const result = _origStart.apply(this, arguments);
+  if (seeded) {
+    if (rng() < 0.25) { rareWindowActive = true; rareWindowT = 20; rareSpawnT = 5; }
+  } else checkRareWindow();
+  return result;
 };
 
 // Hook into update() for achievement checks
 const _origUpdate = update;
 update = function(dt) {
+  const playing = state === 'play';
   const result = _origUpdate.apply(this, arguments);
-  checkAchievements();
-  checkSkinUnlocks();
+  if (playing) settleScoreDust();
+  if (state === 'play') {
+    updateRareWindow(dt);
+    checkAchievements();
+    checkSkinUnlocks();
+  }
   return result;
 };
 
