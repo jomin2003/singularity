@@ -331,7 +331,11 @@ const el = {
 
 const show = (n) => n.classList.remove('hidden');
 const hide = (n) => n.classList.add('hidden');
-const fmt = (n) => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+const fmt = (n) => {
+  if (!isFinite(n)) return '---';
+  if (Math.abs(n) >= 1e21) return Number(n).toExponential(2);
+  return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+};
 
 /* ---------- persistence ---------- */
 // One versioned JSON blob. A corrupt, truncated or foreign-shaped save must
@@ -4501,7 +4505,7 @@ function pauseGame() {
   state = 'paused';
   panel = 'pause';
   commitBest();
-  if (el.pauseScore) el.pauseScore.textContent = 'SCORE ' + fmt(score) + '   BEST ' + fmt(best);
+  if (el.pauseScore) el.pauseScore.textContent = 'MASS ' + fmt(score) + ' BEST ' + fmt(best);
   show(el.pause); hide(el.settings);
   Snd.setDrone(false, 0);
 }
@@ -5929,15 +5933,46 @@ document.addEventListener('click', (e) => {
       status.textContent = left <= 0 ? 'Daily bonus used — back tomorrow.' : '';
     }
   }
+  function checkPendingReward() {
+    if (!ads || !ads.getPendingReward) return false;
+    const pendingId = ads.getPendingReward();
+    if (!pendingId) return false;
+    const applied = save.rewardId;
+    if (pendingId !== applied) {
+      earnStardust((ads.config.rewardAmount) || 25);
+      save.rewardId = pendingId;
+      try { saveSet('rewardId', pendingId); } catch (_) {}
+      ads.clearPendingReward();
+      return true;
+    }
+    ads.clearPendingReward();
+    return false;
+  }
+  checkPendingReward();
+
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!ads || ads.busy() || btn.disabled) return;
     btn.disabled = true;
     if (status) status.textContent = 'Loading ad…';
+    
+    const previousState = state;
+    if (state === 'play') pauseGame();
+    Snd.setDrone(false, 0);
+
     let earned = false;
     try { earned = await ads.watch(); } catch (_) { earned = false; }
+    
+    const recovered = checkPendingReward();
+    earned = earned || recovered;
+
+    if (previousState === 'play' && (panel === null || panel === 'pause')) {
+      resumeGame();
+    } else if (state !== 'dead') {
+      Snd.setDrone(true, combo);
+    }
+
     if (earned) {
-      earnStardust((ads.config.rewardAmount) || 25);
       renderObservatory();
       if (status) status.textContent = '+' + ((ads.config.rewardAmount) || 25) + ' stardust added.';
       toast('+' + ((ads.config.rewardAmount) || 25) + ' stardust', 1.8);

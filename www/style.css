@@ -186,11 +186,6 @@ html, body {
   flex-direction: column;
   align-items: flex-start;
   padding: var(--s-1) var(--s-2);
-  border-radius: var(--r-md);
-  background: var(--c-scrim);
-  border: 1px solid var(--c-panel-line);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
 }
 
 .hud-label {

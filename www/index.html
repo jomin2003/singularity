@@ -12,8 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=b23">
-<link rel="stylesheet" href="design.css?v=b23">
+<link rel="stylesheet" href="style.css?v=b22">
 </head>
 <body>
 <canvas id="game" aria-label="Singularity game field. Consume smaller bodies and avoid spiked hazards. Move with the selected touch controls or WASD and arrow keys.">Your browser needs canvas support to display the Singularity game field.</canvas>
@@ -21,19 +20,12 @@
 <div id="hud" class="layer hidden">
   <div class="hud-top">
     <div class="hud-block">
-      <div class="hud-label">SCORE</div>
+      <div class="hud-label">MASS</div>
       <div class="hud-value" id="hudScore">0</div>
-      <div id="chips"></div>
     </div>
-    <!-- Kept clear of the pause button: the old layout put BEST straight
-         underneath it and half the number was covered in every screenshot. -->
     <div class="hud-block right">
       <div class="hud-label">BEST</div>
       <div class="hud-value" id="hudBest">0</div>
-      <div class="hud-label dim" id="threatOut"></div>
-      <!-- Real-unit size of the hole. Growth is otherwise just a bigger
-           number and a wider camera; this is what makes it legible. -->
-      <div class="hud-label dim" id="scaleOut"></div>
     </div>
   <!-- Icons are the same inline-SVG set as the settings gear, same stroke
        weight, because text glyphs (&#10074;&#10074;, &#9834;) render with the
@@ -45,11 +37,7 @@
     </svg>
   </button>
   </div>
-  <div class="run-goal">
-    <div id="runGoalLabel" class="run-goal-label"></div>
-    <div class="run-goal-track" aria-hidden="true"><div id="runGoalFill"></div></div>
-    <div id="runMission" class="run-mission"></div>
-  </div>
+
   <div id="comboWrap">
     <div id="comboValue"></div>
     <div id="comboBar"></div>
@@ -71,132 +59,16 @@
   <div id="menuAurora" hidden aria-hidden="true"></div>
   <div id="menuCard">
     <div class="card-header">
-      <span class="title-kicker">A GRAVITY DIET</span>
-      <svg class="title-emblem" aria-hidden="true" focusable="false" width="44" height="44" viewBox="0 0 44 44">
-        <circle cx="22" cy="22" r="9" fill="#000"/>
-        <ellipse cx="22" cy="22" rx="17" ry="5.5" fill="none" stroke="#c65d32"
-                 stroke-width="2.2" transform="rotate(-16 22 22)"/>
-        <ellipse cx="22" cy="22" rx="20" ry="4" fill="none" stroke="#e8e1d2"
-                 opacity=".35" stroke-width="1.2" transform="rotate(8 22 22)"/>
-      </svg>
       <h1 class="title">SINGULARITY</h1>
       <div class="subtitle">Consume. Grow. Survive.</div>
-      <!-- Gear stays inside the card header, away from score/best overlap -->
-      <button id="menuSettingsBtn" class="gear-btn" aria-label="Settings" title="Settings">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="12" cy="12" r="3.4" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          <path d="M19.4 13a7.9 7.9 0 0 0 0-2l2-1.5-2-3.4-2.3 1a8 8 0 0 0-1.7-1L15 3.5h-4l-.4 2.6a8 8 0 0 0-1.7 1l-2.3-1-2 3.4L6.6 11a7.9 7.9 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a8 8 0 0 0 1.7 1l.4 2.6h4l.4-2.6a8 8 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5Z"
-                fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-        </svg>
-      </button>
     </div>
 
-    <p class="home-guide">Guide your black hole. Consume smaller bodies. Escape the spikes.</p>
-    <button id="playBtn" class="btn cta">PLAY</button>
-    <button id="dailyBtn" class="btn ghost wide">DAILY RUN</button>
+    <button id="playBtn" class="btn cta" style="border-radius: 999px;">TAP TO BEGIN</button>
 
-    <details id="runSetup" class="home-details">
-      <summary>Run setup &amp; missions</summary>
-      <div class="home-details-body">
-    <div id="howto">
-      <div class="how-row">
-        <span class="how-ico eat" aria-hidden="true">
-          <svg viewBox="0 0 16 16" focusable="false">
-            <circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".6"/>
-            <circle cx="8" cy="8" r="2.4" fill="currentColor"/>
-          </svg>
-        </span>
-        <span><b>EAT</b> &middot; smooth ones, smaller than you</span>
-      </div>
-      <div class="how-row">
-        <span class="how-ico grow" aria-hidden="true">
-          <svg viewBox="0 0 16 16" focusable="false">
-            <path d="M8 13.5V3M8 3 4.2 6.8M8 3l3.8 3.8" fill="none" stroke="currentColor"
-                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </span>
-        <span><b>GROW</b> &mdash; every meal widens your well</span>
-      </div>
-      <div class="how-row">
-        <span class="how-ico flee" aria-hidden="true">
-          <svg viewBox="0 0 16 16" focusable="false">
-            <path d="M8 1.8 15 14H1L8 1.8Z" fill="none" stroke="currentColor"
-                  stroke-width="1.4" stroke-linejoin="round"/>
-            <path d="M8 6.4v3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            <circle cx="8" cy="11.7" r=".95" fill="currentColor"/>
-          </svg>
-        </span>
-        <span><b>FLEE</b> the spiked ones &mdash; they eat you</span>
-      </div>
-    </div>
+    <p class="home-guide" style="text-align: center; margin-top: 10px;">Drag to move &nbsp;&middot;&nbsp; swallow what's smaller &nbsp;&middot;&nbsp; flee what isn't</p>
 
-    <!-- Control picker lives on the menu, not two taps deep in pause-settings. -->
-    <div class="section-label">CONTROLS</div>
-    <div id="ctrlPick" class="segmented" role="group" aria-label="Control scheme">
-      <button type="button" data-ctrl="joystick">STICK</button>
-      <button type="button" data-ctrl="follow">FOLLOW</button>
-      <button type="button" data-ctrl="relative">DRAG</button>
-    </div>
-    <div class="hint dim" id="ctrlHint"></div>
-
-    <!-- Pre-run variant pick: starting rules, never stat unlocks. A second
-         segmented control reusing the same sliding-pill pattern. -->
-    <div class="section-label">FLIGHT PROFILE</div>
-    <div id="varPick" class="segmented cols4" role="group" aria-label="Run variant">
-      <button type="button" data-var="normal">STANDARD</button>
-      <button type="button" data-var="titan">TITAN</button>
-      <button type="button" data-var="wisp">WISP</button>
-      <button type="button" data-var="monk">MONK</button>
-    </div>
-    <div class="hint dim" id="varHint"></div>
-
-    <!-- Parametric missions, three at a time. Rendered by renderMissions(). -->
-    <div id="missions" aria-label="Missions"></div>
-
-      </div>
-    </details>
-
-    <div class="menu-foot">
-      <div class="foot-chip">
-        <span class="foot-ico" aria-hidden="true">
-          <svg viewBox="0 0 16 16" focusable="false">
-            <path d="M4.6 1.8h6.8v3.6a3.4 3.4 0 0 1-6.8 0V1.8Z" fill="none" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M4.6 3H2.6v1.4a2 2 0 0 0 2 2M11.4 3h2v1.4a2 2 0 0 1-2 2"
-                  fill="none" stroke="currentColor" stroke-width="1.3"/>
-            <path d="M8 9v2.6M5.8 14h4.4M6.6 12.2h2.8" fill="none" stroke="currentColor"
-                  stroke-width="1.3" stroke-linecap="round"/>
-          </svg>
-        </span>
-        <span id="menuBest"></span>
-      </div>
-      <div id="histStrip"></div>
-      <div class="hint dim" id="buildTag"></div>
-
-    <!-- Meta-progression buttons row (part of the footer) -->
-    <div class="menu-meta-row">
-      <button id="menuObservatoryBtn" class="meta-btn" aria-label="Observatory" title="Observatory">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="12" cy="12" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
-          <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/>
-          <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-        </svg>
-        <span>Observatory</span>
-      </button>
-      <button id="menuFieldGuideBtn" class="meta-btn" aria-label="Field Guide" title="Field Guide">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M12 4v16M4 8a8 8 0 0 1 16 0M4 8v12a8 8 0 0 0 16 0V8" fill="none" stroke="currentColor" stroke-width="1.4"/>
-          <circle cx="12" cy="14" r="3" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".6"/>
-        </svg>
-        <span>Field Guide</span>
-      </button>
-      <button id="menuLeaderboardBtn" class="meta-btn" aria-label="Leaderboard" title="Leaderboard">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z" fill="none" stroke="currentColor" stroke-width="1.4"/>
-          <path d="M5 6H3v2a3 3 0 0 0 3 3M19 6h2v2a3 3 0 0 1-3 3" fill="none" stroke="currentColor" stroke-width="1.2"/>
-        </svg>
-        <span>Leaderboard</span>
-      </button>
-    </div>
+    <div class="menu-foot" style="border-top: none;">
+      <div class="hint dim">BEST <span id="menuBest"></span></div>
     </div>
   </div>
 </div>
@@ -222,7 +94,7 @@
   <div class="glass-card">
     <div class="glass-title">PAUSED</div>
     <div class="hint dim" id="pauseScore"></div>
-    <button id="resumeBtn" class="btn">RESUME</button>
+    <button id="resumeBtn" class="btn cta" style="border-radius: 999px;">PLAY</button>
     <button id="restartBtn" class="btn ghost">RESTART</button>
     <button id="settingsBtn" class="btn ghost">SETTINGS</button>
     <button id="homeBtn" class="btn ghost">HOME</button>
@@ -358,8 +230,23 @@
 <div id="toasts"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="ads-config.js?v=b21"></script>
-<script src="rewarded-ads.js?v=b21"></script>
-<script src="game.js?v=b21"></script>
+<script src="ads-config.js?v=b22"></script>
+<script src="rewarded-ads.js?v=b22"></script>
+<script src="game.js?v=b22"></script>
 </body>
+<div id="graveyard" style="display:none">
+  <div id="chips"></div>
+  <div id="threatOut"></div>
+  <div id="scaleOut"></div>
+  <div class="run-goal"><div id="runGoalLabel"></div><div id="runGoalFill"></div><div id="runMission"></div></div>
+  <button id="menuSettingsBtn"></button>
+  <button id="dailyBtn"></button>
+  <details id="runSetup"></details>
+  <div id="ctrlPick"><button data-ctrl="joystick"></button><button data-ctrl="follow"></button><button data-ctrl="relative"></button></div>
+  <div id="varPick"><button data-var="normal"></button><button data-var="titan"></button><button data-var="wisp"></button><button data-var="monk"></button></div>
+  <div id="ctrlHint"></div><div id="varHint"></div>
+  <div id="missions"></div>
+  <div id="histStrip"></div><div id="buildTag"></div>
+  <button id="menuObservatoryBtn"></button><button id="menuFieldGuideBtn"></button><button id="menuLeaderboardBtn"></button>
+</div>
 </html>

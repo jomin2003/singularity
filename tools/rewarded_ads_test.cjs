@@ -192,5 +192,88 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     assert.equal(await failed.api.watch(), false);
     assert.equal(await failed.api.privacy(), false);
   });
+  await test('caller integration with game.js', async () => {
+    let JSDOM;
+    try { ({ JSDOM } = require('jsdom')); } catch (e) { return; }
+    
+    const configSource = `const REWARDED_ADS_CONFIG = { enabled: true, testMode: true };`;
+    const source = fs.readFileSync(path.join(root, 'www/rewarded-ads.js'), 'utf8');
+    const exporter = `
+      window.__probe = {
+        getState: () => typeof state !== 'undefined' ? state : null,
+        setState: (s) => { state = s; },
+        getStardust: () => typeof stardust !== 'undefined' ? stardust : 0,
+        setStardust: (v) => { stardust = v; },
+        setDrone: (b) => { if (typeof Snd !== 'undefined') Snd.setDrone = function(v) { window._droneActive = v; }; }
+      };
+    `;
+    const inlined = fs.readFileSync(path.join(root, 'www/index.html'), 'utf8')
+      .replace(/<script\s+src="game\.js[^"]*"><\/script>/, 
+      '<script>\n' + configSource + '\n' + source + '\n' + fs.readFileSync(path.join(root, 'www/game.js'), 'utf8') + '\n' + exporter + '\n</script>');
+    
+    let watchResolver = null;
+    const dom = new JSDOM(inlined, {
+      url: 'http://localhost/',
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        window.Capacitor = {
+          isNativePlatform: () => true, getPlatform: () => 'android', isPluginAvailable: () => true,
+          registerPlugin: () => ({
+            requestConsentInfo: async () => ({ status: 'OBTAINED', canRequestAds: true }),
+            initialize: async () => {}, 
+            addListener: async (n, f) => { window._adListeners = window._adListeners || {}; window._adListeners[n] = f; return { remove: async () => {} }; },
+            prepareRewardVideoAd: async () => {},
+            showRewardVideoAd: async () => new Promise(r => { watchResolver = r; })
+          })
+        };
+        const nop = () => {};
+        window.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, { get: () => nop });
+        window.AudioContext = function() { return { createGain: () => ({ gain: { setValueAtTime: nop, setTargetAtTime: nop } }), createOscillator: () => ({ start: nop, stop: nop, frequency: {setValueAtTime: nop} }), createBiquadFilter: () => ({ frequency: {setValueAtTime: nop}, Q: {setValueAtTime: nop}, gain: {setValueAtTime: nop} }), createBuffer: () => ({}), createBufferSource: () => ({ playbackRate: {setValueAtTime: nop}, start: nop, stop: nop }), destination: {}, resume: nop }; };
+        window.requestAnimationFrame = () => 0;
+        window.cancelAnimationFrame = nop;
+      }
+    });
+
+    await tick(); await tick();
+    
+    const w = dom.window;
+    if (!w.__probe) return;
+    w.__probe.setState('play');
+    w._droneActive = true;
+    w.__probe.setDrone();
+    const initialStardust = w.__probe.getStardust();
+    
+    const btn = w.document.getElementById('rewardAdBtn');
+    for (let i = 0; i < 50; i++) {
+      if (!btn.disabled) break;
+      await new Promise(r => setTimeout(r, 10));
+    }
+    assert.equal(btn.disabled, false, 'ad button should become enabled');
+    
+    btn.click();
+    await tick();
+    
+    assert.equal(w.__probe.getState(), 'paused', 'gameplay pauses while ad is active');
+    assert.equal(w._droneActive, false, 'audio pauses while ad is active');
+    
+    for (let i = 0; i < 50; i++) {
+      if (watchResolver) break;
+      await new Promise(r => setTimeout(r, 10));
+    }
+    assert.ok(watchResolver, 'showRewardVideoAd should have been called');
+    
+    w._adListeners['onRewardedVideoAdReward']({});
+    w._adListeners['onRewardedVideoAdDismissed']({});
+    watchResolver();
+    
+    for (let i = 0; i < 50; i++) {
+      if (w.__probe.getState() === 'play') break;
+      await new Promise(r => setTimeout(r, 10));
+    }
+    
+    assert.equal(w.__probe.getStardust(), initialStardust + 25, 'caller grants stardust on completion');
+    assert.equal(w.__probe.getState(), 'play', 'gameplay resumes on close');
+    assert.equal(w._droneActive, true, 'audio resumes on close');
+  });
   console.log(`Rewarded ads: ${passed} tests passed.`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

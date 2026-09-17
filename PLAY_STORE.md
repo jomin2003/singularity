@@ -192,13 +192,12 @@ Work through each of these in the left sidebar — they gate the release:
   should land on the lowest rating.
 - **Target audience** — **not** child-directed. The app collects nothing.
 - **Data safety** — this matters most. Declare:
-  - **No data collected**
-  - **No data shared with third parties**
-  - Encryption: N/A (nothing transmitted)
+  - You must declare that data is collected and shared by the Google AdMob SDK, and answer the specific data type questions according to AdMob's current requirements for your configuration.
+  - Encryption: Data is encrypted in transit.
   - No independent security review
   - Link the privacy policy URL from step 5.
 - **App access** — all functionality is available with no login or special access.
-- **Ads** — the app contains no ads.
+- **Ads** — the app contains ads (rewarded ads).
 
 ---
 

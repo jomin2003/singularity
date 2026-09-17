@@ -128,21 +128,33 @@ test('fragments of disrupted bodies carry the pair teleport fields', ({ q }) => 
     'fragments inherit pair fields so consume() can never read undefined');
 });
 
-test('pulsar shield lasts long enough to be hit, and absorbs the impact', ({ q }) => {
+test('pulsar shield lifetime, impact absorption and pause behaviour', ({ q }) => {
   q(`start(); state='play'; pauseOnEvent=false;
      window.pred = { x: p.x - p.r * 3, y: p.y, vx: 0, vy: 0, r: p.r,
        body: { type: 'asteroid', variant: 0, spin: 0 }, spin: 0, phase: 0 };
-     ents = [pred]; shield = 3;`);
-  const areaBefore = q('p.area');
-  for (let i = 0; i < 90; i++) q('update(1/60)');   // 1.5 s: old shield expired at ~1.67 s
-  assert.ok(q('shield') === 0 || q('p.area') === areaBefore || q('invuln') >= 0,
-    'run still consistent');
-  // Direct impact with a fresh shield: no mass lost, shield consumed.
-  q(`shield = 3; invuln = 0;`);
-  const a2 = q('p.area');
+     ents = [pred]; shield = 3; invuln = 0;`);
+  
+  // Shield decays at 0.6 per simulation second. shield=3 lasts exactly 5.0 seconds.
+  q(`state='paused'`);
+  q('update(1/60)');
+  assert.equal(q('shield'), 3, 'paused simulation does not consume shield');
+  
+  q(`state='play'`);
+  for (let i = 0; i < 4.9 * 60; i++) q('update(1/60)');
+  assert.ok(q('shield') > 0, 'shield remains active just before expiry');
+  
+  const m1 = q('p.mass');
   q('hurt(ents[0])');
-  assert.equal(q('p.area'), a2, 'shielded impact costs no mass');
-  assert.equal(q('shield'), 0, 'shield is consumed by the hit');
+  assert.equal(q('p.mass'), m1, 'protected impact costs no mass');
+  assert.equal(q('shield'), 0, 'shield is completely consumed by a protected hit');
+  
+  q(`shield = 3; invuln = 0;`);
+  for (let i = 0; i < 5.1 * 60; i++) q('update(1/60)');
+  assert.equal(q('shield'), 0, 'shield naturally expires exactly after intended duration');
+  
+  const m2 = q('p.mass');
+  q('hurt(ents[0])');
+  assert.ok(q('p.mass') < m2, 'hit after shield expiry causes mass loss');
 });
 
 test('a star landing on the combo milestone still triggers the shockwave pick', ({ q }) => {

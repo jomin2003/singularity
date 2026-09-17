@@ -48,6 +48,9 @@ jobs:
           node tools/design_test.cjs
           node tools/rewarded_ads_test.cjs
 
+      - name: Verify asset versioning
+        run: python3 tools/sync_build.py --check
+
       # MUST stay before the Gradle step -- see build-aab.yml for why
       # (it recreates gitignored-but-required directories).
       - name: Sync web assets into the Android project

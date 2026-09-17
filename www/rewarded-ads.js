@@ -109,6 +109,7 @@
           const value = ledger();
           if (value.count >= config.dailyLimit) return;
           value.count++;
+          value.pendingRewardId = Date.now().toString(36) + Math.random().toString(36).slice(2);
           w.localStorage.setItem(KEY, JSON.stringify(value));
           earned = true;
         } catch (_) { /* No persisted cap, no reward. */ }
@@ -146,5 +147,20 @@
     } catch (_) { return false; }
     finally { locked = false; }
   }
-  w.RewardedAds = Object.freeze({ available, busy: () => locked, remaining, watch, privacy, config });
+  function getPendingReward() {
+    try {
+      const value = ledger();
+      return value.pendingRewardId || null;
+    } catch (_) { return null; }
+  }
+  function clearPendingReward() {
+    try {
+      const value = ledger();
+      if (value.pendingRewardId) {
+        delete value.pendingRewardId;
+        w.localStorage.setItem(KEY, JSON.stringify(value));
+      }
+    } catch (_) {}
+  }
+  w.RewardedAds = Object.freeze({ available, busy: () => locked, remaining, watch, privacy, config, getPendingReward, clearPendingReward });
 })(window);

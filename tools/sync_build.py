@@ -14,10 +14,13 @@ Usage:
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
 
 ROOT = Path(__file__).resolve().parent.parent
 GAME = ROOT / "www" / "game.js"
 HTML = ROOT / "www" / "index.html"
+
+ASSETS = ["style.css", "design.css", "ads-config.js", "rewarded-ads.js", "game.js"]
 
 
 def build_id():
@@ -26,18 +29,39 @@ def build_id():
         sys.exit("FATAL: BUILD_ID not found in www/game.js")
     return m.group(1)
 
+def update_url(url_str, bid):
+    parsed = urlparse(url_str)
+    qs = parse_qsl(parsed.query, keep_blank_values=True)
+    qs = [(k, v) for k, v in qs if k != 'v']
+    qs.insert(0, ('v', bid))
+    new_query = urlencode(qs)
+    return urlunparse(parsed._replace(query=new_query))
+
 
 def main():
     check = "--check" in sys.argv
     bid = build_id()
     text = HTML.read_text(encoding="utf-8")
 
-    # Only the two game-asset queries are stamped; nothing else carries ?v=.
-    updated = re.sub(
-        r"((?:style\.css|game\.js))\?v=[^\s\"']+",
-        r"\g<1>?v=" + bid,
-        text,
-    )
+    found_assets = set()
+
+    def replacer(match):
+        attr = match.group(1)
+        quote = match.group(2)
+        url_str = match.group(3)
+
+        parsed = urlparse(url_str)
+        if parsed.path in ASSETS:
+            found_assets.add(parsed.path)
+            new_url = update_url(url_str, bid)
+            return f"{attr}={quote}{new_url}{quote}"
+        return match.group(0)
+
+    updated = re.sub(r'(href|src)=([\'"])([^\'"]+)\2', replacer, text)
+
+    missing = set(ASSETS) - found_assets
+    if missing:
+        sys.exit(f"FATAL: Missing expected asset references: {', '.join(missing)}")
 
     if updated == text:
         print("index.html already stamped with BUILD_ID " + bid)

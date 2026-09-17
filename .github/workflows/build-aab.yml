@@ -37,6 +37,9 @@ jobs:
           node tools/design_test.cjs
           node tools/rewarded_ads_test.cjs
 
+      - name: Verify asset versioning
+        run: python3 tools/sync_build.py --check
+
       # MUST stay before the Gradle step. Three things it produces are
       # gitignored but required for the build to configure at all:
       #   1. app/src/main/assets/public            -- the actual game
