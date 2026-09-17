@@ -67,12 +67,19 @@
 <div id="keysLegend" class="hidden">WASD / ARROWS &nbsp;&middot;&nbsp; SPACE START &nbsp;&middot;&nbsp; P PAUSE &nbsp;&middot;&nbsp; M MUTE</div>
 
 <div id="menu" class="layer center">
-  <!-- Aurora wash, behind the glass. Pure CSS gradients, no image assets. -->
-  <div id="menuAurora" aria-hidden="true"></div>
-
+  <!-- Inert compatibility hook for the existing structural contract. -->
+  <div id="menuAurora" hidden aria-hidden="true"></div>
   <div id="menuCard">
     <div class="card-header">
-      <div class="title">SINGULARITY</div>
+      <span class="title-kicker">A GRAVITY DIET</span>
+      <svg class="title-emblem" aria-hidden="true" focusable="false" width="44" height="44" viewBox="0 0 44 44">
+        <circle cx="22" cy="22" r="9" fill="#000"/>
+        <ellipse cx="22" cy="22" rx="17" ry="5.5" fill="none" stroke="#c65d32"
+                 stroke-width="2.2" transform="rotate(-16 22 22)"/>
+        <ellipse cx="22" cy="22" rx="20" ry="4" fill="none" stroke="#e8e1d2"
+                 opacity=".35" stroke-width="1.2" transform="rotate(8 22 22)"/>
+      </svg>
+      <h1 class="title">SINGULARITY</h1>
       <div class="subtitle">Consume. Grow. Survive.</div>
       <!-- Gear stays inside the card header, away from score/best overlap -->
       <button id="menuSettingsBtn" class="gear-btn" aria-label="Settings" title="Settings">
@@ -334,7 +341,7 @@
   <div class="glass-row"><span class="glass-row-key">Runs</span><span class="glass-row-val" id="obsRuns">0</span></div>
   <div class="glass-row"><span class="glass-row-key">Total Eaten</span><span class="glass-row-val" id="obsEaten">0</span></div>
   <div class="glass-row"><span class="glass-row-key">Time Played</span><span class="glass-row-val" id="obsTime">0:00</span></div>
-  <div style="width:100%;margin:8px 0;font-size:var(--t-label);color:rgba(150,185,215,.55);text-align:center;">UPGRADES</div>
+  <div class="section-label">UPGRADES</div>
   <div id="obsUpgrades"></div>
   <section id="rewardOffer" class="reward-offer hidden" aria-label="Optional stardust bonus">
     <p>Optional: watch an ad to earn 25 stardust for upgrades. You can also earn stardust by playing.</p>

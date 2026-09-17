@@ -161,9 +161,9 @@ let p, ents, parts, waves, shots, slugs, floats, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
-let pendingWave = 0, shotT = 0;   // AGN feedback wind-up timer (0 = none)
+let pendingWave = 0, shotT = 0;   // shockwave wind-up timer (0 = none)
 let panel = null;   // null | 'pause' | 'settings' | 'event'
-let camRoll = 0;    // proximity tilt wobble near big bodies
+let camRoll = 0;    // Kerr-style frame-dragging wobble near big bodies
 let shield = 0;     // one-hit protection from eating a pulsar
 let kilonovaT = 0;  // countdown to the next neutron-star merger event
 
@@ -189,7 +189,7 @@ let lastBeatT = -99;    // last heartbeat haptic, for the low-mass warning
 let sparseOn = false;   // low-mass music strip-back currently engaged
 let greedT = 0;         // greed-gate window remaining
 let greedE = null;      // the body the greed gate applies to
-let pickT = 0;          // AGN feedback steering-pick window remaining
+let pickT = 0;          // shockwave steering-pick window remaining
 let pickHold = null;    // accumulated steering dwell per lane
 let spinA = 0;          // Kerr spin parameter a/M, 0 (Schwarzschild) .. 0.998
 let kilonovaWarned = false;  // kilonova telegraph already fired this cycle
@@ -2288,7 +2288,7 @@ function consume(e, idx) {
     }
     if (era > runStats.era) runStats.era = era;
   }
-  // Combo heat pops on every AGN feedback.
+  // Combo heat pops on every shockwave.
   if (combo > 0 && combo % WAVE_EVERY() === 0) comboPopT = 0.45;
   buzz(8);
 
@@ -2345,7 +2345,7 @@ function consume(e, idx) {
     toast('ARK CONSUMED +' + fmt(gained), 1.8);
     burstFx(e.x, e.y, 26, e.r, 1.2, entHue(e.r / p.r));
   }
-  // The AGN feedback cadence is the no-pause choice moment, and it belongs to
+  // The shockwave cadence is the no-pause choice moment, and it belongs to
   // the COMBO, not to the body: a star or pulsar landing on the 20th used to
   // swallow the milestone entirely.
   if (combo > 0 && combo % WAVE_EVERY() === 0) startPick();
@@ -2358,6 +2358,12 @@ function supernova(x, y, r) {
   const R = r * 13;
   for (let i = ents.length - 1; i >= 0; i--) {
     const e = ents[i];
+    if (e.mass === undefined) {
+      let mult = 1;
+      if (e.type === 'whiteDwarf') mult = 4;
+      else if (e.type === 'brownDwarf') mult = 2;
+      e.mass = ((e.r * e.r) / (P0 * P0)) * M0 * mult;
+    }
     const dx = e.x - x, dy = e.y - y;
     if (dx * dx + dy * dy < R * R && !edibleAt(e)) {
       score += Math.round(e.r * 0.5 * comboMult());
@@ -2424,7 +2430,7 @@ function hurt(e) {
   if (prof.msg) toast(prof.msg, 1.6);
 }
 
-function AGN feedback() {
+function shockwave() {
   // Jets strengthen with spin (Blandford–Znajek): a spun-up hole clears
   // a wider field, so angular momentum pays out visibly.
   const R = p.r * 13 * (1 + spinA * 0.3);
@@ -2611,7 +2617,7 @@ function update(dt) {
 
   // Low-mass warning: evaporation death used to arrive untelegraphed.
   nearDeath = state === 'play'
-    ? clamp(1 - (p.mass - (DEATH_AREA / (P0*P0)) * M0) / ((DEATH_AREA / (P0*P0)) * M0 * 2.4), 0, 1)
+    ? clamp(1 - (p.mass - (DEATH_AREA / (P0*P0)) * M0) / (DEATH_AREA * 2.4), 0, 1)
     : 0;
 
   // Shockwave steering pick: dwell steers the choice, timeout takes SHOCK.
@@ -2784,7 +2790,7 @@ function update(dt) {
     p.vx *= bleed;
     p.vy *= bleed;
 
-    // Ceiling. Loose enough that collisions and AGN feedbacks still land a punch
+    // Ceiling. Loose enough that collisions and shockwaves still land a punch
     // (they inject velocity directly), tight enough that nothing runs away.
     const sp = Math.hypot(p.vx, p.vy);
     const cap = maxV * IMPULSE_CAP;
@@ -2813,7 +2819,7 @@ function update(dt) {
     p.r = p.mass * RS_PER_MASS;
 
     // Combo fizzle: a hot streak dying quietly still drops the mix.
-    // Frozen while steering a AGN feedback pick -- choosing must not cost you.
+    // Frozen while steering a shockwave pick -- choosing must not cost you.
     if (comboT > 0 && pickT <= 0) {
       comboT -= dt;
       if (comboT <= 0) {
@@ -2890,7 +2896,7 @@ function update(dt) {
         addPart({ x: p.x + Math.cos(a) * p.r * 6, y: p.y + Math.sin(a) * p.r * 6,
                   vx: 0, vy: 0, life: 0, max: 0.3, r: 2, hue: 190, mode: 0 });
       }
-      if (pendingWave <= 0) { pendingWave = 0; AGN feedback(); }
+      if (pendingWave <= 0) { pendingWave = 0; shockwave(); }
     }
     if (p.mass < (DEATH_AREA / (P0*P0)) * M0) die();
   }
@@ -2931,12 +2937,6 @@ function updateEnts(dt) {
 
   for (let i = ents.length - 1; i >= 0; i--) {
     const e = ents[i];
-    if (e.mass === undefined) {
-      let mult = 1;
-      if (e.type === 'whiteDwarf') mult = 4;
-      else if (e.type === 'brownDwarf') mult = 2;
-      e.mass = ((e.r * e.r) / (P0 * P0)) * M0 * mult;
-    }
 
     // Orbital motion: planets track their parent star. If the parent has been
     // eaten or despawned, they are flung free with tangential velocity.
@@ -3047,7 +3047,7 @@ function updateEnts(dt) {
       }
     }
 
-    // Pulsars broadcast periodic gravity AGN feedbacks -- the spin of a
+    // Pulsars broadcast periodic gravity shockwaves -- the spin of a
     // neutron star pushing the field outward.
     if (e.body && e.body.type === 'pulsar' && state === 'play') {
       e.pulseT -= dt;
@@ -3287,7 +3287,7 @@ function render() {
 
   drawDangerArrows();                     // screen space
   drawFloats();                           // screen space
-  drawPick();                             // AGN feedback choice lanes
+  drawPick();                             // shockwave choice lanes
   drawJoystick();                         // joystick is screen-space, not world
 
   ctx.fillStyle = vignette;
@@ -3579,7 +3579,7 @@ function drawEnts() {
       // Two bright concentric arcs do that better than four faint ones, and
       // they are still recognisably the same Einstein-ring language the
       // player already knows from their own shadow.
-      const bands = [EINSTEIN_BANDS[0], EINSTEIN_BANDS[2]];
+      const bands = EINSTEIN_BANDS;
       ctx.globalAlpha = 0.78;
       for (let i = 0; i < bands.length; i++) {
         const b = bands[i];
@@ -3847,29 +3847,10 @@ function drawSlugs() {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-// ============================================================
-// THE BLACK HOLE
-//
-// Everything below is drawn with continuous gradients. The previous version
-// stroked thirty separate arc segments for the photon ring and another thirty
-// for the lensed disk, which stacked into a ring of hard-edged blocks and
-// read as a brass gear or a clock face rather than as gas falling into a
-// hole -- and its "near side" was a flat metallic-looking bar.
-//
-// The structure now is the one every real image shows (M87*, Sgr A*, and the
-// Gargantua render everyone has seen):
-//   * a perfectly black shadow
-//   * a thin, brilliant photon ring hugging its edge
-//   * a thin accretion disk seen almost edge-on, crossing in FRONT of the
-//     shadow, hottest along its centre line and cooling outward
-//   * the far side of that same disk lensed up over the top and down under
-//     the bottom, because gravity bends its light around the hole
-//   * Doppler beaming, so the limb rotating toward the camera is far
-//     brighter than the one receding -- this is what makes a real
-//     black-hole image lopsided instead of symmetric
-// ============================================================
-const DISK_FLAT = 0.115;   // sin(inclination): how edge-on the disk sits
-const DISK_OUT = 3.1;      // outer disk radius, in shadow radii
+/* ---------- Black hole: tilted accretion disk and capture shadow ---------- */
+const DISK_FLAT = 0.24;
+const DISK_OUT = 2.65;
+const DISK_TILT = -0.28;
 
 // One side of the disk is always brighter. Which one is set by the fixed
 // scene light direction so it stays consistent with every other body.
@@ -3877,18 +3858,11 @@ function beamSide() {
   return Math.cos(Math.atan2(LIGHT.y, LIGHT.x)) >= 0 ? 1 : -1;
 }
 
-// A thin, near-edge-on accretion disk. Projected through scale(1, DISK_FLAT)
-// a radial gradient becomes an elliptical band, which is exactly the shape
-// of a real disk seen from just above its plane -- and because the gradient
-// is continuous there is no segmentation anywhere in it.
-//
-// One subtlety: a single projected circle has a HARD top and bottom edge,
-// because the radial gradient is still ~85% opaque where the ellipse clip
-// slices through it. A real disk fades vertically. So we stack a few
-// ellipses of decreasing flatness at partial strength; their union ramps
-// the opacity down through the vertical limb instead of stepping off a
-// cliff, which is what stops the disk reading as a flat metallic bar.
-const DISK_LAYERS = [1.00, 0.72, 0.44];
+// A tilted, moderately open disk. Flat enough to read as a disk seen from a
+// little above its plane, tilted so the composition is asymmetric like the
+// game's indie cover art, and clipped to a crescent so the foreground gas
+// crosses in front of the shadow while the shadow itself stays pure black.
+const DISK_LAYERS = [1.00, 0.62, 0.34];
 function drawDisk(r, beam, cx, cy) {
   const R = r * DISK_OUT;
   const ox = cx === undefined ? p.x : cx;
@@ -3897,60 +3871,60 @@ function drawDisk(r, beam, cx, cy) {
 
   ctx.save();
   ctx.translate(ox, oy);
+  ctx.rotate(DISK_TILT);
+  // The capture shadow remains unpainted; only the foreground crescent emits.
+  ctx.beginPath();
+  ctx.rect(-R * 1.5, -R, R * 3, R * 2);
+  ctx.arc(0, 0, r * 0.94, 0, TAU, true);
+  ctx.clip();
   ctx.globalCompositeOperation = 'lighter';
 
-  const ISCO = r * 1.155;
-  
   for (const flat of DISK_LAYERS) {
     ctx.save();
     ctx.scale(1, DISK_FLAT * flat);
 
-    // Redshifted temperature gradient starting at ISCO
-    const rg = ctx.createRadialGradient(0, 0, ISCO, 0, 0, R);
-    rg.addColorStop(0.00, 'rgba(255,210,180,' + (0.90 * share).toFixed(3) + ')'); // Redshifted inner
-    rg.addColorStop(0.14, 'rgba(255,190,140,' + (0.84 * share).toFixed(3) + ')');
-    rg.addColorStop(0.36, 'rgba(255,160,90,' + (0.56 * share).toFixed(3) + ')');
-    rg.addColorStop(0.62, 'rgba(255,120,50,' + (0.28 * share).toFixed(3) + ')');
-    rg.addColorStop(0.85, 'rgba(255,80,20,' + (0.11 * share).toFixed(3) + ')');
-    rg.addColorStop(1.00, 'rgba(255,50,10,0)');
+    // Temperature: white-hot near the hole, cooling outward to deep orange.
+    const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+    rg.addColorStop(0.00, 'rgba(255,255,255,' + (0.90 * share).toFixed(3) + ')');
+    rg.addColorStop(0.14, 'rgba(255,252,242,' + (0.84 * share).toFixed(3) + ')');
+    rg.addColorStop(0.36, 'rgba(255,232,190,' + (0.56 * share).toFixed(3) + ')');
+    rg.addColorStop(0.62, 'rgba(255,192,118,' + (0.28 * share).toFixed(3) + ')');
+    rg.addColorStop(0.85, 'rgba(255,150,72,' + (0.11 * share).toFixed(3) + ')');
+    rg.addColorStop(1.00, 'rgba(255,120,45,0)');
     ctx.fillStyle = rg;
-    
-    // Gap inside ISCO
-    ctx.beginPath(); 
-    ctx.arc(0, 0, R, 0, TAU); 
-    ctx.arc(0, 0, ISCO, 0, TAU, true); 
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.fill();
     ctx.restore();
   }
 
-  // Proper Doppler Beaming (δ⁴) using a linear gradient across the disk
+  // The approaching gas is hotter and brighter, but emission must still
+  // fade to zero at the disk edge rather than outlining a solid ellipse.
   ctx.save();
   ctx.scale(1, DISK_FLAT);
-  
-  const lg = ctx.createLinearGradient(-R * beam, 0, R * beam, 0); // beam is 1 or -1
-  // Calculate delta^4 stops from ISCO out
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
-    const rad = ISCO + (R - ISCO) * (1 - Math.abs(2 * t - 1)); // rough approximation of radius across the line
-    const beta = 0.5 / Math.sqrt(Math.max(1, rad / ISCO));
-    const gam = 1 / Math.sqrt(1 - beta * beta);
-    const cosT = 1 - 2 * t; 
-    const delta = 1 / (gam * (1 - Math.abs(beam) * beta * cosT)); // beam is direction
-    const b = Math.pow(delta, 4);
-    
-    // Normalize roughly so peak is around 1 (max delta^4 is ~9.0 at ISCO approaching limb)
-    const normalizedB = Math.min(1, b / 9.0);
-    lg.addColorStop(t, 'rgba(255,255,255,' + (normalizedB * 0.7).toFixed(3) + ')');
-  }
-  
-  ctx.fillStyle = lg;
-  ctx.globalCompositeOperation = 'lighter'; // Only brighten where disk exists
-  ctx.beginPath(); 
-  ctx.arc(0, 0, R, 0, TAU); 
-  ctx.arc(0, 0, ISCO, 0, TAU, true); 
-  ctx.fill();
+  const bx = (beam > 0 ? 1 : -1) * R * 0.35;
+  const br = R * 0.65;
+  const dg = ctx.createRadialGradient(bx, 0, 0, bx, 0, br);
+  dg.addColorStop(0.00, 'rgba(255,250,237,0.55)');
+  dg.addColorStop(0.30, 'rgba(255,237,209,0.38)');
+  dg.addColorStop(0.70, 'rgba(255,204,156,0.12)');
+  dg.addColorStop(1.00, 'rgba(255,175,112,0)');
+  ctx.fillStyle = dg;
+  ctx.beginPath(); ctx.arc(bx, 0, br, 0, TAU); ctx.fill();
   ctx.restore();
 
+  ctx.save();
+  ctx.scale(1, DISK_FLAT);
+  ctx.lineCap = 'round';
+  const drift = motion ? elapsed * 0.10 : 0;
+  for (let i = 0; i < 5; i++) {
+    const radius = r * (1.35 + i * 0.23);
+    const phase = i * 0.61 + drift;
+    ctx.strokeStyle = i % 2 ? 'rgba(232,225,210,0.36)' : 'rgba(198,93,50,0.48)';
+    ctx.lineWidth = r * (0.025 - i * 0.003);
+    ctx.beginPath();
+    ctx.arc(beam * r * 0.12, 0, radius, phase, phase + 2.2);
+    ctx.stroke();
+  }
+  ctx.restore();
   ctx.restore();
 }
 
@@ -3964,7 +3938,8 @@ function drawLensedArcs(r, beam) {
   for (const s of [-1, 1]) {
     ctx.save();
     ctx.translate(p.x, p.y);
-    ctx.globalAlpha = s < 0 ? 1 : 0.38;
+    ctx.rotate(DISK_TILT);
+    ctx.globalAlpha = s < 0 ? 0.85 : 0.16;
 
     // Half-plane, then annulus: only the arc outside the shadow survives.
     ctx.beginPath();
@@ -4033,10 +4008,8 @@ function drawPhotonRing(r, beam) {
 //   that reads as "a black hole" more than the disk does.
 // ============================================================
 const EINSTEIN_BANDS = [
-  { k: 1.26, a: 0.165, w: 0.026 },
-  { k: 1.44, a: 0.100, w: 0.019 },
-  { k: 1.66, a: 0.058, w: 0.014 },
-  { k: 1.94, a: 0.032, w: 0.011 }
+  { k: 1.19, a: 0.13, w: 0.021 },
+  { k: 1.38, a: 0.045, w: 0.012 }
 ];
 
 function drawEinsteinRings(r, beam, cx, cy) {
@@ -4133,7 +4106,7 @@ function drawPlayer() {
   ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.50, 0, TAU); ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
 
-  // Bow shock. Light piles up in the direction you are travelling,
+  // Relativistic beaming. Light piles up in the direction you are travelling,
   // so a hole at speed wears a brighter cap on its leading edge. Without this
   // there is no way to read speed off the screen at all: the camera is pinned
   // to the hole, so motion at 900 units/s looks identical to motion at 90.
@@ -4325,7 +4298,7 @@ function updateHUD() {
 
   // Chips answer "why did I survive that?" and "what stage am I in?".
   const chips = [];
-  if (shield > 0) chips.push('shield|MAGNETOSPHERE');
+  if (shield > 0) chips.push('shield|SHIELD');
   chips.push('era|' + eraLabel(era));
   if (spinA > 0.5) chips.push('spin|SPIN ' + spinA.toFixed(2));
   chips.push('|' + (CTRL_LABEL[controlMode] || 'STICK'));
@@ -4359,13 +4332,13 @@ function updateHUD() {
   const on = combo >= 3 && comboT > 0;
   el.comboWrap.classList.toggle('on', on);
   if (on) {
-    // Pips read as distance to the next AGN feedback under any variant cadence.
+    // Pips read as distance to the next shockwave under any variant cadence.
     const WE = WAVE_EVERY();
     const intoWave = combo % WE;
     el.comboValue.textContent =
       'COMBO ' + combo + '  ×' + comboMult().toFixed(1) +
       '  ·  CHOICE IN ' + (WE - intoWave);
-    // Combo heat: the text grows and runs hotter toward the AGN feedback, then
+    // Combo heat: the text grows and runs hotter toward the shockwave, then
     // pops when it fires.
     const heat = clamp(intoWave / WE, 0, 1);
     const pop = comboPopT > 0 ? comboPopT : 0;
@@ -4777,7 +4750,7 @@ let variant = lsGet('variant', 'normal');
 if (!VARMODS[variant]) variant = 'normal';
 function COMBO_WINDOW_V() { return VARMODS[variant].comboWin * (1 + 0.05 * runUpgrades.accretion); }
 function WAVE_EVERY() { return VARMODS[variant].waveEvery; }
-// One lethality rule for the whole game: AGN feedbacks, arrows, threat line,
+// One lethality rule for the whole game: shockwaves, arrows, threat line,
 // gravity and collisions all read the same predicate, including greed gates.
 function edibleAt(e) {
   if (e.greedT > 0) return true;      // greed gate: this one is fair game
@@ -4811,7 +4784,7 @@ const MISSION_POOL = [
   { id: 'combo15',   need: 15,   text: 'Chain 15 eats in one run',               prog: () => runStats.peakCombo },
   { id: 'dwarf3',    need: 3,    text: 'Eat 3 white dwarfs in one run', prog: () => runMission.wd },
   { id: 'survive180', need: 180, text: 'Survive 3:00',                 prog: () => Math.floor(elapsed) },
-  { id: 'wave8',     need: 8,    text: 'One AGN feedback kills 8',        prog: () => runMission.waveBest },
+  { id: 'wave8',     need: 8,    text: 'One shockwave kills 8',        prog: () => runMission.waveBest },
   { id: 'ark2',      need: 2,    text: 'Eat 2 ark ships in one run',   prog: () => runMission.ark },
   { id: 'pulsar2',   need: 2,    text: 'Eat 2 pulsars in one run',     prog: () => runMission.pulsar },
   { id: 'score5k',   need: 5000, text: 'Score 5,000 in one run',       prog: () => Math.floor(score) },
@@ -4910,14 +4883,14 @@ function startDaily() {
   toast('DAILY RUN — one attempt', 2.2);
 }
 
-/* ---------- AGN feedback steering pick ------------------------------------ */
-// The every-20th-combo AGN feedback is the perfect no-pause choice moment: the
+/* ---------- shockwave steering pick ------------------------------------ */
+// The every-20th-combo shockwave is the perfect no-pause choice moment: the
 // game drops into slow motion, three lanes appear, and you select by
 // steering -- the input you are already holding. Timeout resolves to the
-// middle lane (the classic AGN feedback), so indecision costs nothing.
+// middle lane (the classic shockwave), so indecision costs nothing.
 const PICK_OPTS = [
   { name: 'ABSORB', sub: 'up to 15 nearby edibles; no special effects' },
-  { name: 'FEEDBACK', sub: 'classic AGN feedback' },
+  { name: 'SHOCK', sub: 'classic shockwave' },
   { name: 'AEGIS', sub: 'block one impact within 6s' }
 ];
 function startPick() {
@@ -4934,11 +4907,11 @@ function resolvePick(i) {
   if (i === 0) pickAbsorb();
   else if (i === 2) {
     shield = 3.6;   // ~6 s at the 0.6/s shield decay
-    toast('AEGIS — deflect one impact within 6s', 2.0);
+    toast('AEGIS — block one impact within 6s', 2.0);
     waves.push({ x: p.x, y: p.y, r: p.r, max: p.r * 6, t: 0, hue: 45 });
     if (Snd.ac) Snd.tone(520, 'sine', 0.16, 0.01, 0.4, 5);
   } else {
-    pendingWave = 0.28;   // AGN feedback with a wind-up
+    pendingWave = 0.28;   // shockwave with a wind-up
   }
 }
 function pickAbsorb() {
