@@ -4100,6 +4100,127 @@ function drawSecondaryImage(r, beam, cx, cy) {
   ctx.restore();
 }
 
+function drawReferenceBlackHole(r, cx, cy) {
+  const ox = cx === undefined ? p.x : cx;
+  const oy = cy === undefined ? p.y : cy;
+
+  // Base hue: default is vibrant magenta (312°), or activeSkin hue if equipped
+  const skinHue = SKIN_HUES[activeSkin];
+  const baseHue = (skinHue !== null && skinHue !== undefined) ? skinHue : 312;
+
+  // 1. Soft atmospheric nebula glow behind the hole
+  ctx.globalCompositeOperation = 'lighter';
+  const glow = ctx.createRadialGradient(ox, oy, r * 0.7, ox, oy, r * 3.6);
+  glow.addColorStop(0.0, `hsla(${baseHue}, 90%, 55%, 0.40)`);
+  glow.addColorStop(0.35, `hsla(${baseHue}, 85%, 45%, 0.22)`);
+  glow.addColorStop(0.70, `hsla(${baseHue - 15}, 80%, 35%, 0.08)`);
+  glow.addColorStop(1.0, `hsla(${baseHue}, 80%, 20%, 0.0)`);
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(ox, oy, r * 3.6, 0, TAU);
+  ctx.fill();
+
+  // 2. Concentric segmented orbital tracks with orbiting stardust nodes (matching reference image)
+  const tracks = [
+    {
+      rad: 1.20, width: Math.max(1.8, r * 0.035),
+      speed: 0.85,
+      arcs: [[0.2, 2.4], [3.2, 2.1]],
+      nodes: [0.8, 3.8]
+    },
+    {
+      rad: 1.38, width: Math.max(3.6, r * 0.075),
+      speed: -0.65,
+      arcs: [[0.5, 2.8], [3.8, 2.0]],
+      nodes: [1.6, 4.5]
+    },
+    {
+      rad: 1.62, width: Math.max(4.8, r * 0.095),
+      speed: 0.50,
+      arcs: [[0.1, 1.8], [2.3, 1.6], [4.4, 1.7]],
+      nodes: [0.9, 3.1, 5.2]
+    },
+    {
+      rad: 1.88, width: Math.max(2.4, r * 0.045),
+      speed: -0.38,
+      arcs: [[0.8, 2.6], [4.0, 2.2]],
+      nodes: [1.9, 4.8]
+    },
+    {
+      rad: 2.16, width: Math.max(3.8, r * 0.07),
+      speed: 0.30,
+      arcs: [[0.3, 2.3], [3.2, 2.4]],
+      nodes: [2.0, 5.0]
+    }
+  ];
+
+  ctx.lineCap = 'round';
+  for (let i = 0; i < tracks.length; i++) {
+    const tr = tracks[i];
+    const trR = r * tr.rad;
+    const rot = elapsed * tr.speed;
+    const trackHue = (baseHue + (i % 2 === 0 ? 6 : -8) + 360) % 360;
+
+    // Draw orbital arc track segments
+    ctx.strokeStyle = `hsla(${trackHue}, 88%, ${60 - i * 3}%, 0.85)`;
+    ctx.lineWidth = tr.width;
+    for (let j = 0; j < tr.arcs.length; j++) {
+      const aStart = tr.arcs[j][0] + rot;
+      const aLen = tr.arcs[j][1];
+      ctx.beginPath();
+      ctx.arc(ox, oy, trR, aStart, aStart + aLen);
+      ctx.stroke();
+    }
+
+    // Draw orbiting light node particles along the track
+    for (let k = 0; k < tr.nodes.length; k++) {
+      const nodeAng = tr.nodes[k] + rot;
+      const nx = ox + Math.cos(nodeAng) * trR;
+      const ny = oy + Math.sin(nodeAng) * trR;
+      const nodeR = Math.max(2.2, r * 0.042);
+
+      // Glowing aura
+      const nodeHalo = ctx.createRadialGradient(nx, ny, 0, nx, ny, nodeR * 2.8);
+      nodeHalo.addColorStop(0.0, `hsla(${trackHue}, 100%, 75%, 0.9)`);
+      nodeHalo.addColorStop(1.0, `hsla(${trackHue}, 100%, 60%, 0.0)`);
+      ctx.fillStyle = nodeHalo;
+      ctx.beginPath();
+      ctx.arc(nx, ny, nodeR * 2.8, 0, TAU);
+      ctx.fill();
+
+      // Bright white core
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(nx, ny, nodeR * 0.8, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  // 3. Shadow core -- pure black disc
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#000000';
+  ctx.beginPath();
+  ctx.arc(ox, oy, r, 0, TAU);
+  ctx.fill();
+
+  // 4. Intensely bright event horizon inner boundary ring
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = `hsla(${baseHue}, 100%, 82%, 0.95)`;
+  ctx.lineWidth = Math.max(2.0, r * 0.045);
+  ctx.beginPath();
+  ctx.arc(ox, oy, r * 1.035, 0, TAU);
+  ctx.stroke();
+
+  // Faint secondary inner rim
+  ctx.strokeStyle = `hsla(${baseHue}, 80%, 65%, 0.45)`;
+  ctx.lineWidth = Math.max(1.0, r * 0.02);
+  ctx.beginPath();
+  ctx.arc(ox, oy, r * 1.09, 0, TAU);
+  ctx.stroke();
+
+  ctx.globalCompositeOperation = 'source-over';
+}
+
 function drawPlayer() {
   const r = p.r;
   const beam = beamSide();
@@ -4130,22 +4251,8 @@ function drawPlayer() {
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  // A faint halo -- background starlight dragged around the well. Kept very
-  // low: this and the lensing bands together were inflating the whole object
-  // into a fuzzy torus, when the reference is a hard shadow with THIN arcs.
-  ctx.globalCompositeOperation = 'lighter';
-  const halo = ctx.createRadialGradient(p.x, p.y, r * 1.02, p.x, p.y, r * 1.50);
-  halo.addColorStop(0.00, 'rgba(255,198,156,0.075)');
-  halo.addColorStop(0.45, 'rgba(255,150,110,0.022)');
-  halo.addColorStop(1.00, 'rgba(255,132,100,0)');
-  ctx.fillStyle = halo;
-  ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.50, 0, TAU); ctx.fill();
-  ctx.globalCompositeOperation = 'source-over';
-
   // Bow shock. Light piles up in the direction you are travelling,
-  // so a hole at speed wears a brighter cap on its leading edge. Without this
-  // there is no way to read speed off the screen at all: the camera is pinned
-  // to the hole, so motion at 900 units/s looks identical to motion at 90.
+  // so a hole at speed wears a brighter cap on its leading edge.
   const spd = Math.hypot(p.vx, p.vy);
   if (spd > 1) {
     const sf = clamp(spd / (SPEED_REF * P0 * 2.2), 0, 1);
@@ -4164,16 +4271,6 @@ function drawPlayer() {
     }
   }
 
-  // Unlocked skins are cosmetic horizon accents, never gameplay modifiers.
-  const skinHue = SKIN_HUES[activeSkin];
-  if (skinHue !== null && skinHue !== undefined) {
-    ctx.save();
-    ctx.strokeStyle = 'hsla(' + skinHue + ',85%,70%,0.65)';
-    ctx.lineWidth = Math.max(1, r * 0.035);
-    ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.8, 0, TAU); ctx.stroke();
-    ctx.restore();
-  }
-
   // Pulsar-shield ring, when active.
   if (shield > 0) {
     ctx.globalCompositeOperation = 'lighter';
@@ -4183,30 +4280,8 @@ function drawPlayer() {
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  // The bent background. These live outside the shadow, so they go down
-  // first -- the hole then punches its black disc out of the middle of them,
-  // which is exactly the "light wrapping around" silhouette.
-  drawEinsteinRings(r, beam);
-
-  // The shadow -- pure black. (The observable "shadow" is about 2.6x the
-  // Schwarzschild radius; we treat p.r as that shadow radius.)
-  ctx.fillStyle = '#000';
-  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, TAU); ctx.fill();
-
-  // Lensed far side first: it lives outside the shadow, so it can go down
-  // before the disk crosses in front.
-  drawLensedArcs(r, beam);
-
-  // The near side of the disk passes between us and the hole, so it is drawn
-  // ON TOP of the black sphere and splits it in two. That is the single most
-  // recognisable feature of the whole object.
-  drawDisk(r, beam);
-
-  // The far side of the disk, having wrapped right round the hole, lands on
-  // the limb as a bright knot. Drawn over the shadow because it clings to it.
-  drawSecondaryImage(r, beam);
-
-  drawPhotonRing(r, beam);
+  // Draw the reference black hole (concentric magenta/purple orbital rings with orbiting stardust nodes)
+  drawReferenceBlackHole(r);
 
   // Invulnerability flash overrides the whole assembly.
   if (invuln > 0 && Math.floor(invuln * 18) % 2 === 0) {

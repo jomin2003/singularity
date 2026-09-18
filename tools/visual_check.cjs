@@ -97,6 +97,7 @@ const SHOTS = [
   { name: 'menu',            w: 390, h: 844, url: '' },
   { name: 'menu-360',        w: 360, h: 640, url: '' },
   { name: 'play',            w: 390, h: 844, url: '?shot=play' },
+  { name: 'pause',           w: 390, h: 844, url: '?panel=pause' },
   { name: 'observatory',     w: 390, h: 844, url: '?panel=observe' },
   { name: 'observatory-360', w: 360, h: 640, url: '?panel=observe' },
   { name: 'settings',        w: 390, h: 844, url: '?panel=settings' },

@@ -1897,3 +1897,311 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   white-space: pre-wrap;
   overflow: auto;
 }
+
+/* ============================================================
+   CYBER-COSMIC VISUAL POLISH (Pause Menu, Start Menu & HUD)
+   Matches reference designs:
+     1. Borderless glowing pause menu with pill buttons
+     2. Minimalist start menu with gradient title & pill CTA
+     3. Crisp cyber HUD with circular pause button & bottom-right audio
+   ============================================================ */
+
+/* --- Start / Title Menu (#menu) --- */
+#menu.layer.center {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#menuCard {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  padding: 0 24px !important;
+  max-width: 380px !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  align-items: center !important;
+  pointer-events: none;
+}
+
+#menuCard::before {
+  display: none !important;
+}
+
+#menuCard > * {
+  pointer-events: auto;
+}
+
+#menuCard .card-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: clamp(140px, 20vh, 180px);
+}
+
+#menuCard .title {
+  font-family: var(--font-display);
+  font-size: clamp(26px, 8.5vw, 42px);
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  line-height: 1.15;
+  background: linear-gradient(180deg, #c4f7ff 0%, #52d6ff 55%, #29beea 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 24px rgba(82, 214, 255, 0.45));
+}
+
+#menuCard .subtitle {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  color: #728fa8;
+  margin-top: 8px;
+}
+
+#menuCard #playBtn {
+  width: 240px;
+  max-width: 85%;
+  height: 48px;
+  border-radius: 999px !important;
+  background: linear-gradient(90deg, #60e6ff 0%, #b288ff 100%) !important;
+  color: #060814 !important;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  border: none !important;
+  box-shadow: 0 4px 26px rgba(96, 230, 255, 0.45), 0 0 14px rgba(178, 136, 255, 0.35);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, filter 0.15s ease;
+  margin: 0;
+}
+
+#menuCard #playBtn:hover {
+  filter: brightness(1.08);
+}
+
+#menuCard #playBtn:active {
+  transform: scale(0.97);
+}
+
+#menuCard .home-guide {
+  color: #5d7388;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-align: center;
+  line-height: 1.6;
+  max-width: 260px;
+  margin-top: 14px;
+}
+
+#menuCard .menu-foot {
+  border-top: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin-top: 18px;
+}
+
+#menuCard .menu-foot .hint {
+  color: #5d7388;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+}
+
+#menuCard .menu-foot .hint span {
+  color: #8fa9c2;
+  font-weight: 600;
+}
+
+/* --- Pause Menu (#pause) --- */
+#pause.layer.center {
+  background: rgba(5, 6, 15, 0.65) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#pause .glass-card {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  padding: 0 !important;
+  max-width: 240px;
+  width: 80%;
+  gap: 10px;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+#pause .glass-card::before {
+  display: none !important;
+}
+
+#pause .glass-title {
+  color: #4ff0ff !important;
+  font-family: var(--font-ui) !important;
+  font-size: 20px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.35em !important;
+  text-shadow: 0 0 16px rgba(79, 240, 255, 0.55);
+  margin-bottom: 2px;
+}
+
+#pause #pauseScore {
+  color: #687f98 !important;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 22px;
+  text-align: center;
+}
+
+#pause .btn {
+  width: 100%;
+  border-radius: 999px !important;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+#pause #resumeBtn {
+  height: 48px;
+  font-size: 13px;
+  background: linear-gradient(90deg, #5de6ff 0%, #b288ff 100%) !important;
+  color: #060814 !important;
+  border: none !important;
+  box-shadow: 0 0 20px rgba(93, 230, 255, 0.45);
+}
+
+#pause .btn.ghost {
+  height: 44px;
+  font-size: 12px;
+  background: rgba(10, 12, 22, 0.5) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+}
+
+#pause .btn:hover {
+  filter: brightness(1.08);
+}
+
+#pause .btn:active {
+  transform: scale(0.97);
+}
+
+/* --- HUD Refinements --- */
+#hud.layer {
+  pointer-events: none;
+}
+
+.hud-top {
+  display: grid !important;
+  grid-template-columns: 1fr auto auto !important;
+  align-items: center !important;
+  gap: 16px !important;
+  width: 100% !important;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 18px 0 !important;
+}
+
+.hud-block {
+  padding: 0 !important;
+}
+
+.hud-block .hud-label {
+  font-family: var(--font-ui) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.14em !important;
+  color: rgba(145, 175, 205, 0.7) !important;
+  margin-bottom: 2px !important;
+}
+
+.hud-block .hud-value {
+  font-family: var(--font-ui) !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  color: #ffffff !important;
+  letter-spacing: 0.04em !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+.hud-block.right {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  text-align: right !important;
+  padding: 0 !important;
+}
+
+.hud-block.right .hud-value {
+  font-size: 20px !important;
+  color: #ffffff !important;
+}
+
+.icon-btn.pause-btn {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 50% !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  transition: transform 0.15s ease, background 0.15s ease !important;
+}
+
+.icon-btn.pause-btn:active {
+  transform: scale(0.92);
+}
+
+.icon-btn.pause-btn svg {
+  width: 14px !important;
+  height: 14px !important;
+}
+
+.icon-btn:not(.pause-btn) {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 50% !important;
+  background: rgba(18, 22, 38, 0.65) !important;
+  border: 1px solid rgba(135, 155, 195, 0.3) !important;
+  color: #ccdcf0 !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  transition: transform 0.15s ease !important;
+}
+
+.icon-btn:not(.pause-btn):active {
+  transform: scale(0.92);
+}
