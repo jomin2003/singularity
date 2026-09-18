@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 GAME = ROOT / "www" / "game.js"
 HTML = ROOT / "www" / "index.html"
 
-ASSETS = ["style.css", "design.css", "ads-config.js", "rewarded-ads.js", "game.js"]
+ASSETS = ["style.css", "ads-config.js", "rewarded-ads.js", "game.js"]
 
 
 def build_id():
