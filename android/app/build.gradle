@@ -25,17 +25,18 @@ android {
 
     signingConfigs {
         release {
-            def releaseKeystore = System.getenv("KEYSTORE_FILE")
-            storeFile file(releaseKeystore ?: "MISSING_KEYSTORE_FILE_CONFIGURE_ENV_VAR.jks")
-            storePassword System.getenv("KEYSTORE_PASSWORD") ?: "missing"
-            keyAlias System.getenv("KEY_ALIAS") ?: "missing"
-            keyPassword System.getenv("KEY_PASSWORD") ?: "missing"
+            if (releaseKeystore) {
+                storeFile file(releaseKeystore)
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            signingConfig releaseKeystore ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
