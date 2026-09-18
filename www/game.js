@@ -2257,7 +2257,16 @@ function bodyMass(e) {
   if (Number.isFinite(e.mass) && e.mass > 0) return e.mass;
   const type = e.body && e.body.type;
   const density = type === 'whiteDwarf' ? 4 : type === 'brownDwarf' ? 2 : 1;
-  e.mass = (e.r / P0) ** 2 * M0 * density;
+  const er = Math.max(0.1, Number.isFinite(e.r) ? e.r : 1);
+  const rawMass = (er / P0) ** 2 * M0 * density;
+  const curR = (typeof p === 'object' && p && p.r > 0) ? p.r : P0;
+  const curM = (typeof p === 'object' && p && p.mass > 0) ? p.mass : M0;
+  if (curM > 20) {
+    const maxFrac = ((er / curR) ** 2) * curM * density;
+    e.mass = Math.min(rawMass, maxFrac, 1e9);
+  } else {
+    e.mass = Math.min(rawMass, 1e9);
+  }
   return e.mass;
 }
 
@@ -2268,7 +2277,9 @@ function consume(e, idx) {
   const wasWormhole = type === 'wormhole';
 
   p.mass += bodyMass(e) * CONSUME_YIELD;
+  if (!Number.isFinite(p.mass) || p.mass <= 0) p.mass = M0;
   p.r = p.mass * RS_PER_MASS;
+  if (!Number.isFinite(p.r) || p.r <= 0) p.r = P0;
   combo++;
   comboT = COMBO_WINDOW_V();
   // A fresh meal buys a satiated window (Tier 0 tension curve).
@@ -3132,7 +3143,7 @@ function updateEnts(dt) {
       if (state === 'play' && d2 < pullR * pullR) {
         const d = Math.sqrt(d2) || 1;
         const edible = edibleAt(e);
-        const bodyMass = e.mass / p.mass;
+        const massRatio = (e.mass || 1) / (p.mass || 1);
         // Newtonian gravity: pull falls off as 1/r^2, softened near the
         // centre so nothing goes infinite. The old linear falloff let the
         // hole vacuum the entire field evenly, which is not how gravity
@@ -3140,7 +3151,7 @@ function updateEnts(dt) {
         // hauled in hard.
         const soft = d + p.r * 1.5;
         const falloff = p.mass / (soft * soft);
-        const s = falloff * 4.6 * p.r * dt / (0.35 + bodyMass * 2.2) * (edible ? 1 : 0.18);
+        const s = falloff * 4.6 * p.r * dt / (0.35 + massRatio * 2.2) * (edible ? 1 : 0.18);
         e.vx += dx / d * s;
         e.vy += dy / d * s;
       }
@@ -5042,7 +5053,9 @@ function pickAbsorb() {
     ents.splice(i, 1);
     n++;
   }
+  if (!Number.isFinite(p.mass) || p.mass <= 0) p.mass = M0;
   p.r = p.mass * RS_PER_MASS;
+  if (!Number.isFinite(p.r) || p.r <= 0) p.r = P0;
   satiatedT = Math.max(satiatedT, 1.0);
   if (n) {
     toast('ABSORBED +' + fmt(total), 1.8);

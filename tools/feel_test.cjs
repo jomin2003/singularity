@@ -198,4 +198,19 @@ test('dwarf density and immediate feeding keep mass finite', ({ q }) => {
   }
 });
 
+test('extended feeding across 50 meals keeps mass finite and bounded', ({ q }) => {
+  q('start(); pauseOnEvent=false;');
+  for (let i = 0; i < 50; i++) {
+    const type = (i % 3 === 0) ? 'whiteDwarf' : 'rocky';
+    q(`window.meal={x:p.x,y:p.y,r:p.r * 0.45,vx:0,vy:0,spin:0,phase:0,
+      body:{type:'${type}',variant:0,spin:0}}; ents=[meal]; consume(meal,0);`);
+  }
+  const finalMass = q('p.mass');
+  const finalR = q('p.r');
+  const finalScore = q('score');
+  assert.ok(Number.isFinite(finalMass) && finalMass > 0 && finalMass < 1e7, 'mass should be finite: ' + finalMass);
+  assert.ok(Number.isFinite(finalR) && finalR > 0 && finalR < 1e8, 'radius should be finite: ' + finalR);
+  assert.ok(Number.isFinite(finalScore) && finalScore > 0 && finalScore < 1e12, 'score should be finite: ' + finalScore);
+});
+
 console.log(passed + '/' + passed + ' feel checks passed');
