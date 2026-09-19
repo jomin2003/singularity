@@ -631,8 +631,11 @@ check('android: no "--" inside XML comments', xmlOffender === null,
 
 /* ---- 11. camera, shield, audio RNG and cross-run regressions ---- */
 const run = (src) => probe.run(src);
+// b23: the menu camera drifts cinematically through the field and 'play'
+// runs gameplay systems (picks, panels), so the pure follow contract is
+// exercised in 'dead' -- camera still lerps to the player, world frozen.
 const cameraSample = (hz, seconds) => run(`
-  start(); state = 'menu'; ents = []; p.x = 100; p.y = -80;
+  start(); state = 'dead'; ents = []; p.x = 100; p.y = -80;
   p.vx = 10; p.vy = -5; cam.x = 0; cam.y = 0;
   for (let i = 0; i < ${Math.round(hz * seconds)}; i++) {
     ents = []; update(${1 / hz});
