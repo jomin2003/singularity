@@ -113,7 +113,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b22';
+const BUILD_ID = 'b23';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -189,10 +189,14 @@ let lastBeatT = -99;    // last heartbeat haptic, for the low-mass warning
 let sparseOn = false;   // low-mass music strip-back currently engaged
 let greedT = 0;         // greed-gate window remaining
 let greedE = null;      // the body the greed gate applies to
+let newBestShown = false; // live "NEW PERSONAL BEST" callout, once per run
 let pickT = 0;          // AGN feedback steering-pick window remaining
 let pickHold = null;    // accumulated steering dwell per lane
 let spinA = 0;          // Kerr spin parameter a/M, 0 (Schwarzschild) .. 0.998
 let kilonovaWarned = false;  // kilonova telegraph already fired this cycle
+let menuDriftT = 0;     // elapsed time driving the menu camera drift
+const menuDrift = { x: 0, y: 0 };   // the drift point the menu camera eases toward
+let menuDriftSeeded = false; // first menu frame snaps the camera to the loop
 let seedOverride = null;// one-shot forced seed (daily run)
 let dailyRun = false;   // this run is the daily-seeded attempt
 let ghostOn = true;       // race your best-run ghost (loaded with options)
@@ -1938,9 +1942,11 @@ function spawnDarkMatter() {
 }
 
 function spawnStarSystem() {
-  const v = viewWorldRadius();
+  // Close enough to be SEEN: a whole system warping in at the screen edge is
+  // content; one spawning a screen-and-a-half away is a rumour.
+  const vr = MIN * 0.5 / cam.zoom;
   const a = rng() * TAU;
-  const dist = rand(v * 0.9, v * 1.4);
+  const dist = rand(vr * 1.1, vr * 1.7);
   const sx = p.x + Math.cos(a) * dist;
   const sy = p.y + Math.sin(a) * dist;
   const sid = nextSystemId++;
@@ -2034,6 +2040,7 @@ function reset() {
   eraFx = 0; hitFx = 0; nearDeath = 0; lastHurtT = -99; comboPopT = 0;
   satiatedT = 0; drainRate = 0; spinA = 0;
   greedT = 0; pickT = 0; pickHold = null;
+  newBestShown = false;
   kilonovaWarned = false; lastBeatT = -99;
   if (sparseOn) Snd.setSparse(false);
   sparseOn = false;
@@ -2061,11 +2068,16 @@ function reset() {
 }
 
 function spawn(scaleMul) {
-  const v = viewWorldRadius();
+  // Spawn ring is measured from the INSCRIBED screen radius, not the corner:
+  // the old viewWorldRadius() ring is half the diagonal, which on a tall
+  // phone is ~2.4x the visible half-height -- so most food spawned off the
+  // top and bottom edges and the opening screen read as empty. The despawn
+  // cull still uses the wide corner ring; only new food lands on screen.
+  const vr = MIN * 0.5 / cam.zoom;
+  // Never stamp food right on top of the hole: a spawn inside the horizon is
+  // a free meal the player never chose, and it pops the combo on frame 1.
   const a = rng() * TAU;
-  // Spawn just inside the visible ring so the field is never empty around
-  // the player. The old 1.14-1.7 range put everything just out of view.
-  const dist = rand(v * 0.85, v * (scaleMul || 1.25));
+  const dist = Math.max(p.r * 3, rand(vr * 0.6, vr * (scaleMul || 1.35)));
   const e = {
     x: p.x + Math.cos(a) * dist,
     y: p.y + Math.sin(a) * dist,
@@ -2077,6 +2089,15 @@ function spawn(scaleMul) {
   };
   assignBody(e);
   e.spin = e.body.spin;
+  // Lethal bodies never spawn close. A spiked giant sitting beside a fresh
+  // hole is a hit the player could not have seen coming, let alone avoided;
+  // food stays close, danger is pushed past a comfort ring.
+  if (e.r > p.r * VARMODS[variant].thresh && dist < vr * 1.15) {
+    const a2 = rng() * TAU;
+    const d2 = rand(vr * 1.15, vr * 1.6);
+    e.x = p.x + Math.cos(a2) * d2;
+    e.y = p.y + Math.sin(a2) * d2;
+  }
   ents.push(e);
 }
 
@@ -2614,6 +2635,16 @@ function update(dt) {
     }
   }
 
+  // Live new-best callout. The death screen used to be the only place a
+  // record was celebrated, so a monster run hid its own milestone until it
+  // was over. One toast, the first frame the old best falls.
+  if (!newBestShown && bestAtRunStart > 0 && score > bestAtRunStart) {
+    newBestShown = true;
+    toast('NEW PERSONAL BEST', 2.2);
+    Snd.sting('mission');
+    buzz(50);
+  }
+
   updateToasts(dt);
   if (overGuardT > 0) overGuardT -= dt;
   if (flashT > 0) flashT = Math.max(0, flashT - dt * 2.2);
@@ -2762,8 +2793,31 @@ function update(dt) {
   // off-screen, which read as "the game is empty". 0.35 is snappy without
   // being jittery at 60 fps. Preserve that feel at any frame rate.
   const follow = 1 - Math.pow(0.65, dt * 60);
-  cam.x = lerp(cam.x, p.x + p.vx * CAM_LEAD, follow);
-  cam.y = lerp(cam.y, p.y + p.vy * CAM_LEAD, follow);
+  // Menu cinema: behind the title card the camera drifts on a slow Lissajous
+  // path through the live field, so the worlds behind the menu parallax and
+  // the title screen breathes. Menu state only -- the drift variable is left
+  // wherever it stopped, so resuming a run starts exactly from it.
+  if (state === 'menu') {
+    menuDriftT += dt;
+    // The camera sits ABOVE the hole, so the hole renders in the card's
+    // lower half -- the upper half is the densest DOM column (title, CTA,
+    // rows) and the hole reads best wandering beneath it.
+    const dR = MIN * 0.22 / Math.max(cam.zoom, 1e-6);
+    if (!menuDriftSeeded) {
+      // First menu frame: snap instead of easing across the whole field.
+      menuDrift.x = dR * 0.55;
+      menuDrift.y = -dR * 0.85;
+      menuDriftSeeded = true;
+      cam.x = menuDrift.x; cam.y = menuDrift.y;
+    }
+    menuDrift.x = Math.cos(menuDriftT * 0.055) * dR * 0.9;
+    menuDrift.y = -Math.abs(Math.sin(menuDriftT * 0.037)) * dR * 0.85;
+    cam.x = lerp(cam.x, menuDrift.x, smooth(0.25, dt));
+    cam.y = lerp(cam.y, menuDrift.y, smooth(0.25, dt));
+  } else {
+    cam.x = lerp(cam.x, p.x + p.vx * CAM_LEAD, follow);
+    cam.y = lerp(cam.y, p.y + p.vy * CAM_LEAD, follow);
+  }
 
   if (state === 'play') {
     // ---- Movement: thrust and inertia, not "seek a point" ---------------
@@ -3248,6 +3302,19 @@ function updateFloats(dt) {
 /* ============================================================
    RENDER
    ============================================================ */
+function drawMenuVignette() {
+  // Title-card dressing: a static radial scrim that keeps the card's column
+  // readable over whatever the drifting field is doing behind it, plus a soft
+  // edge falloff so the screen reads as composed rather than full-bleed.
+  // Painted once per frame in screen space; no DOM, no compositor layer.
+  const g = ctx.createRadialGradient(W * 0.5, H * 0.46, MIN * 0.18, W * 0.5, H * 0.46, Math.max(W, H) * 0.75);
+  g.addColorStop(0.00, 'rgba(4, 6, 15, 0.30)');
+  g.addColorStop(0.55, 'rgba(4, 6, 15, 0.10)');
+  g.addColorStop(1.00, 'rgba(4, 6, 15, 0.62)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
 function render() {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
@@ -3304,6 +3371,9 @@ function render() {
   }
 
   ctx.restore();
+
+  // Menu-only title-card vignette, over the world and under the DOM overlay.
+  if (state === 'menu') drawMenuVignette();
 
   drawDangerArrows();                     // screen space
   drawFloats();                           // screen space
@@ -3559,7 +3629,9 @@ function drawGhost() {
 // accessibility: knowing where the danger is should not depend on being able
 // to see its colour.
 function drawDangerArrows() {
-  if (state === 'dead') return;
+  // Menus and report cards float over the live field; a wall of arrows behind
+  // the COLLAPSE card read as UI noise. Arrows are a play aid, not decoration.
+  if (state !== 'play') return;
   const cx = W / 2, cy = H / 2;
   const rad = Math.min(W, H) * 0.5 - 26;
   ctx.globalCompositeOperation = 'lighter';
@@ -4477,8 +4549,12 @@ function updateHUD() {
       const lit = Math.round((intoWave / WE) * kids.length);
       for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('on', i < lit);
     }
+    // Three pips from the pick: the bar switches to its ready pulse (the CSS
+    // shipped this state; nothing had ever set the class).
+    el.comboBar.classList.toggle('ready', (WE - intoWave) <= 3);
   } else {
     hudCache.pips = -1;
+    el.comboBar.classList.remove('ready');
   }
 }
 

@@ -2205,3 +2205,156 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 .icon-btn:not(.pause-btn):active {
   transform: scale(0.92);
 }
+
+/* ============================================================
+   b23 RESTORATIONS — menu systems + in-run goal strip
+   The b22 "minimalist" pass had deleted the markup these rules
+   styled; the markup is back, so the rules are too.
+   ============================================================ */
+
+/* Section kickers inside the run-setup details. */
+.section-label {
+  font-size: var(--t-micro);
+  font-weight: var(--w-strong);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: rgba(150, 185, 215, .55);
+  margin: 10px 2px 4px;
+  text-align: left;
+}
+#runSetup .section-label:first-child { margin-top: 2px; }
+
+/* Collapsible run setup. The summary is the whole tap row. */
+.home-details {
+  width: 100%;
+  max-width: 320px;
+  border: 1px solid var(--c-panel-line);
+  border-radius: var(--r-md);
+  background: rgba(10, 16, 30, .55);
+  overflow: hidden;
+}
+.home-details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 12px 14px;
+  font-size: var(--t-label);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: rgba(190, 220, 245, .8);
+  text-align: center;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.home-details summary::-webkit-details-marker { display: none; }
+.home-details summary::after {
+  content: '+';
+  float: right;
+  font-weight: var(--w-strong);
+  color: rgba(150, 185, 215, .6);
+}
+.home-details[open] summary::after { content: '\2013'; }
+.home-details[open] summary { color: #eaf6ff; }
+.home-details summary:hover { color: #eaf6ff; }
+.home-details-body {
+  padding: 4px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+.home-details-body .segmented { margin-top: 2px; }
+.home-details-body .hint { text-align: center; }
+
+/* Daily run button under the CTA. */
+#menuCard #dailyBtn { margin-top: 10px; }
+
+/* In-run goal strip under the combo bar: era ladder + current mission. */
+.run-goal {
+  align-self: center;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 6px;
+  opacity: .92;
+}
+.run-goal-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--t-micro);
+  letter-spacing: var(--ls-tight);
+  color: rgba(170, 205, 235, .8);
+}
+#runGoalLabel { font-weight: var(--w-label); }
+#runMission { color: rgba(150, 185, 215, .6); white-space: nowrap; }
+.run-goal-track {
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: rgba(120, 170, 200, .18);
+  overflow: hidden;
+}
+#runGoalFill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(155, 107, 255, .8), rgba(79, 240, 255, .95));
+  box-shadow: 0 0 8px rgba(79, 240, 255, .4);
+  transition: width var(--dur-med) var(--ease-out);
+}
+
+/* Meta buttons on the menu footer: icon pills with a tiny label. */
+.menu-meta-row .meta-btn {
+  width: auto;
+  min-width: 44px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+}
+.menu-meta-row .meta-btn .meta-lab {
+  font-size: var(--t-micro);
+  font-weight: var(--w-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: rgba(170, 205, 235, .72);
+}
+@media (max-width: 340px) {
+  .menu-meta-row .meta-btn .meta-lab { display: none; }
+}
+
+/* The menu card scrolls (the restored card carries more content now), but
+   invisibly: it is a menu, not a settings list. */
+#menuCard { scrollbar-width: none; }
+#menuCard::-webkit-scrollbar { display: none; }
+
+/* ---- b23.1 layout corrections, from the device screenshots ----
+
+   1. The b22 header margin (clamp(140px, 20vh, 180px)) assumed the card held
+      only title + CTA. With the restored systems the card scrolls, and that
+      margin became a hole in the middle. A modest gap restores the airy
+      look without wasting a third of the screen. */
+#menuCard .card-header {
+  margin-bottom: clamp(36px, 7vh, 72px) !important;
+  /* 2. The gear shares the header row with an edge-to-edge wordmark, and on
+        phone widths the two collide. Reserve the gear's corner: the title
+        starts below it, the gear reads as the card's chrome. */
+  padding-top: 30px;
+}
+#menuCard .card-header .gear-btn { top: -2px; }
+
+/* 3. Flexbox centring + overflow-y scrolls from the TOP on old WebViews, so
+      the wordmark could sit clipped above the fold. margin:auto centring
+      degrades to a plain scroll instead -- same look, no clipped top. */
+#menuCard {
+  justify-content: flex-start !important;
+}
+#menuCard > .card-header { margin-top: auto; }
+#menuCard > .menu-foot { margin-bottom: auto; }
+
+/* 4. The how-to rows re-tinted by the b22 pass assumed a dark pill behind
+      them; on the transparent card the amber warning row vibrated. Keep the
+      pill, drop the fill. */
+#menuCard #howto { width: 100%; max-width: 320px; }
