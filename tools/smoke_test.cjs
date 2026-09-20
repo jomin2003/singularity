@@ -687,7 +687,7 @@ check('reset: no previous-run shockwave fires in the new run', run('waves.length
 run(`drag.active = true; drag.wx = 1000; drag.wy = 1000;
   joy.active = true; joy.dx = 1; joy.kx = 30; start();`);
 check('reset: stale drag and stick input cannot steer the new run',
-  run('!drag.active && !joy.active && joy.kx === 0 && joy.ky === 0 && thrustVector().x === 0 && thrustVector().y === 0'));
+  run('!drag.active && !joy.active && joy.kx === 0 && joy.ky === 0 && thrustVector(1, 1).x === 0 && thrustVector(1, 1).y === 0'));
 const sparseReset = run(`(() => {
   let target = null;
   const gain = Snd.musicBus.gain;

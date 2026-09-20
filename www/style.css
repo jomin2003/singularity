@@ -772,9 +772,39 @@ body.no-motion .obs-upgrade-btn { transition: none !important; }
 .settings-list {
   display: flex;
   flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Sectioned settings: small-caps headers with hairline dividers, even rows,
+   generous breathing room between groups. */
+.settings-section {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   width: 100%;
   min-width: 0;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  font-weight: var(--w-strong);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(234, 217, 184, .52);
+  padding: 2px 4px 0;
+}
+
+.settings-header::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(234, 217, 184, .14);
 }
 
 .setting {
@@ -839,6 +869,12 @@ body.no-motion .obs-upgrade-btn { transition: none !important; }
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 16px;
+  background: var(--c-panel);
+  border: 1px solid var(--c-panel-line);
+  border-radius: var(--r-md);
   font-size: var(--t-micro);
   letter-spacing: var(--ls-label);
   color: rgba(224, 208, 174, .7);

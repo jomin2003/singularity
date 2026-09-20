@@ -13,7 +13,7 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/shantell-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=b27">
+<link rel="stylesheet" href="style.css?v=b28">
 </head>
 <body>
 <canvas id="game" aria-label="Singularity game field. Consume smaller bodies and avoid spiked hazards. Move with the selected touch controls or WASD and arrow keys.">Your browser needs canvas support to display the Singularity game field.</canvas>
@@ -153,40 +153,49 @@
   <div class="glass-card">
     <div class="glass-title">SETTINGS</div>
     <div class="settings-list">
-      <button id="soundBtn" class="setting wide" type="button" aria-pressed="true">
-        <span class="setting-name">Sound</span>
-        <span class="setting-val">On</span>
-      </button>
-      <div class="slider-row wide"><span class="setting-name">Music</span><input id="musicRange" type="range" min="0" max="100" step="5" aria-label="Music volume"><span class="val" id="musicVal">70%</span></div>
-      <div class="slider-row wide"><span class="setting-name">Effects</span><input id="sfxRange" type="range" min="0" max="100" step="5" aria-label="Effects volume"><span class="val" id="sfxVal">85%</span></div>
-      <button id="hapticBtn" class="setting wide" type="button">
-        <span class="setting-name">Haptics</span>
-        <span class="setting-val">Off</span>
-      </button>
-      <button id="motionBtn" class="setting wide" type="button" aria-pressed="true">
-        <span class="setting-name">Motion</span>
-        <span class="setting-val">On</span>
-      </button>
-      <button id="cbBtn" class="setting wide" type="button">
-        <span class="setting-name">Colour vision</span>
-        <span class="setting-val">Normal</span>
-      </button>
-      <button id="ctrlBtn" class="setting wide" type="button">
-        <span class="setting-name">Control</span>
-        <span class="setting-val">Stick</span>
-      </button>
-      <button id="textBtn" class="setting wide" type="button">
-        <span class="setting-name">Text size</span>
-        <span class="setting-val">Normal</span>
-      </button>
-      <button id="contrastBtn" class="setting wide" type="button" aria-pressed="false">
-        <span class="setting-name">High contrast</span>
-        <span class="setting-val">Off</span>
-      </button>
-      <button id="ghostBtn" class="setting wide" type="button">
-        <span class="setting-name">Ghost rival</span>
-        <span class="setting-val">On</span>
-      </button>
+      <div class="settings-section">
+        <div class="settings-header">AUDIO</div>
+        <button id="soundBtn" class="setting wide" type="button" aria-pressed="true">
+          <span class="setting-name">Sound</span>
+          <span class="setting-val">On</span>
+        </button>
+        <div class="slider-row wide"><span class="setting-name">Music</span><input id="musicRange" type="range" min="0" max="100" step="5" aria-label="Music volume"><span class="val" id="musicVal">70%</span></div>
+        <div class="slider-row wide"><span class="setting-name">Effects</span><input id="sfxRange" type="range" min="0" max="100" step="5" aria-label="Effects volume"><span class="val" id="sfxVal">85%</span></div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-header">FEEL</div>
+        <button id="hapticBtn" class="setting wide" type="button">
+          <span class="setting-name">Haptics</span>
+          <span class="setting-val">Off</span>
+        </button>
+        <button id="motionBtn" class="setting wide" type="button" aria-pressed="true">
+          <span class="setting-name">Motion</span>
+          <span class="setting-val">On</span>
+        </button>
+        <button id="cbBtn" class="setting wide" type="button">
+          <span class="setting-name">Colour vision</span>
+          <span class="setting-val">Normal</span>
+        </button>
+        <button id="textBtn" class="setting wide" type="button">
+          <span class="setting-name">Text size</span>
+          <span class="setting-val">Normal</span>
+        </button>
+        <button id="contrastBtn" class="setting wide" type="button" aria-pressed="false">
+          <span class="setting-name">High contrast</span>
+          <span class="setting-val">Off</span>
+        </button>
+      </div>
+      <div class="settings-section">
+        <div class="settings-header">GAME</div>
+        <button id="ctrlBtn" class="setting wide" type="button">
+          <span class="setting-name">Control</span>
+          <span class="setting-val">Stick</span>
+        </button>
+        <button id="ghostBtn" class="setting wide" type="button">
+          <span class="setting-name">Ghost rival</span>
+          <span class="setting-val">On</span>
+        </button>
+      </div>
     </div>
     <button id="adPrivacyBtn" class="btn ghost wide hidden" type="button">AD PRIVACY CHOICES</button>
     <button id="settingsBackBtn" class="btn wide">BACK</button>
@@ -235,8 +244,8 @@
 
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="ads-config.js?v=b27"></script>
-<script src="rewarded-ads.js?v=b27"></script>
-<script src="game.js?v=b27"></script>
+<script src="ads-config.js?v=b28"></script>
+<script src="rewarded-ads.js?v=b28"></script>
+<script src="game.js?v=b28"></script>
 </body>
 </html>

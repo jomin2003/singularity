@@ -261,4 +261,95 @@ test('extended feeding across 50 meals keeps mass finite and bounded', ({ q }) =
   assert.ok(Number.isFinite(finalScore) && finalScore > 0 && finalScore < 1e12, 'score should be finite: ' + finalScore);
 });
 
+test('calming audio: no harsh waveforms or noise bursts anywhere in the SFX path', () => {
+  assert.ok(!/['"]sawtooth['"]/.test(source), 'no sawtooth oscillators remain');
+  assert.ok(!/['"]square['"]/.test(source), 'no square oscillators remain');
+  const body = (name) => {
+    const i = source.indexOf('\n  ' + name + '(');
+    assert.ok(i > 0, name + ' exists');
+    return source.slice(i, source.indexOf('\n  },', i) + 5);
+  };
+  assert.ok(!body('crunch').includes('createBufferSource'), 'crunch has no noise burst');
+  assert.ok(body('crunch').includes('this.tone('), 'crunch is a soft tone bloom');
+  assert.ok(!body('thud').includes('createBufferSource'), 'thud has no noise hit');
+  assert.ok(!body('nova').includes('createBufferSource'), 'nova has no noise swell');
+  assert.ok(!body('nova').includes('this.boom'), 'nova no longer detonates a boom');
+  assert.ok(!body('blip').includes('this.tick'), 'blip has no noise tick');
+  assert.ok(body('tick').includes('Math.min(peak'), 'tick peaks are capped');
+  assert.ok(body('tone').includes('Math.max(attack'), 'tone enforces a minimum attack');
+});
+
+test('follow steering tracks the fingertip and holds at rest', ({ q }) => {
+  q(`start(); state='play'; controlMode='follow';
+     p.x=0; p.y=0; p.vx=0; p.vy=0;
+     drag.active=true; drag.wx=1000; drag.wy=0;
+     window.ta = (SPEED_REF*p.r)*(SPACE_DRAG*Math.pow(P0/p.r,DRIFT_EXP));
+     window.mv = SPEED_REF*p.r;`);
+  const tv = q('thrustVector(window.ta, window.mv)');
+  assert.ok(Math.abs(tv.x - 1) < 1e-9 && Math.abs(tv.y) < 1e-9,
+    'far target saturates thrust toward it: ' + JSON.stringify(tv));
+  q('drag.wx=p.x; drag.wy=p.y;');
+  const tv0 = q('thrustVector(window.ta, window.mv)');
+  assert.ok(tv0.x === 0 && tv0.y === 0, 'a resting finger holds the hole still');
+  q('drag.wx=p.x+2; drag.wy=p.y;');
+  const tv1 = q('thrustVector(window.ta, window.mv)');
+  assert.ok(tv1.x > 0 && tv1.x < 1 && tv1.y === 0,
+    'a near target gives partial thrust: ' + JSON.stringify(tv1));
+});
+
+test('follow converges on the fingertip without orbiting', ({ q }) => {
+  q(`start(); state='play'; controlMode='follow'; motion=false;
+     p.x=0; p.y=0; p.vx=0; p.vy=0;
+     drag.active=true; drag.wx=400; drag.wy=0;
+     steerPointer=null; ents=[]; invuln=9999;`);
+  // The whole run must stay sane: approach, arrive, and then stay pinned.
+  // (Hazards are invulnerable-proofed out so a stray knock cannot fake a
+  // steering failure.)
+  let maxD = 0;
+  for (let i = 0; i < 420; i++) {
+    q('ents=[]; update(1/60)');
+    const d = q('Math.hypot(drag.wx-p.x, drag.wy-p.y)');
+    assert.ok(d < 500, 'must never run away: ' + d);
+    if (i >= 300 && d > maxD) maxD = d;
+  }
+  const final = q('Math.hypot(drag.wx-p.x, drag.wy-p.y)');
+  assert.ok(final < 6, 'should have arrived and stayed: ' + final);
+  assert.ok(maxD < 8, 'no orbit after arrival, max drift: ' + maxD);
+});
+
+test('relative steering maps thumb displacement straight to velocity', ({ q }) => {
+  q(`start(); state='play'; controlMode='relative';
+     p.x=0; p.y=0; p.vx=0; p.vy=0;
+     drag.active=true; drag.ax=0; drag.ay=0; drag.wx=0; drag.wy=0;
+     window.ta=(SPEED_REF*p.r)*(SPACE_DRAG*Math.pow(P0/p.r,DRIFT_EXP));
+     window.mv=SPEED_REF*p.r;`);
+  const t0 = q('thrustVector(window.ta, window.mv)');
+  assert.ok(t0.x === 0 && t0.y === 0, 'no displacement, no thrust');
+  q('drag.wx = p.r * 3; drag.wy = 0;');
+  const tv = q('thrustVector(window.ta, window.mv)');
+  assert.ok(tv.x > 0 && tv.x <= 1 && tv.y === 0,
+    'displacement steers +x directly: ' + JSON.stringify(tv));
+  q('drag.wx = p.r * 0.1;');
+  const td = q('thrustVector(window.ta, window.mv)');
+  assert.ok(td.x === 0 && td.y === 0, 'the deadzone swallows tiny drags');
+});
+
+test('the stick still commands thrust directly, unchanged', ({ q }) => {
+  q(`start(); state='play'; controlMode='joystick'; p.vx=0; p.vy=0;
+     joy.active=true; joy.dx=1; joy.dy=0;`);
+  const tv = q('thrustVector(999, 999)');
+  assert.ok(Math.abs(tv.x - 1) < 1e-9 && tv.y === 0, 'full stick deflection = full thrust');
+  q('joy.dx=0; joy.dy=0; joy.active=false;');
+  const tv0 = q('thrustVector(999, 999)');
+  assert.ok(tv0.x === 0 && tv0.y === 0, 'released stick = no thrust');
+});
+
+test('settings menu is sectioned into AUDIO / FEEL / GAME', () => {
+  const headers = [...html.matchAll(/class="settings-header">([A-Z]+)</g)].map(m => m[1]);
+  assert.deepEqual(headers, ['AUDIO', 'FEEL', 'GAME']);
+  for (const id of ['soundBtn', 'musicRange', 'sfxRange', 'hapticBtn', 'motionBtn', 'cbBtn',
+                    'ctrlBtn', 'textBtn', 'contrastBtn', 'ghostBtn', 'adPrivacyBtn', 'settingsBackBtn'])
+    assert.ok(html.includes('id="' + id + '"'), id + ' still in settings DOM');
+});
+
 console.log(passed + '/' + passed + ' feel checks passed');

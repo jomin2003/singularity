@@ -105,6 +105,16 @@ const SPACE_DRAG = 1.70;   // velocity bleed at the starting mass
 const DRIFT_EXP = 0.45;    // how much more a big hole coasts and lags
 const IMPULSE_CAP = 1.9;   // knockback headroom, as a multiple of top speed
 
+// Drag-scheme steering (FOLLOW and DRAG): the finger sets a DESIRED velocity
+// and the thrust vector is whatever acceleration closes the gap. Closing the
+// gap at TRACK_GAIN per second means velocity locks on in ~80 ms. FOLLOW
+// computes its desired speed from the braking distance so arrival has no
+// overshoot left to orbit; REL_GAIN turns thumb displacement (in world
+// units) into speed for the DRAG scheme, where dragging about two
+// hole-radii reaches full speed.
+const TRACK_GAIN = 12;             // 1/s: velocity tracking response
+const REL_GAIN = SPEED_REF * 0.5;  // DRAG: thumb displacement -> speed
+
 // How far ahead of the hole the camera leads, in seconds of travel. Small on
 // purpose: enough to open up the space you are moving into rather than the
 // space you just left, without making the hole feel detached from the camera.
@@ -113,7 +123,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b27';
+const BUILD_ID = 'b28';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -472,7 +482,7 @@ const Snd = {
     df.type = 'lowpass'; df.frequency.value = 200; df.Q.value = 5;
     dg.connect(df); df.connect(music);
 
-    [[55, 'sawtooth', 0.16], [55.7, 'sawtooth', 0.15], [82.5, 'sine', 0.10]]
+    [[55, 'sine', 0.18], [55.7, 'sine', 0.17], [82.5, 'sine', 0.10]]
       .forEach(([f, type, g]) => {
         const o = ac.createOscillator();
         o.type = type; o.frequency.value = f;
@@ -500,6 +510,10 @@ const Snd = {
   tone(freq, type, peak, attack, decay, detuneCents) {
     const ac = this.ac, t = ac.currentTime;
     const g = ac.createGain();
+    // Calming rule, enforced at the primitive: nothing in the SFX path may
+    // startle. Every tone gets a real attack.
+    attack = Math.max(attack || 0, 0.03);
+    peak = Math.min(peak, 0.2);
     g.gain.setValueAtTime(0.0001, t);
     // Two voices sum, so trim the peak to keep the perceived level steady.
     g.gain.linearRampToValueAtTime(peak * 0.62, t + attack);
@@ -516,11 +530,13 @@ const Snd = {
     }
   },
 
-  // A very short filtered noise click. The transient is most of what makes a
+  // A very short filtered noise click. Kept tiny and capped: it is seasoning
+  // for a tone, never the sound itself. The transient is most of what makes a
   // sound feel physical rather than synthesised -- a note that starts at full
   // volume with no attack noise reads as a beep.
   tick(freq, q, peak, decay) {
     if (!this.ac || this.muted || !this.noise) return;
+    peak = Math.min(peak, 0.15);
     const ac = this.ac, t = ac.currentTime;
     const s = ac.createBufferSource(); s.buffer = this.noise;
     const f = ac.createBiquadFilter(); f.type = 'bandpass';
@@ -532,7 +548,8 @@ const Snd = {
     s.start(t); s.stop(t + decay + 0.02);
   },
 
-  // rising pentatonic blip — the main dopamine lever
+  // Soft rising pentatonic bloom — the main dopamine lever, kept round and
+  // quiet. A sine voice with a real attack; no click on top.
   blip(step) {
     if (!this.ac || this.muted) return;
     const SCALE = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22, 24, 27, 29, 31, 34, 36];
@@ -540,79 +557,76 @@ const Snd = {
     const f = 196 * Math.pow(2, semi / 12);
     // Slight per-note detune so a fast chain of eats does not sound like the
     // same sample retriggered.
-    this.tone(f, 'triangle', 0.19, 0.008, 0.20, 6 + cosmeticRandom() * 8);
-    this.tick(f * 6, 1.4, 0.045, 0.03);
+    this.tone(f, 'sine', 0.12, 0.05, 0.30, 6 + cosmeticRandom() * 8);
   },
 
-  // short filtered noise — rock breaking apart
-  crunch() {
+  // A body dissolving into the well: a soft low bell, never a noise burst.
+  // Bigger bodies bloom lower and warmer — the pitch carries the mass, so
+  // the mix never has to shout it.
+  crunch(sizeRatio) {
     if (!this.ac || this.muted) return;
-    const ac = this.ac, t = ac.currentTime;
-    const s = ac.createBufferSource(); s.buffer = this.noise;
-    s.playbackRate.value = 1.9;
-    const f = ac.createBiquadFilter(); f.type = 'bandpass';
-    f.frequency.value = 1400; f.Q.value = 1.1;
-    const g = ac.createGain();
-    g.gain.setValueAtTime(0.30, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
-    s.connect(f); f.connect(g); g.connect(this.sfxBus);
-    s.start(t); s.stop(t + 0.15);
+    const s = clamp(sizeRatio || 0.5, 0, 1);
+    const f = 300 * Math.pow(2, -s);
+    this.tone(f, 'sine', 0.13, 0.06, 0.55, 6);
+    this.tone(f / 2, 'sine', 0.08, 0.08, 0.65, 6);
   },
 
+  // A supernova, as a gentle rising chime. It used to be a noise swell with
+  // a boom underneath; now it is one warm sine that climbs two octaves and
+  // a softer shimmer that blooms after it.
   nova() {
     if (!this.ac || this.muted) return;
     const ac = this.ac, t = ac.currentTime;
     const g = ac.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.34 * 0.62, t + 0.03);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    g.gain.linearRampToValueAtTime(0.14, t + 0.25);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
     g.connect(this.sfxBus);
-    // Two detuned sweepers plus a noise swell. A single sine sweep is the
-    // classic placeholder laser; the second voice and the noise give it mass.
-    for (let i = 0; i < 2; i++) {
-      const o = ac.createOscillator(); o.type = 'sine';
-      o.detune.value = i === 0 ? -14 : 14;
-      o.frequency.setValueAtTime(180, t);
-      o.frequency.exponentialRampToValueAtTime(1500, t + 0.5);
-      o.connect(g);
-      o.start(t); o.stop(t + 0.72);
-    }
-    this.tick(900, 0.7, 0.13, 0.45);
-    this.boom();
+    const o = ac.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(240, t);
+    o.frequency.exponentialRampToValueAtTime(960, t + 0.9);
+    o.connect(g);
+    o.start(t); o.stop(t + 1.35);
+    const o2 = ac.createOscillator(); o2.type = 'sine';
+    o2.frequency.setValueAtTime(480, t + 0.3);
+    o2.frequency.exponentialRampToValueAtTime(1920, t + 1.1);
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(0.0001, t + 0.3);
+    g2.gain.linearRampToValueAtTime(0.06, t + 0.6);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+    o2.connect(g2); g2.connect(this.sfxBus);
+    o2.start(t + 0.3); o2.stop(t + 1.35);
   },
 
+  // A glancing impact: a soft low bloom with a slow pitch fall. The old
+  // version led with a 0.55-peak noise hit; that is gone.
   thud() {
     if (!this.ac || this.muted) return;
     const ac = this.ac, t = ac.currentTime;
-    const s = ac.createBufferSource(); s.buffer = this.noise;
-    const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 420;
-    const g = ac.createGain();
-    g.gain.setValueAtTime(0.55, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
-    s.connect(f); f.connect(g); g.connect(this.sfxBus);
-    s.start(t); s.stop(t + 0.36);
-
     const o = ac.createOscillator(); o.type = 'sine';
-    o.frequency.setValueAtTime(150, t);
-    o.frequency.exponentialRampToValueAtTime(42, t + 0.30);
-    const og = ac.createGain();
-    og.gain.setValueAtTime(0.5, t);
-    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
-    o.connect(og); og.connect(this.sfxBus);
-    o.start(t); o.stop(t + 0.34);
+    o.frequency.setValueAtTime(110, t);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.5);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.15, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+    o.connect(g); g.connect(this.sfxBus);
+    o.start(t); o.stop(t + 0.6);
   },
 
+  // Milestone swell: a warm low sine that breathes in slowly, not a hit.
   boom() {
     if (!this.ac || this.muted) return;
     const ac = this.ac, t = ac.currentTime;
     const o = ac.createOscillator(); o.type = 'sine';
-    o.frequency.setValueAtTime(90, t);
-    o.frequency.exponentialRampToValueAtTime(420, t + 0.22);
+    o.frequency.setValueAtTime(70, t);
+    o.frequency.exponentialRampToValueAtTime(160, t + 0.5);
     const g = ac.createGain();
-    g.gain.setValueAtTime(0.34, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.15, t + 0.18);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
     o.connect(g); g.connect(this.sfxBus);
-    o.start(t); o.stop(t + 0.44);
+    o.start(t); o.stop(t + 0.95);
   },
 
   // Pitch sweep primitive for risers, falls and telegraphs.
@@ -633,7 +647,7 @@ const Snd = {
   },
 
   riser() { this.sweep(200, 900, 1.1, 0.12); },       // kilonova telegraph
-  fall() { this.sweep(600, 140, 0.5, 0.14, 'triangle'); },  // combo break
+  fall() { this.sweep(600, 140, 0.5, 0.12, 'sine'); },      // combo break
 
   // Stingers: short composed phrases in the drone's key that punctuate
   // milestones. Scheduled with timers so they need no sequencer.
@@ -648,7 +662,7 @@ const Snd = {
     }[kind];
     if (!seq) return;
     seq.forEach(([f, ms]) => setTimeout(() => {
-      try { if (this.ac && !this.muted) this.tone(f, 'triangle', 0.16, 0.01, 0.3, 5); }
+      try { if (this.ac && !this.muted) this.tone(f, 'sine', 0.11, 0.05, 0.4, 5); }
       catch (_) {}
     }, ms));
   },
@@ -668,20 +682,20 @@ const Snd = {
     } catch (_) {}
   },
 
+  // Death: a soft descending tone, lowpassed and unhurried. The old version
+  // was a sawtooth sweep; this one sighs out instead.
   collapse() {
     if (!this.ac || this.muted) return;
     const ac = this.ac, t = ac.currentTime;
-    const o = ac.createOscillator(); o.type = 'sawtooth';
-    o.frequency.setValueAtTime(320, t);
-    o.frequency.exponentialRampToValueAtTime(28, t + 1.0);
-    const f = ac.createBiquadFilter(); f.type = 'lowpass';
-    f.frequency.setValueAtTime(1800, t);
-    f.frequency.exponentialRampToValueAtTime(120, t + 1.0);
+    const o = ac.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(220, t);
+    o.frequency.exponentialRampToValueAtTime(48, t + 1.2);
     const g = ac.createGain();
-    g.gain.setValueAtTime(0.42, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.1);
-    o.connect(f); f.connect(g); g.connect(this.sfxBus);
-    o.start(t); o.stop(t + 1.15);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.18, t + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+    o.connect(g); g.connect(this.sfxBus);
+    o.start(t); o.stop(t + 1.45);
   },
 
   // ---- Bundled soundtrack -----------------------------------------------
@@ -2240,7 +2254,7 @@ function disrupt(e, idx) {
     });
   }
   burstFx(e.x, e.y, 16, e.r, 1.0, entHue(e.r / p.r));
-  Snd.crunch();
+  Snd.crunch(e.r / p.r);
   ents.splice(idx, 1);
 }
 
@@ -2311,7 +2325,7 @@ function consume(e, idx, opts) {
 
   if (!quiet) {
     absorbFx(e);
-    if (type === 'asteroid') Snd.crunch();
+    if (type === 'asteroid') Snd.crunch(e.r / p.r);
     else Snd.blip(combo - 1);
   }
   Snd.setDrone(true, combo);
@@ -2540,11 +2554,19 @@ function die() {
 // Every input funnels through here so the physics below is identical however
 // you are steering -- there is exactly one place that decides how the hole
 // accelerates, which is what keeps the feel consistent across control modes.
-function thrustVector() {
+//
+// The stick and the keyboard command thrust directly (unchanged). The drag
+// schemes (FOLLOW / DRAG) are different: the finger sets a DESIRED velocity
+// and the returned vector is whatever acceleration closes the gap between
+// the current velocity and the desired one within ~1/TRACK_GAIN s. That
+// kills the old steer-toward-a-point model, which tapered thrust near the
+// target and left the hole orbiting it forever.
+function thrustVector(thrustAccel, maxV) {
   let x = 0, y = 0;
 
   // Directional inputs: the stick, plus the keyboard (desktop, or Android with
-  // a hardware keyboard). They sum, then get clamped to unit length.
+  // a hardware keyboard). They sum, then get clamped to unit length. This
+  // path is the stick's feel and is deliberately untouched.
   if (controlMode === 'joystick') { x += joy.dx; y += joy.dy; }
   const kx = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
   const ky = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
@@ -2552,23 +2574,52 @@ function thrustVector() {
     const m = Math.hypot(kx, ky);
     x += kx / m; y += ky / m;
   }
-
-  // Drag schemes steer toward the held point. Thrust tapers off as you arrive,
-  // because a constant full-thrust pull at a nearby target is just something
-  // to overshoot and then orbit forever.
-  if (!x && !y && drag.active) {
-    const dx = drag.wx - p.x, dy = drag.wy - p.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 1) {
-      const mag = clamp(dist / (p.r * 6), 0, 1);
-      x = (dx / dist) * mag;
-      y = (dy / dist) * mag;
-    }
+  if (x || y) {
+    const m = Math.hypot(x, y);
+    if (m > 1) { x /= m; y /= m; }
+    return { x: x, y: y };
   }
 
-  const m = Math.hypot(x, y);
-  if (m > 1) { x /= m; y /= m; }
-  return { x: x, y: y };
+  if (drag.active) {
+    let dvx = 0, dvy = 0;   // desired velocity
+    if (controlMode === 'follow') {
+      // The hole glides to the fingertip and holds there. Desired speed is
+      // the fastest speed from which full thrust can still stop AT the
+      // target (sqrt(2*a*d), with margin for tracking lag), capped at top
+      // speed: flat out when far, easing in near the fingertip, so arrival
+      // has no overshoot left to orbit. A resting finger pins the hole at
+      // the finger's world point.
+      const dx = drag.wx - p.x, dy = drag.wy - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0.5) {
+        const spd = Math.min(maxV, Math.sqrt(1.2 * thrustAccel * dist));
+        dvx = (dx / dist) * spd; dvy = (dy / dist) * spd;
+      }
+    } else {
+      // DRAG: thumb displacement maps straight to velocity, 1:1 like the
+      // stick, instead of to a target point that the hole then chases.
+      const dx = drag.wx - drag.ax, dy = drag.wy - drag.ay;
+      const dist = Math.hypot(dx, dy);
+      const dead = p.r * 0.25;
+      if (dist > dead) {
+        const spd = Math.min(maxV, (dist - dead) * REL_GAIN);
+        dvx = (dx / dist) * spd; dvy = (dy / dist) * spd;
+      }
+    }
+    // Thrust needed to close the gap: tv * thrustAccel * dt moves velocity
+    // toward desired by (desired - v) * TRACK_GAIN * dt each frame. Clamped
+    // to unit thrust, so saturation just means "as hard as possible".
+    let tx = 0, ty = 0;
+    if (thrustAccel > 0) {
+      tx = (dvx - p.vx) * TRACK_GAIN / thrustAccel;
+      ty = (dvy - p.vy) * TRACK_GAIN / thrustAccel;
+    }
+    const m = Math.hypot(tx, ty);
+    if (m > 1) { tx /= m; ty /= m; }
+    return { x: tx, y: ty };
+  }
+
+  return { x: 0, y: 0 };
 }
 
 function update(dt) {
@@ -2764,12 +2815,12 @@ function update(dt) {
       const w = screenToWorld(pointer.x, pointer.y);
       drag.wx = w.x; drag.wy = w.y;
     }
-    const tv = thrustVector();
     const maxV = SPEED_REF * p.r;
     // Wisp variant: nimbler hands, same top speed.
     const dexp = VARMODS[variant].driftExp;
     const bleedRate = SPACE_DRAG * Math.pow(P0 / p.r, dexp === null ? DRIFT_EXP : dexp);
     const thrust = maxV * bleedRate;
+    const tv = thrustVector(thrust, maxV);
 
     p.vx += tv.x * thrust * dt;
     p.vy += tv.y * thrust * dt;
@@ -4149,8 +4200,8 @@ const CTRL_ORDER = ['joystick', 'follow', 'relative'];
 const CTRL_VALUE = { joystick: 'Stick', follow: 'Follow', relative: 'Drag' };
 const CTRL_HINT = {
   joystick: 'push the stick at the bottom of the screen',
-  follow: 'the hole chases your fingertip',
-  relative: 'drag anywhere; the hole tracks the gesture'
+  follow: 'the hole glides to your fingertip and holds there',
+  relative: 'drag anywhere; the hole mirrors your thumb 1:1'
 };
 let controlMode = lsGet('control', 'joystick');
 if (CTRL_ORDER.indexOf(controlMode) < 0) controlMode = 'joystick';
