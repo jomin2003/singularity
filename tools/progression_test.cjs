@@ -42,7 +42,7 @@ function test(name, fn) {
 test('boot and start', ({q}) => { q('start()'); assert.equal(q('state'), 'play'); });
 test('fixed-seed reset and 120 simulation ticks reproduce exactly', ({q}) => {
   q(`window.sampleRun = () => {
-    seedOverride = 12345; reset(); state = 'play'; pauseOnEvent = false;
+    seedOverride = 12345; reset(); state = 'play';
     for (let i = 0; i < 120; i++) update(1 / 60);
     return JSON.stringify({ radius: p.r, score, rngState,
       bodies: ents.map(e => [e.x, e.y, e.r, e.body.type]) });
@@ -105,7 +105,7 @@ test('upgrades apply modest actual effects on next ordinary run only', ({q}) => 
   assert.ok(Math.abs(q('COMBO_WINDOW_V()/VARMODS[variant].comboWin') - 1.25) < 1e-8);
   q("hurt({x:100,y:0,vx:0,vy:0,body:{type:'rocky'}})");
   assert.ok(Math.abs(q('p.mass') - 11 * 0.8) < 1e-8);
-  q("start(); ents=[]; pauseOnEvent=false; update(0.01)");
+  q("start(); ents=[]; update(0.01)");
   assert.ok(Math.abs(q('drainRate') - q('HAWKING_BASE * Math.pow(P0 / 24.2, 3) * 0.85')) < 1e-8);
   q('seedOverride=123; start()');
   assert.equal(q('p.r'), 22, 'seeded challenges stay unupgraded');
@@ -163,31 +163,32 @@ test('fresh death blocks an immediate retry, then permits retry after 0.8 second
   w.document.getElementById('againBtn').click();
   assert.equal(q('state'), 'play');
 });
-test('a panel opened outside play closes back to that state, not to play', ({q}) => {
+test('pause cannot open outside play, and resume returns to play', ({q}) => {
   // The realistic shape of this: update() keeps running after death, so a
-  // surprise can land on the fatal frame. Closing must not resume the run --
+  // pause landing on the fatal frame must not be able to resume the run --
   // its score is already committed and its report is on screen.
   q('start(); die()');
   assert.equal(q('state'), 'dead');
-  q('openEventPanel("civ")');
-  assert.equal(q('state'), 'paused');
-  q('closeEventPanel()');
+  q('pauseGame()');
   assert.equal(q('state'), 'dead');
-  // ...and closing a panel opened during play still resumes play.
-  q('start(); openEventPanel("civ"); closeEventPanel()');
+  // ...and pausing during play still resumes to play.
+  q('start(); pauseGame()');
+  assert.equal(q('state'), 'paused');
+  q('resumeGame()');
   assert.equal(q('state'), 'play');
 });
 test('a finale on the fatal frame cannot open over the run report', ({q, w}) => {
   q('start(); score = 1200 * (ERAS.length - 1); die(); update(0.016)');
   assert.equal(q('state'), 'dead');
   assert.equal(q('panel'), null);
-  assert.equal(w.document.getElementById('eventPanel').classList.contains('hidden'), true);
+  assert.equal(w.document.getElementById('eventPanel'), null);
   assert.equal(w.document.getElementById('over').classList.contains('hidden'), false);
 });
-test('a zero-score run is not charted in the footer history', ({q}) => {
-  q('start(); score = 0; die()');
-  assert.equal(q('history.length'), 0, 'a 0 run writes no bar');
+test('run history footer is fully removed', ({q, w}) => {
+  assert.equal(q("typeof HIST_MAX"),'undefined');
+  assert.equal(q("typeof pushHistory"),'undefined');
+  assert.equal(q("typeof renderHistory"),'undefined');
+  assert.equal(w.document.getElementById('histStrip'),null);
   q('start(); score = 250; die()');
-  assert.equal(q('history.length'), 1);
 });
 console.log(`${passed} progression checks passed`);

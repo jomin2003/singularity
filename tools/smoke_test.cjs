@@ -248,36 +248,32 @@ const check = (label, cond, detail) => {
   return cond;
 };
 
-// The first-encounter stop pauses the run to explain a pulsar / wormhole /
-// civilisation. It must never be able to wedge the harness, so every phase
-// that expects the sim to be running clears it first.
-const dismissEvent = () => {
-  if (!visible('eventPanel')) return false;
-  $('eventOkBtn').click();
-  return true;
-};
 
 /* ---- 0. new UI surfaces exist before anything is played ---- */
 check('menu: control picker rendered',
   $('ctrlPick') && $('ctrlPick').querySelectorAll('button').length === 3);
 check('menu: no MOUSE scheme (Android-first)',
   $('ctrlPick') && !$('ctrlPick').querySelector('[data-ctrl="mouse"]'));
-check('menu: how-to rows rendered',
-  doc.querySelectorAll('#howto .how-row').length === 3);
+check('menu: how-to rows removed for the minimal start',
+  !doc.getElementById('howto') && doc.querySelectorAll('.how-row').length === 0);
 check('menu: settings reachable without playing', !!$('menuSettingsBtn'));
 check('menu: wrapped in a glass card', !!$('menuCard'));
-check('menu: how-to rows use inline SVG icons',
-  doc.querySelectorAll('#howto .how-ico svg').length === 3,
-  doc.querySelectorAll('#howto .how-ico svg').length + ' icons');
-check('menu: the old colour dots are gone',
-  doc.querySelectorAll('#howto .dot').length === 0);
+check('menu: gear icon is inline SVG',
+  !!$('menuSettingsBtn').querySelector('svg'));
+check('menu: hero CTA sits directly under the subtitle',
+  $('playBtn') && $('playBtn').previousElementSibling &&
+  $('playBtn').previousElementSibling.classList.contains('subtitle'));
+check('menu: daily run is a quiet secondary',
+  $('dailyBtn') && $('dailyBtn').classList.contains('ghost'));
+check('menu: best score shown without the history strip',
+  !!$('menuBest') && !$('histStrip'));
 check('menu: settings demoted to a labelled icon button',
   $('menuSettingsBtn').tagName === 'BUTTON' &&
   $('menuSettingsBtn').getAttribute('aria-label') === 'Settings');
 check('menu: control picker exposes its selection for the pill indicator',
   $('ctrlPick').dataset.sel === 'joystick', 'data-sel=' + $('ctrlPick').dataset.sel);
-check('menu: primary action is present and last in the card',
-  $('menuCard').lastElementChild.classList.contains('menu-foot'));
+check('menu: minimal start keeps setup and meta reachable',
+  !!$('runSetup') && !!$('menuObservatoryBtn') && !!$('menuLeaderboardBtn'));
 check('hud: combo bar built with 20 pips',
   $('comboBar').children.length === 20, $('comboBar').children.length + ' pips');
 
@@ -289,8 +285,8 @@ check('hud: combo bar built with 20 pips',
    twice and max-height is measured against a box it is also padding -- which
    is exactly the bug that had to be unwound in index.html. Pixel geometry is
    not observable in jsdom, so assert the contract instead. */
-const OVERLAYS = ['menu', 'over', 'pause', 'settings', 'observe', 'eventPanel',
-                  'fieldguide', 'dailyreward', 'leaderboard', 'observatory'];
+const OVERLAYS = ['menu', 'over', 'pause', 'settings', 'observe',
+                  'dailyreward', 'leaderboard', 'observatory'];
 check('structure: no overlay is itself a glass card',
   OVERLAYS.every((id) => $(id) && !$(id).classList.contains('glass-card')));
 check('structure: every overlay holds exactly one card child',
@@ -299,10 +295,11 @@ check('structure: every overlay holds exactly one card child',
       (n) => n.classList.contains('glass-card') || n.id === 'menuCard');
     return cards.length === 1;
   }));
-check('structure: the menu exposes its own scrim and card only',
-  $('menu').children.length === 2 &&
-  $('menu').children[0].id === 'menuAurora' &&
-  $('menu').children[1].id === 'menuCard');
+check('structure: the menu exposes its card only',
+  $('menu').children.length === 1 &&
+  $('menu').children[0].id === 'menuCard');
+check('structure: no first-encounter or field-guide overlays remain',
+  !$('eventPanel') && !$('fieldguide') && !$('menuAurora'));
 
 /* ---- 1. boot ---- */
 check('boot: menu layer visible', visible('menu'));
@@ -365,7 +362,6 @@ check('play: the hole grows by eating under inertial control',
   'grew 22 -> ' + scoreAfterPlay);
 
 /* ---- 4b. pause / settings / back / home (only valid if still alive) ---- */
-dismissEvent();
 if (!died) {
   const before = num('hudScore');
   $('pauseBtn').click();
@@ -427,15 +423,8 @@ if (!died) {
       errors.length === 0);
   }
 
-  // The first-encounter stop is new; prove it opens, then that it lets go.
-  if (visible('eventPanel')) {
-    check('event: first-encounter panel opened', true,
-      $('eventTitle').textContent);
-    $('eventOkBtn').click();
-    check('event: CONTINUE returns to play', !visible('eventPanel'));
-    step(60);
-    check('event: run continues after the explainer', errors.length === 0);
-  }
+  // First-encounter explainers were removed: the sim must never pause for one.
+  check('event: no first-encounter panel can open', !$('eventPanel'));
 }
 
 send('pointerup', 512, 384);
@@ -448,7 +437,6 @@ send('pointerup', 512, 384);
 if (!died) {
   let guard = 0;
   while (!visible('over') && guard < 120000) {
-    if ((guard & 63) === 0) dismissEvent();   // an explainer would freeze the sim
     step(1); guard++;
   }
   if (visible('over')) {
@@ -490,7 +478,6 @@ step(120);
 check('restart: 120 frames without throwing', errors.length === 0);
 
 /* ---- 7. HOME from pause -> main menu, and the best score survives ---- */
-dismissEvent();
 $('pauseBtn').click();
 check('pause: works on a restarted run', visible('pause'));
 $('homeBtn').click();
@@ -498,8 +485,8 @@ check('home: back at main menu', visible('menu'));
 check('home: HUD hidden', !visible('hud'));
 check('home: best score shown on menu', /BEST/.test($('menuBest').textContent),
   'menuBest="' + $('menuBest').textContent + '"');
-check('home: best-history strip has entries',
-  $('histStrip').children.length >= 1, $('histStrip').children.length + ' runs');
+check('home: history strip removed with the clutter',
+  !$('histStrip'));
 
 /* ---- 8. SETTINGS from the menu, and BACK returns to the menu ---- */
 $('menuSettingsBtn').click();

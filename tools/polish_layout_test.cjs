@@ -95,11 +95,12 @@ async function main() {
     await sleep(500);
     await evaluate('(' + fixture + ')()');
     assert.equal(await evaluate('document.querySelectorAll("#menuCard > details").length'), 1);
-    assert.equal(await evaluate('document.querySelectorAll("#menuCard > .menu-foot .meta-btn span").length'), 3);
+    assert.equal(await evaluate('document.querySelectorAll("#menuCard .menu-meta-row .meta-btn .meta-lab").length'), 2);
+    assert.equal(await evaluate('document.getElementById("menuCard").classList.contains("menu-min")'), true);
     assert.equal(await evaluate('getComputedStyle(document.body).touchAction'), 'auto');
     assert.equal(await evaluate('getComputedStyle(document.getElementById("game")).touchAction'), 'none');
     const quick = process.argv.includes('--quick');
-    const panels = quick ? ['menu'] : ['menu','settings','over','pause','observe','eventPanel','fieldguide','dailyreward','leaderboard','observatory'];
+    const panels = quick ? ['menu'] : ['menu','settings','over','pause','observe','dailyreward','leaderboard','observatory'];
     let count = 0;
     for (const [width,height] of (quick ? [[320,568]] : [[320,568],[360,640],[390,844],[667,375],[844,390],[1280,800],[280,400]])) {
       await send('Emulation.setDeviceMetricsOverride', {width,height,deviceScaleFactor:1,mobile:true});

@@ -43,7 +43,7 @@ function test(name, fn) {
 }
 
 test('follow target stays locked to the held finger while the camera moves', ({ q }) => {
-  q(`start(); state='play'; pauseOnEvent=false; controlMode='follow'; motion=false;
+  q(`start(); state='play'; controlMode='follow'; motion=false;
      steerPointer=7; drag.active=true; drag.sx=300; drag.sy=400;
      pointer.x=300; pointer.y=400; pointer.down=true; pointer.on=true;
      window.errs=[];`);
@@ -60,7 +60,7 @@ test('follow target stays locked to the held finger while the camera moves', ({ 
 });
 
 test('a second finger cannot steal steering and its lift cannot cancel it', ({ q, w }) => {
-  q(`start(); state='play'; controlMode='joystick'; pauseOnEvent=false;`);
+  q(`start(); state='play'; controlMode='joystick';`);
   const down = (id, x, y) => {
     const e = new w.Event('pointerdown', { bubbles: true });
     Object.assign(e, { pointerId: id, clientX: x, clientY: y, pointerType: 'touch' });
@@ -105,7 +105,7 @@ test('Space in settings does nothing destructive; Enter respects the death guard
 });
 
 test('wormholes are never tidally disrupted', ({ q }) => {
-  q(`start(); state='play'; pauseOnEvent=false;
+  q(`start(); state='play';
      window.wh = { x: p.x + 2, y: p.y, vx: 0, vy: 0,
        r: p.r * 0.8, spin: 0, phase: 0,
        body: { type: 'wormhole', variant: 0, spin: 0 },
@@ -117,7 +117,7 @@ test('wormholes are never tidally disrupted', ({ q }) => {
 });
 
 test('fragments of disrupted bodies carry the pair teleport fields', ({ q }) => {
-  q(`start(); state='play'; pauseOnEvent=false;
+  q(`start(); state='play';
      window.big = { x: p.x + p.r * 2, y: p.y, vx: 0, vy: 0,
        r: Math.max(8, p.r * 0.5), spin: 0, phase: 0,
        body: { type: 'rocky', variant: 0, spin: 0 }, frag: false,
@@ -129,7 +129,7 @@ test('fragments of disrupted bodies carry the pair teleport fields', ({ q }) => 
 });
 
 test('pulsar shield lifetime, impact absorption and pause behaviour', ({ q }) => {
-  q(`start(); state='play'; pauseOnEvent=false;
+  q(`start(); state='play';
      window.pred = { x: p.x - p.r * 3, y: p.y, vx: 0, vy: 0, r: p.r,
        body: { type: 'asteroid', variant: 0, spin: 0 }, spin: 0, phase: 0 };
      ents = [pred]; shield = 3; invuln = 0;`);
@@ -158,7 +158,7 @@ test('pulsar shield lifetime, impact absorption and pause behaviour', ({ q }) =>
 });
 
 test('a star landing on the combo milestone still triggers the shockwave pick', ({ q }) => {
-  q(`start(); state='play'; pauseOnEvent=false; combo = ${'WAVE_EVERY()'} - 1;
+  q(`start(); state='play'; combo = ${'WAVE_EVERY()'} - 1;
      window.meal = { x: p.x, y: p.y, r: Math.max(6, p.r * 0.3), vx: 0, vy: 0,
        spin: 0, phase: 0, body: { type: 'star', variant: 0, spin: 0 } };
      ents = [meal]; consume(meal, 0);`);
@@ -167,7 +167,7 @@ test('a star landing on the combo milestone still triggers the shockwave pick', 
 });
 
 test('mass-driver slugs fire toward the player, not away', ({ q }) => {
-  q(`start(); state='play'; pauseOnEvent=false;
+  q(`start(); state='play';
      ents = [{ x: p.x + 100, y: p.y, vx: 0, vy: 0, r: p.r * 2, spin: 0, phase: 0,
        body: { type: 'rocky', variant: 0, spin: 0 }, civ: 'driver', cool: 0 }];
      slugs = []; update(1/60);`);
@@ -187,7 +187,7 @@ test('malformed weeklyScores cannot break the death path', ({ q, w }) => {
 });
 
 test('dwarf density and immediate feeding keep mass finite', ({ q }) => {
-  q('start(); pauseOnEvent=false;');
+  q('start();');
   for (const [type, density] of [['rocky', 1], ['whiteDwarf', 4], ['brownDwarf', 2]]) {
     const before = q('p.mass');
     q(`window.meal={x:p.x,y:p.y,r:P0/2,vx:0,vy:0,spin:0,phase:0,
@@ -199,7 +199,7 @@ test('dwarf density and immediate feeding keep mass finite', ({ q }) => {
 });
 
 test('extended feeding across 50 meals keeps mass finite and bounded', ({ q }) => {
-  q('start(); pauseOnEvent=false;');
+  q('start();');
   for (let i = 0; i < 50; i++) {
     const type = (i % 3 === 0) ? 'whiteDwarf' : 'rocky';
     q(`window.meal={x:p.x,y:p.y,r:p.r * 0.45,vx:0,vy:0,spin:0,phase:0,

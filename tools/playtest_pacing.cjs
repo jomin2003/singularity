@@ -289,15 +289,6 @@ function runPlaytest(seed, scenarioName, policyName, capSec) {
   const capFrames = Math.round(capSec * 60);
 
   for (let f = 0; f < capFrames; f++) {
-    // Panel click FIRST: an open eventPanel pauses the sim, and the pick can
-    // only resolve inside a running update(). A human sees the panel and
-    // dismisses it, then steers the pick -- mirror that order.
-    const ep = w.document.getElementById('eventPanel');
-    if (ep && !ep.classList.contains('hidden')) {
-      w.document.getElementById('eventOkBtn').click();
-      step(1);
-      continue;
-    }
     // Shockwave pick on screen -> hold centre to take the AGN wave.
     if (w.__pt.q('pickHold')) {
       w.__pt.push(0, 0);
@@ -323,8 +314,6 @@ function runPlaytest(seed, scenarioName, policyName, capSec) {
 
   const dead = w.__pt.q('state') === 'dead';
   const finalState = w.__pt.q('state');
-  const panelStuck = w.document.getElementById('eventPanel') &&
-    !w.document.getElementById('eventPanel').classList.contains('hidden');
   let crash = null;
   if (w.__pt.q('crashed')) {
     const f = w.document.getElementById('fatal');
@@ -334,7 +323,7 @@ function runPlaytest(seed, scenarioName, policyName, capSec) {
   const out = {
     seed, scenario: scenarioName, policy: policyName,
     died: dead,
-    finalState, panelStuck,
+    finalState,
     crashed: !!crash,
     crash,
     time: w.__pt.q('elapsed'),
@@ -388,7 +377,7 @@ for (const [scen, pol] of PLAN) {
       `peakR=${r.peakR.toFixed(0)} cause="${r.cause}" biggest=+${r.biggest}`);
     if (r.crash) console.log('    CRASH: ' + r.crash.split('\n')[0] + ' | ' + r.crash.split('\n')[1]);
     if (!r.died && !r.crash && r.finalState !== 'play')
-      console.log(`    NOTE: exited state=${r.finalState}${r.panelStuck ? ' eventPanel stuck open' : ''}`);
+      console.log(`    NOTE: exited state=${r.finalState}`);
     const eraLine = Object.entries(r.eras).map(([e, t]) => `e${e}@${t.toFixed(0)}s`).join(' ');
     if (eraLine) console.log('    eras: ' + eraLine);
   }

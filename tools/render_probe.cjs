@@ -99,16 +99,12 @@ const PLAY_PROBE = `(() => {
 const MENU_PROBE = `(() => {
   const out = { errs: [], flagged: [], orangeSeen: false, aurora: 'absent' };
   try {
-    const aur = document.getElementById('menuAurora');
-    if (aur) {
-      const cs = getComputedStyle(aur);
-      out.aurora = cs.display === 'none' ? 'hidden' : 'VISIBLE';
-    }
+    if (document.getElementById('menuAurora')) out.aurora = 'PRESENT';
     const CYAN = ['143, 233, 230', '143,233,230'];
     const VIOLET = ['171, 158, 234', '171,158,234'];
     const seen = new Set();
     document.querySelectorAll('body *').forEach((n) => {
-      if (n.closest('.hidden') || n.id === 'menuAurora') return;
+      if (n.closest('.hidden')) return;
       const cs = getComputedStyle(n);
       if (cs.display === 'none' || cs.visibility === 'hidden') return;
       const r = n.getBoundingClientRect();

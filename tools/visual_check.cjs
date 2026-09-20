@@ -77,7 +77,6 @@ const MEASURE = `(() => {
   const bad = [];
   document.querySelectorAll('body *').forEach((n) => {
     if (n.closest('.hidden')) return;
-    if (n.id === 'menuAurora') return;                 // deliberately oversized wash
     const cs = getComputedStyle(n);
     if (cs.display === 'none' || cs.visibility === 'hidden') return;
     const r = n.getBoundingClientRect();

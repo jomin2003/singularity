@@ -113,7 +113,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b24';
+const BUILD_ID = 'b25';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -163,7 +163,7 @@ let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
 let pendingWave = 0, shotT = 0;   // AGN feedback wind-up timer (0 = none)
-let panel = null;   // null | 'pause' | 'settings' | 'event'
+let panel = null;   // null | 'pause' | 'settings' | 'observe' | 'dailyreward' | 'leaderboard' | 'observatory'
 let camRoll = 0;    // proximity tilt wobble near big bodies
 let shield = 0;     // one-hit protection from eating a pulsar
 let kilonovaT = 0;  // countdown to the next neutron-star merger event
@@ -176,10 +176,6 @@ let nearDeath = 0;      // 0 = comfortable, 1 = about to evaporate
 let lastHurtT = -99;    // elapsed time of the last impact (death attribution)
 let overGuardT = 0;     // input guard so a stray tap cannot skip the score
 let drainRate = 0;      // current fractional decay, for the vignette pulse
-let eventKey = null;    // which first-encounter panel is open
-// What the world was doing before the panel froze it. closeEventPanel has to
-// restore THIS, not 'play' -- see the guard there.
-let eventReturnState = 'play';
 let coachStep = 0;      // first-run scripted hint index
 let bestAtRunStart = 0; // previous best, for the "N away from BEST" line
 let runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
@@ -292,7 +288,6 @@ const el = {
   varHint: document.getElementById('varHint'),
   dailyBtn: document.getElementById('dailyBtn'),
   missions: document.getElementById('missions'),
-  histStrip: document.getElementById('histStrip'),
   over: document.getElementById('over'),
   finalScore: document.getElementById('finalScore'),
   overBest: document.getElementById('overGap'),
@@ -330,14 +325,8 @@ const el = {
   textBtn: document.getElementById('textBtn'),
   contrastBtn: document.getElementById('contrastBtn'),
   threatBtn: document.getElementById('threatBtn'),
-  eventBtn: document.getElementById('eventBtn'),
   settingsBackBtn: document.getElementById('settingsBackBtn'),
-  eventPanel: document.getElementById('eventPanel'),
-  eventTitle: document.getElementById('eventTitle'),
-  eventBody: document.getElementById('eventBody'),
-  eventOkBtn: document.getElementById('eventOkBtn'),
-  keysLegend: document.getElementById('keysLegend'),
-  buildTag: document.getElementById('buildTag')
+  keysLegend: document.getElementById('keysLegend')
 };
 
 const show = (n) => n.classList.remove('hidden');
@@ -419,7 +408,6 @@ let motion = motionPreference && !(motionQuery && motionQuery.matches);
 let textLarge = lsGet('text', '0') === '1';
 let highContrast = lsGet('contrast', '0') === '1';
 let threatReadout = lsGet('threat', '0') === '1';
-let pauseOnEvent = lsGet('eventPause', '1') !== '0';
 let coachDone = lsGet('coach', '0') === '1';
 // Older saves used ghost for BOTH the toggle string and the recording.
 // Migrate the preference only; never overwrite a surviving recording.
@@ -428,22 +416,6 @@ if (save.ghostOn === undefined) {
 }
 ghostOn = lsGet('ghostOn', '1') !== '0';
 ghostData = loadGhost();
-
-// Run history: five scores with dates. A single BEST number has no story.
-const HIST_MAX = 5;
-let history = Array.isArray(save.history) ? save.history.slice(0, HIST_MAX) : [];
-history = history.filter((h) => h && typeof h.s === 'number');
-
-function pushHistory(s, when) {
-  // A run that ended without scoring is not a run worth charting. It used to
-  // be recorded anyway, so a first attempt that collapsed immediately wrote a
-  // zero-height bar into the footer while the BEST chip beside it still said
-  // "no runs yet" -- two readouts disagreeing about whether you had played.
-  if (!(s > 0)) return;
-  history.unshift({ s: Math.round(s), t: when || Date.now() });
-  history = history.slice(0, HIST_MAX);
-  saveSet('history', history);
-}
 
 /* ---------- haptics ---------- */
 const HAPTIC_ORDER = ['off', 'low', 'med', 'high'];
@@ -930,7 +902,33 @@ function wobPath(g, rnd, cx, cy, r, wob, n) {
   g.closePath();
 }
 
-// Trace a precomputed polygon with soft quadratic smoothing.
+// A wobbled rounded-rectangle path for hand-inked cards and panels. Same
+// contract as wobPath: builds the path, the caller decides fill or stroke.
+// Walks the four corner arcs clockwise; the straight edges are the lineTo
+// segments between them.
+function wobRectPath(g, rnd, x, y, w, h, r, wob) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  wob = wob == null ? 0.04 : wob;
+  const corners = [
+    [x + w - r, y + r, -Math.PI / 2, 0],        // top-right
+    [x + w - r, y + h - r, 0, Math.PI / 2],     // bottom-right
+    [x + r, y + h - r, Math.PI / 2, Math.PI],   // bottom-left
+    [x + r, y + r, Math.PI, Math.PI * 1.5],     // top-left
+  ];
+  const per = 5;
+  g.beginPath();
+  let first = true;
+  for (const [ccx, ccy, a0, a1] of corners) {
+    for (let i = 0; i <= per; i++) {
+      const a = a0 + (a1 - a0) * (i / per);
+      const rr = r * (1 + (rnd() * 2 - 1) * wob);
+      const px = ccx + Math.cos(a) * rr, py = ccy + Math.sin(a) * rr;
+      if (first) { g.moveTo(px, py); first = false; }
+      else g.lineTo(px, py);
+    }
+  }
+  g.closePath();
+}
 function polyPath(g, pts) {
   const n = pts.length;
   g.beginPath();
@@ -2298,7 +2296,7 @@ function reset() {
   rareWindowActive = false; rareWindowT = 0; rareSpawnT = 0;
   civT = 0; nextCivIn = 7;   // fixed first interval; no rng() here so the
                              // reset() seed stream stays identical
-  pendingWave = 0; greedE = null; nextSystemId = 1; eventKey = null;
+  pendingWave = 0; greedE = null; nextSystemId = 1;
   clearInput();
   p = { x: 0, y: 0, vx: 0, vy: 0, r: startMass * RS_PER_MASS, mass: startMass };
   ents = []; parts = []; waves = []; shots = []; slugs = []; floats = [];
@@ -2841,7 +2839,6 @@ function die() {
   const prevBest = bestAtRunStart;
   newBest = score > prevBest && score > 0;
   commitBest();
-  pushHistory(score);
   // The daily attempt was already consumed at launch (see startDaily);
   // this is belt-and-braces so an interrupted write cannot reopen the day.
   if (dailyRun) {
@@ -2934,10 +2931,6 @@ function update(dt) {
       buzz(150);
       flashT = Math.max(flashT, 0.5);
       waves.push({ x: p.x, y: p.y, r: p.r, max: p.r * 20, t: 0, hue: 280 });
-      // Only stop the world if there is still a world to stop. update() keeps
-      // running after death, so an era crossed on the fatal frame would
-      // otherwise open this explainer on top of the run report.
-      if (state === 'play') openEventPanel('finale');
     }
   }
 
@@ -3367,21 +3360,6 @@ function updateEnts(dt) {
     // being eaten or despawned.
     if (e.greedT > 0) e.greedT -= dt;
 
-    // ---- First encounters ---------------------------------------------
-    // Your rarest content should not be missable in the middle of a fight.
-    // Gated on a few seconds of elapsed play so the opening of a run is never
-    // interrupted before the player has even got moving.
-    if (state === 'play' && elapsed > 4 &&
-        !(seenEvents.pulsar && seenEvents.wormhole && seenEvents.civ)) {
-      const bt = e.body && e.body.type;
-      if ((bt === 'pulsar' || bt === 'wormhole') && !seenEvents[bt]) {
-        const reach = p.r * ENCOUNTER_REACH;
-        if (d2 < reach * reach) firstEncounter(bt, e.x, e.y);
-      } else if (e.civ && !seenEvents.civ && d2 < v * v) {
-        firstEncounter('civ', e.x, e.y);
-      }
-    }
-
     // ---- Civilisation countermeasures --------------------------------
     if (e.civ && state === 'play') {
       const d = Math.sqrt(d2) || 1;
@@ -3496,7 +3474,6 @@ function updateEnts(dt) {
 
     // Dark matter: invisible, massive, pulls the player but is not pulled.
     if (e.darkMatter && state === 'play') {
-      if (!fieldGuide.darkMatter && d2 <= (p.r * 5) ** 2) discoverBody('darkMatter');
       const d = Math.sqrt(d2) || 1;
       const reach = p.r * 14;
       if (d < reach) {
@@ -3907,6 +3884,7 @@ function drawPick() {
   const cy = H * 0.60;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  const cardRnd = mulberry32(0xC0FFEE);   // stable hand-inked wobble, frame to frame
   for (let i = 0; i < 3; i++) {
     const cx = W / 2 + (i - 1) * W * 0.30;
     const frac = clamp(holds[i] / (i === 1 ? 0.6 : 0.35), 0, 1);
@@ -3914,7 +3892,7 @@ function drawPick() {
     ctx.fillStyle = 'rgba(24,20,15,0.72)';
     ctx.strokeStyle = i === 1 ? 'rgba(233,223,201,0.9)' : 'rgba(150,135,115,0.55)';
     ctx.lineWidth = i === 1 ? 2.5 : 1.5;
-    wobPath(cx - bw / 2, cy - bh / 2, bw, bh, 10, 2.5);
+    wobRectPath(ctx, cardRnd, cx - bw / 2, cy - bh / 2, bw, bh, 10, 0.05);
     ctx.fill(); ctx.stroke();
     // Dwell progress: sepia wash rising from the bottom.
     if (frac > 0) {
@@ -4759,42 +4737,13 @@ function start() {
   panel = null;
   overGuardT = 0;
   hide(el.menu); hide(el.over); hide(el.pause); hide(el.settings);
-  hide(el.eventPanel);
   show(el.hud); show(el.keysLegend);
   Snd.setDrone(true, 0);
 }
 
-function renderHistory() {
-  if (!el.histStrip) return;
-  el.histStrip.innerHTML = '';
-  if (!history.length) return;
-  let top = 1;
-  for (const h of history) if (h.s > top) top = h.s;
-  for (const h of history) {
-    const d = new Date(h.t || Date.now());
-    const cell = document.createElement('div');
-    cell.className = 'hist';
-
-    const bar = document.createElement('div');
-    bar.className = 'bar';
-    bar.style.height = Math.max(4, Math.round((h.s / top) * 26)) + 'px';
-
-    const n = document.createElement('div');
-    n.className = 'n';
-    n.textContent = fmt(h.s);
-
-    const dt = document.createElement('div');
-    dt.className = 'd';
-    dt.textContent = (d.getMonth() + 1) + '/' + d.getDate();
-
-    cell.appendChild(bar); cell.appendChild(n); cell.appendChild(dt);
-    el.histStrip.appendChild(cell);
-  }
-}
-
 function toMenu() {
   clearInput();
-  for (const id of ['observatory', 'fieldguide', 'dailyreward', 'leaderboard']) {
+  for (const id of ['observatory', 'dailyreward', 'leaderboard']) {
     const node = document.getElementById(id);
     if (node) hide(node);
   }
@@ -4802,13 +4751,12 @@ function toMenu() {
   state = 'menu';
   panel = null;
   hide(el.over); hide(el.hud); hide(el.pause); hide(el.settings);
-  hide(el.eventPanel); hide(el.keysLegend);
+  hide(el.keysLegend);
   show(el.menu);
   // The footer chip is an icon plus this string. On a first run it used to be
   // set to '' , which left a trophy icon floating on its own above the build
   // tag -- on the very first screen every new player sees.
   el.menuBest.textContent = best > 0 ? 'BEST ' + fmt(best) : 'NO RUNS YET';
-  renderHistory();
   renderMissions();
   renderDaily();
   syncControlPick();
@@ -4829,11 +4777,11 @@ function pauseGame() {
 }
 
 function resumeGame() {
-  if (state !== 'paused' || !['pause', 'event', 'observe'].includes(panel)) return;
+  if (state !== 'paused' || !['pause', 'observe'].includes(panel)) return;
   clearInput();
   panel = null;
   state = 'play';
-  hide(el.pause); hide(el.settings); hide(el.eventPanel); hide(el.observe);
+  hide(el.pause); hide(el.settings); hide(el.observe);
   last = performance.now();          // don't hand the sim one giant dt
   Snd.setDrone(true, combo);
 }
@@ -4906,7 +4854,7 @@ let settingsFrom = 'pause';
 function openSettings(from) {
   settingsFrom = from || (state === 'play' || state === 'paused' ? 'pause' : 'menu');
   panel = 'settings';
-  hide(el.pause); hide(el.menu); hide(el.eventPanel);
+  hide(el.pause); hide(el.menu);
   show(el.settings);
   syncSettingsUI();
 }
@@ -4917,8 +4865,7 @@ function closeSettings() {
     panel = null;
     state = 'menu';
     show(el.menu);
-    renderHistory();
-    renderMissions();
+      renderMissions();
     renderDaily();
     syncControlPick();
     syncVariantPick();
@@ -4926,94 +4873,6 @@ function closeSettings() {
     panel = 'pause';
     show(el.pause);
   }
-}
-
-/* ---------- first-encounter panels ---------- */
-// The rarest content in the game used to be missable mid-chaos. The first
-// time each thing shows up we stop the world and say one line about it.
-const EVENTS = {
-  pulsar: {
-    title: 'PULSAR',
-    body: 'A neutron star spinning hundreds of times a second, sweeping the field with twin beams. ' +
-          'Crossing a live beam burns while the pulsar out-masses you. ' +
-          'Eat it and you steal a shield that absorbs your next impact.'
-  },
-  finale: {
-    title: 'SINGULARITY',
-    body: 'You reached the final score era. Larger bodies and evaporation remain dangerous. ' +
-          'Continue into Singularity Endless with the same survival rules.'
-  },
-  wormhole: {
-    title: 'WORMHOLE',
-    body: 'Two mouths, one throat. Touch it and you are thrown across the field instantly. ' +
-          'Useful for escaping — disorienting every time.'
-  },
-  civ: {
-    title: 'SOMETHING NOTICED YOU',
-    body: 'A civilisation is building countermeasures: deflector domes, gravity projectors, ' +
-          'mass drivers, arks running for the edge. None of it is food.'
-  }
-};
-
-function openEventPanel(key, ex, ey) {
-  const info = EVENTS[key];
-  if (!info) return;
-  eventKey = key;
-  clearInput();
-  // Remember what we interrupted. update() does NOT early-return on 'dead', so
-  // a surprise that lands on the fatal frame can open an explainer while the
-  // run is already over; the panel must then close back to the run report
-  // rather than back into play.
-  eventReturnState = state === 'paused' ? 'play' : state;
-  state = 'paused';
-  panel = 'event';
-  if (el.eventTitle) el.eventTitle.textContent = info.title;
-  if (el.eventBody) el.eventBody.textContent = info.body;
-
-  // Frame the encounter: park the camera between the hole and the thing we
-  // are talking about and pull in a little, so the explainer is about
-  // something you can actually see. update() is frozen while this is open,
-  // and both ease back to normal the moment play resumes.
-  if (typeof ex === 'number' && isFinite(ex)) {
-    cam.x = p.x + (ex - p.x) * 0.55;
-    cam.y = p.y + (ey - p.y) * 0.55;
-  }
-  cam.zoom *= 1.5;
-
-  hide(el.pause); hide(el.settings);
-  show(el.eventPanel);
-  Snd.setDrone(false, 0);
-}
-
-// One stop per event per session: the first time you meet something rare we
-// stop the world, later ones just play out.
-const seenEvents = { pulsar: false, wormhole: false, civ: false };
-
-// How close an encounter has to be before we interrupt. It has to be close
-// enough that it is plainly ON SCREEN and about to matter -- an explainer
-// that fires the instant something wanders into range stops a run dead in
-// the opening seconds, which is worse than the content being missable.
-const ENCOUNTER_REACH = 6;
-
-function firstEncounter(key, ex, ey) {
-  if (seenEvents[key]) return;
-  if (panel === 'event') return;      // one explainer at a time; retry later
-  seenEvents[key] = true;
-  if (pauseOnEvent && state === 'play') openEventPanel(key, ex, ey);
-  else toast(EVENTS[key].title, 2.2);
-}
-
-function closeEventPanel() {
-  if (panel !== 'event') return;
-  hide(el.eventPanel);
-  panel = null;
-  // Restore the state we froze, not 'play'. Unconditionally resuming play let
-  // CONTINUE resurrect a run that had already died and had already committed
-  // its score: the run report stayed on screen, but the simulation went live
-  // again behind it.
-  state = (eventReturnState === 'paused' || !eventReturnState) ? 'play' : eventReturnState;
-  last = performance.now();
-  if (state === 'play') Snd.setDrone(true, combo);
 }
 
 // One place decides what every settings row says. Each row is a label plus a
@@ -5038,7 +4897,6 @@ function syncSettingsUI() {
   setSetting(el.textBtn, textLarge ? 'Large' : 'Normal');
   setSetting(el.contrastBtn, highContrast ? 'On' : 'Off', highContrast);
   setSetting(el.threatBtn, threatReadout ? 'On' : 'Off', threatReadout);
-  setSetting(el.eventBtn, pauseOnEvent ? 'On' : 'Off', pauseOnEvent);
   setSetting(el.ghostBtn, ghostData ? (ghostOn ? 'On' : 'Off') : 'No ghost yet', ghostOn && !!ghostData);
   if (el.musicRange) el.musicRange.value = String(Math.round(Snd.musicVol * 100));
   if (el.sfxRange) el.sfxRange.value = String(Math.round(Snd.sfxVol * 100));
@@ -5468,7 +5326,6 @@ window.addEventListener('keydown', (e) => {
     if (state === 'play') pauseGame();
     else if (state === 'paused') {
       if (panel === 'settings') closeSettings();
-      else if (panel === 'event') closeEventPanel();
       else if (panel === 'observe') closeObserve();
       else resumeGame();
     }
@@ -5510,7 +5367,6 @@ el.menuSettingsBtn.addEventListener('click', (e) => { e.stopPropagation(); openS
 el.homeBtn.addEventListener('click', (e) => { e.stopPropagation(); toMenu(); });
 el.overHomeBtn.addEventListener('click', (e) => { e.stopPropagation(); toMenu(); });
 el.settingsBackBtn.addEventListener('click', (e) => { e.stopPropagation(); closeSettings(); });
-el.eventOkBtn.addEventListener('click', (e) => { e.stopPropagation(); closeEventPanel(); });
 
 if (el.ctrlPick) {
   el.ctrlPick.addEventListener('click', (e) => {
@@ -5617,12 +5473,6 @@ el.threatBtn.addEventListener('click', (e) => {
   syncSettingsUI();
 });
 
-el.eventBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  pauseOnEvent = !pauseOnEvent;
-  lsSet('eventPause', pauseOnEvent ? '1' : '0');
-  syncSettingsUI();
-});
 
 if (el.ghostBtn) {
   el.ghostBtn.addEventListener('click', (e) => {
@@ -5846,7 +5696,6 @@ applyA11y();
 buildPips();
 loadMissions();
 syncSettingsUI();
-if (el.buildTag) el.buildTag.textContent = 'BUILD ' + BUILD_ID;
 
 try {
   buildShade();
@@ -6106,61 +5955,6 @@ function checkAchievements() {
   checkDailyAchievements();
 }
 
-/* ---------- Field Guide ---------- */
-let fieldGuide = lsGet('fieldGuide', {});
-if (typeof fieldGuide !== 'object' || fieldGuide === null) fieldGuide = {};
-
-const FIELD_GUIDE_BODIES = [
-  'rocky', 'ice', 'ocean', 'desert', 'barren', 'asteroid', 'uranus', 'neptune',
-  'star', 'giant', 'lava', 'rogue', 'rival', 'brownDwarf', 'whiteDwarf',
-  'pulsar', 'wormhole', 'magnetar', 'quasar', 'darkMatter'
-];
-
-const FIELD_GUIDE_FACTS = {
-  rocky: 'A barren world of stone and iron, not so different from home.',
-  ice: 'A frozen shell over a hidden ocean, cracked by tidal forces.',
-  ocean: 'A world entirely of water, hundreds of kilometres deep.',
-  desert: 'Dunes of iron oxide under a thin carbon dioxide sky.',
-  barren: 'A dead world, baked by day and frozen by night.',
-  asteroid: 'A loose rubble pile barely held together by its own gravity.',
-  uranus: 'Tipped on its side, its bands run pole to pole.',
-  neptune: 'The windiest planet: storms at two thousand kilometres per hour.',
-  star: 'A ball of fusing hydrogen, pouring light into the void.',
-  giant: 'A gas giant with no surface, only deeper and denser gas.',
-  lava: 'A world still cooling from its formation, oceans of magma.',
-  rogue: 'A planet with no star, wandering the dark between systems.',
-  rival: 'Another singularity. Only one of you is leaving.',
-  brownDwarf: 'A failed star, too small to ignite, too large to be a planet.',
-  whiteDwarf: 'The dead core of a star, a teaspoon weighs six tonnes.',
-  pulsar: 'A spinning neutron star, beaming radiation like a lighthouse.',
-  wormhole: 'A shortcut through spacetime. No one knows where it leads.',
-  magnetar: 'A neutron star with a field strong enough to strip atoms.',
-  quasar: 'A supermassive hole devouring a galaxy, outshining the stars.',
-  darkMatter: 'Invisible mass. You know it is there only by its gravity.'
-};
-
-const FIELD_GUIDE_BEHAVIOR = {
-  star: 'Consume when smaller for bonus score and a supernova; larger stars burn on impact.',
-  lava: 'Consume when smaller; larger lava worlds burn on impact.',
-  rival: 'Pulls you toward it. Consume when smaller; larger rivals hit hard.',
-  brownDwarf: 'Consume when smaller for double meal score.',
-  whiteDwarf: 'Consume when smaller for fourfold meal score; larger dwarfs hit hard.',
-  pulsar: 'Larger pulsars burn with their beams. Consume for a temporary one-impact shield.',
-  wormhole: 'Consume when small enough to teleport across the field.',
-  magnetar: 'Deflects you sideways nearby. Consume to clear nearby threats with a starquake.',
-  quasar: 'Consume when smaller; larger quasars cause severe impact damage.',
-  darkMatter: 'Pulls you nearby and cannot be eaten. Discover by approaching within five player radii.'
-};
-
-fieldGuide = progressionFlags(fieldGuide, FIELD_GUIDE_BODIES);
-
-function discoverBody(type) {
-  if (!FIELD_GUIDE_BODIES.includes(type) || fieldGuide[type]) return;
-  fieldGuide[type] = true;
-  try { saveSet('fieldGuide', fieldGuide); } catch (_) {}
-  toast('FIELD GUIDE: ' + (BODY_NAME[type] || type), 2.0);
-}
-
 /* ---------- Weekly Leaderboard ---------- */
 let weeklyScores = Array.isArray(save.weeklyScores) ? save.weeklyScores : [];
 // A local Sunday-start calendar week, identified by its start DATE. This
@@ -6349,11 +6143,11 @@ document.addEventListener('click', (e) => {
 
 /* ---------- New DOM references ---------- */
 const el2 = {};
-['menuObservatoryBtn', 'menuFieldGuideBtn', 'menuLeaderboardBtn',
- 'fgCloseBtn', 'drCloseBtn', 'drClaimBtn', 'lbCloseBtn', 'obsCloseBtn',
- 'fgGrid', 'fgProgress', 'drCalendar', 'drInfo', 'lbList', 'lbInfo',
+['menuObservatoryBtn', 'menuLeaderboardBtn',
+ 'drCloseBtn', 'drClaimBtn', 'lbCloseBtn', 'obsCloseBtn',
+ 'drCalendar', 'drInfo', 'lbList', 'lbInfo',
  'obsStardust', 'obsRuns', 'obsEaten', 'obsTime', 'obsUpgrades',
- 'overNearMiss', 'observatory', 'fieldguide', 'dailyreward', 'leaderboard',
+ 'overNearMiss', 'observatory', 'dailyreward', 'leaderboard',
  'menu'].forEach((id) => { el2[id] = document.getElementById(id); });
 
 /* ---------- Observatory Panel ---------- */
@@ -6410,44 +6204,6 @@ function renderObservatory() {
     }
     el2.obsUpgrades.appendChild(row);
   }
-}
-
-/* ---------- Field Guide Panel ---------- */
-function openFieldGuide() {
-  clearInput();
-  state = 'paused';
-  panel = 'fieldguide';
-  renderFieldGuide();
-  show(el2.fieldguide);
-  hide(el.menu); hide(el.pause); hide(el.settings);
-  Snd.setDrone(false, 0);
-}
-
-function renderFieldGuide() {
-  if (!el2.fgGrid) return;
-  el2.fgGrid.innerHTML = '';
-  let found = 0;
-  for (const type of FIELD_GUIDE_BODIES) {
-    const discovered = !!fieldGuide[type];
-    if (discovered) found++;
-    const cell = document.createElement('div');
-    cell.className = 'fg-cell' + (discovered ? ' discovered' : ' locked');
-    cell.dataset.body = type;
-    cell.innerHTML =
-      '<div class="fg-swatch"></div>' +
-      '<div class="fg-name">' + (discovered ? (BODY_NAME[type] || type) : '???') + '</div>';
-    if (discovered) {
-      for (const [className, text] of [['fg-fact', FIELD_GUIDE_FACTS[type]],
-        ['fg-behavior', FIELD_GUIDE_BEHAVIOR[type] || 'Consume when smaller; avoid when larger.']]) {
-        if (!text) continue;
-        const detail = document.createElement('div');
-        detail.className = className; detail.textContent = text;
-        cell.appendChild(detail);
-      }
-    }
-    el2.fgGrid.appendChild(cell);
-  }
-  if (el2.fgProgress) el2.fgProgress.textContent = found + ' / ' + FIELD_GUIDE_BODIES.length + ' discovered';
 }
 
 /* ---------- Daily Reward Panel ---------- */
@@ -6530,9 +6286,7 @@ function computeNearMiss() {
 
 /* ---------- Wire up new buttons ---------- */
 if (el2.menuObservatoryBtn) el2.menuObservatoryBtn.addEventListener('click', (e) => { e.stopPropagation(); openObservatory(); });
-if (el2.menuFieldGuideBtn) el2.menuFieldGuideBtn.addEventListener('click', (e) => { e.stopPropagation(); openFieldGuide(); });
 if (el2.menuLeaderboardBtn) el2.menuLeaderboardBtn.addEventListener('click', (e) => { e.stopPropagation(); openLeaderboard(); });
-if (el2.fgCloseBtn) el2.fgCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el2.fieldguide); show(el.menu); state = 'menu'; panel = null; toMenu(); });
 if (el2.drCloseBtn) el2.drCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el2.dailyreward); show(el.menu); state = 'menu'; panel = null; toMenu(); });
 if (el2.drClaimBtn) el2.drClaimBtn.addEventListener('click', (e) => { e.stopPropagation(); claimDailyReward(); });
 if (el2.lbCloseBtn) el2.lbCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); hide(el2.leaderboard); show(el.menu); state = 'menu'; panel = null; toMenu(); });
@@ -6554,8 +6308,6 @@ consume = function(e, idx) {
   else if (type === 'quasar') earned += 5;
   else if (type === 'star') earned += 2;
   if (earned > 0) earnStardust(earned);
-  // Field guide
-  if (type) discoverBody(type);
   // Achievements
   if (type === 'pulsar') unlockAchievement('eat_pulsar');
   if (type === 'wormhole') unlockAchievement('eat_wormhole');
@@ -6626,10 +6378,9 @@ update = function(dt) {
 const _origToMenu = toMenu;
 toMenu = function() {
   renderDailyReward();
-  renderFieldGuide();
   renderObservatory();
   return _origToMenu.apply(this, arguments);
 };
 
 // Initial render
-setTimeout(() => { renderDailyReward(); renderFieldGuide(); renderObservatory(); }, 100);
+setTimeout(() => { renderDailyReward(); renderObservatory(); }, 100);

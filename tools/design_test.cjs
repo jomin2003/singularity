@@ -62,7 +62,7 @@ test('one incomplete run mission shows chain progress and era stays synchronized
   assert.match(node.textContent,/Chain 15.*7\/15/);
   q('runStats.peakCombo=15; updateHUD()');
   assert.match(node.textContent,/Score 5,000/);
-  q('score=4800; pauseOnEvent=false; update(0)');
+  q('score=4800; update(0)');
   assert.equal(q('runStats.era'),4);
   assert.equal(q('eraLabel(20)'), 'SINGULARITY');
 });
@@ -82,29 +82,20 @@ test('near miss uses exact next-era points and no currency pressure or wrap', ({
   q('score=2399; era=0'); assert.equal(q('computeNearMiss()'),'1 points to INTERMEDIATE');
   q('score=7200'); assert.equal(q('computeNearMiss()'),'');
   q('score=0; stardust=0'); assert.equal(q('computeNearMiss()'),'');
-  assert.doesNotMatch(q('EVENTS.finale.body'),/Nothing left|invulnerab/i);
+  assert.equal(q("typeof EVENTS"),'undefined');
 });
-test('field guide reveals facts and behavior only for discovered cells', ({q,w}) => {
-  q("fieldGuide={uranus:true,neptune:true}; renderFieldGuide()");
-  const u=w.document.querySelector('[data-body=uranus]');
-  const n=w.document.querySelector('[data-body=neptune]');
-  assert.equal(u.querySelector('.fg-name').textContent,'Uranus');
-  assert.equal(n.querySelector('.fg-name').textContent,'Neptune');
-  assert.equal(u.querySelector('.fg-fact').textContent,q('FIELD_GUIDE_FACTS.uranus'));
-  assert.ok(u.querySelector('.fg-behavior'));
-  assert.equal(w.document.querySelector('[data-body=rocky] .fg-fact'),null);
+test('field guide system is fully removed', ({q,w}) => {
+  assert.equal(q("typeof FIELD_GUIDE_BODIES"),'undefined');
+  assert.equal(q("typeof FIELD_GUIDE_FACTS"),'undefined');
+  assert.equal(q("typeof discoverBody"),'undefined');
+  assert.equal(q("typeof renderFieldGuide"),'undefined');
+  assert.equal(w.document.getElementById('fieldguide'),null);
+  assert.equal(w.document.getElementById('menuGuideBtn'),null);
 });
-test('dark matter proximity unlocks once only during play without advancing RNG', ({q,w}) => {
-  q("start(); fieldGuide={}; pauseOnEvent=false; ents=[{x:p.r*4,y:0,r:10,vx:0,vy:0,phase:0,spin:0,darkMatter:true,body:{type:'darkMatter'}}]; state='paused'; update(0)");
-  assert.equal(q('!!fieldGuide.darkMatter'),false);
-  q("state='play'; update(0)");
-  assert.equal(q('fieldGuide.darkMatter'),true);
-  assert.equal(JSON.parse(w.localStorage.getItem('singularity.save')).fieldGuide.darkMatter,true);
-  const rng=q('rngState');
-  q("clearToasts(); discoverBody('darkMatter'); renderFieldGuide(); updateHUD()");
-  assert.equal(q('rngState'),rng); assert.equal(q('toasts.length'),0);
-  q('FIELD_GUIDE_BODIES.forEach(discoverBody); renderFieldGuide()');
-  assert.match(w.document.getElementById('fgProgress').textContent,/20 \/ 20/);
+test('dark matter proximity no longer feeds a field guide', ({q,w}) => {
+  q("start(); ents=[{x:p.r*4,y:0,r:10,vx:0,vy:0,phase:0,spin:0,darkMatter:true,body:{type:'darkMatter'}}]; state='play'; update(0)");
+  assert.equal(q("typeof fieldGuide"),'undefined');
+  assert.equal(JSON.parse(w.localStorage.getItem('singularity.save')).fieldGuide,undefined);
 });
 test('Observatory and leaderboard describe ordinary-only upgrades and personal local runs', ({q,w}) => {
   q('renderObservatory(); weeklyScores=[{week:weekKey(),scores:[300,200]}]; myWeeklyBest=900; renderLeaderboard()');

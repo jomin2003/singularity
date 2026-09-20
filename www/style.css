@@ -473,26 +473,6 @@ html, body {
     rgba(5, 6, 15, .94) 100%);
 }
 
-/* Aurora wash behind the glass. Pure CSS gradients -- still no image assets. */
-#menuAurora {
-  position: absolute;
-  inset: -20%;
-  z-index: 0;
-  pointer-events: none;
-  opacity: .55;
-  background:
-    radial-gradient(38% 30% at 22% 26%, rgba(143, 184, 168, .18), transparent 70%),
-    radial-gradient(34% 28% at 78% 20%, rgba(212, 165, 116, .17), transparent 70%),
-    radial-gradient(46% 34% at 52% 84%, rgba(143, 184, 168, .11), transparent 72%);
-  filter: blur(24px);
-  animation: auroraDrift 28s ease-in-out infinite alternate;
-}
-
-@keyframes auroraDrift {
-  from { transform: translate3d(-3%, -2%, 0) scale(1.04); }
-  to   { transform: translate3d(3%, 2%, 0) scale(1.10); }
-}
-
 #menuCard {
   position: relative;
   z-index: 1;
@@ -530,16 +510,6 @@ html, body {
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
   pointer-events: none;
-}
-
-/* Settings, demoted into the card header rather than floating in the screen
-   corner. This keeps it away from the SCORE/BEST readouts on the HUD below. */
-.card-header {
-  position: relative;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
 }
 
 .gear-btn {
@@ -612,36 +582,6 @@ html, body {
    Both are static now, and the glow is painted once as a fixed shadow. */
 .btn.cta:active { transform: scale(.97); }
 
-/* Footer: best score and history in a bordered chip, not loose dim text. */
-.menu-foot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--s-1);
-  width: 100%;
-}
-
-.foot-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-1);
-  padding: 6px 16px;
-  border: 1px solid var(--c-panel-line);
-  border-radius: var(--r-pill);
-  background: var(--c-panel);
-  font-size: var(--t-label);
-  letter-spacing: var(--ls-label);
-  color: rgba(200, 225, 245, .8);
-}
-
-.foot-ico {
-  display: grid;
-  place-items: center;
-  color: var(--cyan);
-  filter: drop-shadow(0 0 8px rgba(143, 184, 168, .6));
-}
-.foot-ico svg { width: 15px; height: 15px; display: block; }
-
 /* Deliberately no :has() anywhere in this file. It is fine in current Chromium,
    but minSdk here is 24 and an unsupported selector would drop the whole rule
    on an older WebView. Everything is expressed with classes and data
@@ -655,7 +595,6 @@ html, body {
    and the segmented pill kept moving for players who had explicitly asked
    for stillness. Colour and opacity may change; position and scale may not. */
 @media (prefers-reduced-motion: reduce) {
-  #menuAurora,
   .btn.cta,
   .title,
   .newbest,
@@ -679,7 +618,6 @@ html, body {
   #comboBar i { transition: none !important; }
 }
 
-body.no-motion #menuAurora,
 body.no-motion .btn.cta,
 body.no-motion .title,
 body.no-motion .newbest,
@@ -709,56 +647,8 @@ body.no-motion #comboBar i { transition: none !important; }
   #menuCard { gap: var(--s-1); padding: var(--s-2); }
   #menuCard .title { font-size: clamp(24px, 6vh, 32px); }
   .btn.cta { padding: 14px 24px; }
-  #histStrip { min-height: 32px; }
-  .hist .bar { width: 20px; }
 }
 
-
-#howto {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  text-align: left;
-  width: 100%;
-}
-
-/* Each row is its own inset panel with a left accent border, so the three
-   rules read as three separate things rather than one paragraph. */
-.how-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  font-size: 11px;
-  line-height: 1.3;
-  color: rgba(234, 217, 184, .78);
-  background: var(--c-panel);
-  border-left: 2px solid currentColor;
-  border-radius: 0 8px 8px 0;
-  overflow: hidden;
-}
-
-.how-row b { color: #f2e9d5; letter-spacing: var(--ls-label); font-size: 10px; flex-shrink: 0; }
-
-.how-row span { word-break: break-word; overflow-wrap: break-word; }
-
-.how-ico {
-  flex: 0 0 20px;
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-}
-.how-ico svg { width: 18px; height: 18px; display: block; }
-.how-ico.eat  { color: var(--cyan);   filter: drop-shadow(0 0 8px rgba(143, 184, 168, .7)); }
-.how-ico.grow { color: var(--violet); filter: drop-shadow(0 0 8px rgba(212, 165, 116, .7)); }
-.how-ico.flee { color: var(--amber);  filter: drop-shadow(0 0 8px rgba(255, 176, 87, .7)); }
-
-/* The accent border takes the row's own colour, so the icon and the edge agree. */
-.how-row:nth-child(1) { color: rgba(143, 184, 168, .55); }
-.how-row:nth-child(2) { color: rgba(212, 165, 116, .55); }
-.how-row:nth-child(3) { color: rgba(255, 176, 87, .55); }
-.how-row > span:last-child { color: rgba(234, 217, 184, .78); }
 
 /* ---------- Segmented control ---------- */
 /* Filled track with a sliding pill indicator, rather than a thin outline with
@@ -834,30 +724,6 @@ body.no-motion #comboBar i { transition: none !important; }
 
 /* Ctrl picker: three labels, so it can afford the normal size. */
 .segmented:not(.cols4) button { white-space: nowrap; overflow-wrap: normal; }
-
-/* ---------- Best history strip ---------- */
-#histStrip {
-  display: flex;
-  gap: var(--s-1);
-  align-items: flex-end;
-  justify-content: center;
-  min-height: 48px;
-}
-
-.hist { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-/* Muted on purpose: this is a secondary readout in the footer, and a bright
-   cyan bar was pulling more attention than the primary action above it. */
-.hist .bar {
-  width: 20px;
-  border-radius: 3px 3px 0 0;
-  background: linear-gradient(180deg, rgba(143, 184, 168, .48), rgba(212, 165, 116, .16));
-}
-.hist .n { font-size: var(--t-label); color: rgba(224, 208, 174, .72); font-variant-numeric: tabular-nums; }
-.hist .d { font-size: var(--t-label); color: rgba(205, 191, 164, .4); }
-
-/* renderHistory() empties the strip on a first run. Without this, its
-   min-height reserves a blank 48px band in the middle of the footer. */
-#histStrip:empty { display: none; }
 
 /* ---------- Meta-progression buttons row ---------- */
 .menu-meta-row {
@@ -1114,15 +980,6 @@ body.no-motion #comboBar i { transition: none !important; }
 
 .btn.wide { width: 100%; }
 
-.panel-title {
-  font-size: var(--t-heading);
-  font-weight: 800;
-  letter-spacing: var(--ls-label);
-  margin-right: -.3em;
-  color: var(--cyan);
-  text-shadow: 0 1px 0 rgba(20, 15, 11, .6), 0 0 14px rgba(143, 184, 168, .25);
-}
-
 .btn.ghost {
   background: transparent;
   border: 1px solid rgba(205, 191, 164, .26);
@@ -1218,7 +1075,6 @@ body.hc .hud-value,
 body.hc .hud-label,
 body.hc .hint,
 body.hc .subtitle,
-body.hc .how-row,
 body.hc .report { color: #ffffff; text-shadow: none; }
 body.hc .hud-block.right .hud-value { color: #ffffff; }
 body.hc .layer.center { background: #000; -webkit-backdrop-filter: none; backdrop-filter: none; }
@@ -1270,35 +1126,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 .segmented.cols4[data-sel="titan"]::before { transform: translateX(100%); }
 .segmented.cols4[data-sel="wisp"]::before { transform: translateX(200%); }
 .segmented.cols4[data-sel="monk"]::before { transform: translateX(300%); }
-
-/* ---------- Observe rows ----------
-   Label/value pairs for the observation panel. Unstyled until now, which
-   left the whole panel as undifferentiated text. */
-.obs-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  padding: 6px 2px;
-  border-bottom: 1px solid rgba(242, 233, 213, .06);
-}
-
-.obs-key {
-  font-size: var(--t-label);
-  font-weight: var(--w-label);
-  letter-spacing: var(--ls-label);
-  color: rgba(205, 191, 164, .55);
-}
-
-.obs-val {
-  font-size: var(--t-body);
-  font-weight: var(--w-strong);
-  letter-spacing: var(--ls-tight);
-  font-variant-numeric: tabular-nums;
-  color: #f2e9d5;
-  text-align: right;
-}
 
 /* ---------- Fatal error surface, so a blank screen is never silent ---------- */
 /* ============================================================
@@ -1365,25 +1192,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
   margin-right: -.3em;
   color: var(--cyan);
   text-shadow: 0 1px 0 rgba(20, 15, 11, .6), 0 0 14px rgba(143, 184, 168, .25);
-}
-
-/* Glass card body */
-.glass-body {
-  font-family: var(--font-ui);
-  font-size: var(--t-body);
-  line-height: 1.55;
-  color: rgba(234, 217, 184, .78);
-  max-width: 320px;
-}
-
-/* Glass card footer */
-.glass-foot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--s-1);
-  width: 100%;
-  margin-top: auto;
 }
 
 /* Glass card rows (label + value) */
@@ -1543,69 +1351,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 }
 
 /* ============================================================
-   NEW: Field Guide panel
-   Collection album showing discovered bodies.
-   ============================================================ */
-#fieldguide > .glass-card {
-  max-width: 420px;
-}
-
-.fg-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  width: 100%;
-}
-
-.fg-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 8px 4px;
-  border-radius: var(--r-sm);
-  background: var(--c-panel);
-  border: 1px solid var(--c-panel-line);
-  text-align: center;
-  transition: border-color .15s ease-out;
-}
-
-.fg-cell.discovered {
-  border-color: rgba(143, 184, 168, .35);
-}
-
-.fg-cell .fg-swatch {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: rgba(242, 233, 213, .06);
-  border: 1px solid rgba(242, 233, 213, .1);
-}
-
-.fg-cell.discovered .fg-swatch {
-  background: var(--cyan);
-  box-shadow: 0 0 8px rgba(143, 184, 168, .4);
-}
-
-.fg-cell .fg-name {
-  font-size: var(--t-micro);
-  letter-spacing: var(--ls-tight);
-  color: rgba(234, 217, 184, .7);
-}
-
-.fg-cell.locked .fg-name {
-  color: rgba(205, 191, 164, .35);
-}
-
-.fg-progress {
-  font-size: var(--t-label);
-  letter-spacing: var(--ls-label);
-  color: rgba(234, 217, 184, .6);
-  text-align: center;
-  width: 100%;
-}
-
-/* ============================================================
    NEW: Daily Reward panel
    28-day cumulative calendar.
    ============================================================ */
@@ -1727,35 +1472,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
   font-size: var(--t-body);
   font-variant-numeric: tabular-nums;
   color: #f2e9d5;
-}
-
-/* ============================================================
-   NEW: Observatory panel rows (override obs-row to use glass-row)
-   ============================================================ */
-.obs-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  padding: 6px 2px;
-  border-bottom: 1px solid rgba(242, 233, 213, .06);
-}
-
-.obs-key {
-  font-size: var(--t-label);
-  font-weight: var(--w-label);
-  letter-spacing: var(--ls-label);
-  color: rgba(205, 191, 164, .55);
-}
-
-.obs-val {
-  font-size: var(--t-body);
-  font-weight: var(--w-strong);
-  letter-spacing: var(--ls-tight);
-  font-variant-numeric: tabular-nums;
-  color: #f2e9d5;
-  text-align: right;
 }
 
 /* ============================================================
@@ -1906,7 +1622,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 .setting-val,
 .obs-upgrade-name,
 .obs-upgrade-desc,
-.fg-name,
 .dr-info,
 .lb-name,
 .toast-item,
@@ -1977,12 +1692,66 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
   pointer-events: auto;
 }
 
-#menuCard .card-header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+/* ---------- Minimal start screen ----------
+   Title, one hero CTA, one quiet secondary, best score, setup, meta. */
+#menuCard.menu-min {
+  gap: 0;
   text-align: center;
-  margin-bottom: clamp(140px, 20vh, 180px);
+}
+
+#menuCard.menu-min .gear-btn {
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  right: 14px;
+}
+
+#menuCard.menu-min .title {
+  margin: 0;
+}
+
+#menuCard.menu-min .subtitle {
+  margin: 10px 0 36px;
+}
+
+#menuCard.menu-min #playBtn {
+  margin: 0 0 10px;
+}
+
+#menuCard.menu-min #dailyBtn {
+  width: 240px;
+  max-width: 85%;
+  margin: 0 0 20px;
+}
+
+.menu-best {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  color: rgba(205, 191, 164, .55);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 18px;
+}
+
+#menuCard.menu-min .home-details {
+  width: 100%;
+  max-width: 300px;
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+#menuCard.menu-min .menu-meta-row {
+  margin-top: 0;
+}
+
+/* Vertically centre the minimal menu; on short screens fall back to
+   top-aligned scrolling so nothing clips above the fold. */
+#menuCard.menu-min {
+  justify-content: center !important;
+}
+@media (max-height: 560px) {
+  #menuCard.menu-min { justify-content: flex-start !important; }
+  #menuCard.menu-min .title { font-size: clamp(22px, 7vh, 32px); }
+  #menuCard.menu-min .subtitle { margin-bottom: 20px; }
 }
 
 #menuCard .title {
@@ -2034,37 +1803,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 
 #menuCard #playBtn:active {
   transform: scale(0.97);
-}
-
-#menuCard .home-guide {
-  color: #8a7a64;
-  font-family: var(--font-ui);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-align: center;
-  line-height: 1.6;
-  max-width: 260px;
-  margin-top: 14px;
-}
-
-#menuCard .menu-foot {
-  border-top: none !important;
-  background: transparent !important;
-  padding: 0 !important;
-  margin-top: 18px;
-}
-
-#menuCard .menu-foot .hint {
-  color: #8a7a64;
-  font-family: var(--font-ui);
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  font-variant-numeric: tabular-nums;
-}
-
-#menuCard .menu-foot .hint span {
-  color: #8fa9c2;
-  font-weight: 600;
 }
 
 /* --- Pause Menu (#pause) --- */
@@ -2303,9 +2041,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 .home-details-body .segmented { margin-top: 2px; }
 .home-details-body .hint { text-align: center; }
 
-/* Daily run button under the CTA. */
-#menuCard #dailyBtn { margin-top: 10px; }
-
 /* In-run goal strip under the combo bar: era ladder + current mission. */
 .run-goal {
   align-self: center;
@@ -2368,31 +2103,8 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 #menuCard { scrollbar-width: none; }
 #menuCard::-webkit-scrollbar { display: none; }
 
-/* ---- b23.1 layout corrections, from the device screenshots ----
-
-   1. The b22 header margin (clamp(140px, 20vh, 180px)) assumed the card held
-      only title + CTA. With the restored systems the card scrolls, and that
-      margin became a hole in the middle. A modest gap restores the airy
-      look without wasting a third of the screen. */
-#menuCard .card-header {
-  margin-bottom: clamp(36px, 7vh, 72px) !important;
-  /* 2. The gear shares the header row with an edge-to-edge wordmark, and on
-        phone widths the two collide. Reserve the gear's corner: the title
-        starts below it, the gear reads as the card's chrome. */
-  padding-top: 30px;
-}
-#menuCard .card-header .gear-btn { top: -2px; }
-
-/* 3. Flexbox centring + overflow-y scrolls from the TOP on old WebViews, so
-      the wordmark could sit clipped above the fold. margin:auto centring
-      degrades to a plain scroll instead -- same look, no clipped top. */
+/* Small screens: start the card at the top instead of centring, so the
+   wordmark cannot sit clipped above the fold on old WebViews. */
 #menuCard {
   justify-content: flex-start !important;
 }
-#menuCard > .card-header { margin-top: auto; }
-#menuCard > .menu-foot { margin-bottom: auto; }
-
-/* 4. The how-to rows re-tinted by the b22 pass assumed a dark pill behind
-      them; on the transparent card the amber warning row vibrated. Keep the
-      pill, drop the fill. */
-#menuCard #howto { width: 100%; max-width: 320px; }

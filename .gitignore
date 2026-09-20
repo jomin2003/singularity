@@ -23,3 +23,6 @@ android/app/upload-keystore.jks
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Local asset-generation working files (masters + script); outputs live in www/
+.assets-work/

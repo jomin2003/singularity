@@ -87,19 +87,18 @@ test('malformed counters remain finite and upgrade values are bounded', ({q}) =>
   assert.equal(q('upgradeLevel("horizon")'),5);
 }, {stardust:'9'.repeat(400), totalRuns:-5, totalEaten:'25oops', runsSinceLastRare:[], dailyStreak:'Infinity', totalPlayTime:12.75, upgrades:{gravity:[5], horizon:99}});
 test('array-shaped unlock maps retain newly earned flags after reload', ({q,saved}) => {
-  q('unlockSkin("nebula"); unlockAchievement("first_eat"); discoverBody("rocky")');
+  q('unlockSkin("nebula"); unlockAchievement("first_eat")');
   const next=boot(saved());
   try {
     assert.equal(next.q('skins.nebula'),true);
     assert.equal(next.q('achievements.first_eat'),true);
-    assert.equal(next.q('fieldGuide.rocky'),true);
   } finally { next.close(); }
-}, {skins:[], achievements:[], fieldGuide:[]});
+}, {skins:[], achievements:[]});
 test('false-shaped unlocks cannot equip or suppress a legitimate unlock', ({q}) => {
   assert.equal(q('equipSkin("quasar")'),false);
-  q('unlockSkin("quasar"); unlockAchievement("first_eat"); discoverBody("rocky")');
-  assert.equal(q('skins.quasar && achievements.first_eat && fieldGuide.rocky'),true);
-}, {skins:{quasar:'false'}, achievements:{first_eat:{}}, fieldGuide:{rocky:[]}});
+  q('unlockSkin("quasar"); unlockAchievement("first_eat")');
+  assert.equal(q('skins.quasar && achievements.first_eat'),true);
+}, {skins:{quasar:'false'}, achievements:{first_eat:{}}});
 test('invalid score cannot poison the milestone watermark or currency', ({q}) => {
   q('start(); score=NaN; settleScoreDust(); score=Infinity; settleScoreDust(); score=350; settleScoreDust(); settleScoreDust()');
   assert.equal(q('stardust'),3);
