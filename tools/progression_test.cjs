@@ -111,7 +111,7 @@ test('upgrades apply modest actual effects on next ordinary run only', ({q}) => 
   assert.equal(q('p.r'), 22, 'seeded challenges stay unupgraded');
 });
 test('render and cosmetic effects leave seeded RNG untouched', ({q}) => {
-  q('start(); seedRng(123); shakeMag=10');
+  q('start(); seedRng(123)');
   const before = q('rngState');
   q('render(); burstFx(0,0,10); absorbFx({x:0,y:0,r:5}); shotT=0; updateShots(0.1); resize()');
   assert.equal(q('rngState'), before);

@@ -43,7 +43,6 @@ function fixture() {
   document.querySelector('#ctrlPick button').classList.add('on');
   document.querySelector('#varPick button').classList.add('on');
   document.getElementById('report').innerHTML = '<b>48,210 points</b><span class="cause">Caught by a spiked hazard.</span>';
-  document.getElementById('fgGrid').innerHTML = '<div class="fg-cell discovered"><div class="fg-swatch"></div><div class="fg-name">Neptune</div><div class="fg-fact">A distant ice giant with powerful winds.</div></div>'.repeat(20);
   document.getElementById('drCalendar').innerHTML = Array.from({length:28}, (_, i) => '<div class="dr-day">' + (i + 1) + '</div>').join('');
   document.getElementById('lbList').innerHTML = '<div class="lb-row"><span class="lb-rank">1</span><span class="lb-name">Your best this week</span><span class="lb-score">48,210</span></div>'.repeat(10);
   document.getElementById('obsUpgrades').innerHTML = '<div class="obs-upgrade"><div class="obs-upgrade-info"><div class="obs-upgrade-name">Starting mass</div><div class="obs-upgrade-desc">Ordinary runs only</div></div><button class="obs-upgrade-btn">10 dust</button></div>'.repeat(4);
@@ -72,7 +71,7 @@ function measure(panel) {
 
 async function main() {
   await new Promise(r => server.listen(0, '127.0.0.1', r));
-  const chrome = spawn(chromePath, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', '--user-data-dir=' + path.join(out, 'profile'), 'about:blank'], {stdio:'ignore'});
+  const chrome = spawn(chromePath, ['--headless=new', '--disable-gpu', '--no-sandbox', '--no-proxy-server', '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', '--user-data-dir=' + path.join(out, 'profile'), 'about:blank'], {stdio:'ignore'});
   let ws;
   try {
     const active = path.join(out, 'profile/DevToolsActivePort');

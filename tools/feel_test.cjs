@@ -169,10 +169,32 @@ test('a star landing on the combo milestone fires the AGN feedback directly', ({
   q(`start(); state='play'; combo = WAVE_EVERY() - 1;
      window.meal = { x: p.x, y: p.y, r: Math.max(6, p.r * 0.3), vx: 0, vy: 0,
        spin: 0, phase: 0, body: { type: 'star', variant: 0, spin: 0 } };
-     ents = [meal]; comboPopT = 0; waves = []; consume(meal, 0);`);
+     ents = [meal]; waves = []; consume(meal, 0);`);
   assert.ok(q('waves.length') > 0, 'pulse() fired directly, no pick');
   assert.equal(q("typeof pickT"), 'undefined', 'no pick state');
-  assert.ok(q('comboPopT') > 0, 'combo pop visual still fires');
+});
+
+test('decluttered HUD: toast, shake, floats, beam and combo HUD are fully removed', ({ q, w }) => {
+  for (const name of ['toast','dropToast','updateToasts','clearToasts','toasts',
+                      'shakeMag','updateFloats','drawFloats','floats',
+                      'buildPips','threatLine','comboPopT','CTRL_LABEL'])
+    assert.equal(q('typeof '+name), 'undefined', name + ' removed');
+  // The era-5 player beam (two-direction polar wash) is gone from drawPlayer;
+  // quasar jets and pulsar lighthouse beams live in other draw functions.
+  assert.ok(!q("drawPlayer.toString()").includes('wob'), 'player beam block gone');
+  assert.ok(!source.includes('Pale wash jet'), 'beam comment gone from source');
+  assert.ok(!source.includes('shakeMag'), 'no shake references in source');
+  assert.ok(!source.includes('function toast('), 'no toast function in source');
+  // HUD DOM is score / best / width only.
+  for (const id of ['hudScore','hudBest','scaleOut'])
+    assert.ok(w.document.getElementById(id), id + ' present');
+  for (const id of ['comboWrap','comboBar','comboValue','chips','threatOut',
+                    'runGoal','runGoalLabel','runGoalFill','runMission','toasts'])
+    assert.equal(w.document.getElementById(id), null, id + ' removed from DOM');
+  assert.ok(!html.includes('Consume. Grow. Survive.'), 'menu slogan gone from HTML');
+  q('start(); score=12345; shownScore=12345; best=99999; updateHUD()');
+  assert.equal(w.document.getElementById('hudScore').textContent, '12,345');
+  assert.equal(w.document.getElementById('hudBest').textContent, '99,999');
 });
 
 test('mass-driver slug subsystem is fully removed', ({ q }) => {

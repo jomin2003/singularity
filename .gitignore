@@ -26,3 +26,7 @@ Thumbs.db
 
 # Local asset-generation working files (masters + script); outputs live in www/
 .assets-work/
+
+# Python bytecode
+__pycache__/
+*.pyc

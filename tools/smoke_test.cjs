@@ -260,9 +260,11 @@ check('menu: settings reachable without playing', !!$('menuSettingsBtn'));
 check('menu: wrapped in a glass card', !!$('menuCard'));
 check('menu: gear icon is inline SVG',
   !!$('menuSettingsBtn').querySelector('svg'));
-check('menu: hero CTA sits directly under the subtitle',
+check('menu: hero CTA sits directly under the title (no slogan)',
   $('playBtn') && $('playBtn').previousElementSibling &&
-  $('playBtn').previousElementSibling.classList.contains('subtitle'));
+  $('playBtn').previousElementSibling.classList.contains('title'));
+check('menu: no slogan anywhere in the menu markup',
+  !$('menu').textContent.includes('Consume. Grow. Survive.'));
 check('menu: daily run is a quiet secondary',
   $('dailyBtn') && $('dailyBtn').classList.contains('ghost'));
 check('menu: best score shown without the history strip',
@@ -270,12 +272,24 @@ check('menu: best score shown without the history strip',
 check('menu: settings demoted to a labelled icon button',
   $('menuSettingsBtn').tagName === 'BUTTON' &&
   $('menuSettingsBtn').getAttribute('aria-label') === 'Settings');
-check('menu: control picker exposes its selection for the pill indicator',
+check('menu: control picker exposes its selection for the segmented indicator',
   $('ctrlPick').dataset.sel === 'joystick', 'data-sel=' + $('ctrlPick').dataset.sel);
 check('menu: minimal start keeps setup and meta reachable',
   !!$('runSetup') && !!$('menuObservatoryBtn') && !!$('menuLeaderboardBtn'));
-check('hud: combo bar built with 20 pips',
-  $('comboBar').children.length === 20, $('comboBar').children.length + ' pips');
+check('hud: only score, best and width readouts exist',
+  $('hudScore') && $('hudBest') && $('scaleOut') &&
+  !$('comboWrap') && !$('comboBar') && !$('chips') && !$('threatOut') &&
+  !$('runGoal') && !$('runGoalLabel') && !$('runMission') && !$('toasts'),
+  'combo/chips/threat/goal/toasts all absent from DOM');
+check('hud: score block labelled SCORE with the width line beneath',
+  $('hudScore').previousElementSibling &&
+  $('hudScore').previousElementSibling.textContent === 'SCORE' &&
+  $('hudScore').nextElementSibling && $('hudScore').nextElementSibling.id === 'scaleOut');
+check('removed: toast/shake/floats/beam systems gone from the shipped source',
+  !/function toast\(/.test(gameSrc) && !/shakeMag/.test(gameSrc) &&
+  !/drawFloats/.test(gameSrc) && !/Pale wash jet/.test(gameSrc) &&
+  !html.includes('id="toasts"'),
+  'no toast fn, no shakeMag, no float draws, no player beam, no toast layer');
 
 /* ---- 0b. panel structure ----
    Every overlay is a positioned .layer that holds one scrollable card. The

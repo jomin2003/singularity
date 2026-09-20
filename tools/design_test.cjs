@@ -39,39 +39,26 @@ function test(name, fn) {
   try { fn(game); passed++; console.log('PASS ' + name); }
   finally { game.close(); }
 }
-test('HUD goals use exact score and reset within each era; optional IDs are safe', ({q,w}) => {
-  for (const id of ['runGoalLabel','runGoalFill','runMission']) {
-    if (!w.document.getElementById(id)) { const n=w.document.createElement('div'); n.id=id; w.document.body.appendChild(n); }
-  }
-  q('start(); score=1199; updateHUD()');
-  assert.match(w.document.getElementById('runGoalLabel').textContent, /STELLAR.*1 points/);
-  q('score=1200; updateHUD()');
-  assert.match(w.document.getElementById('runGoalLabel').textContent, /INTERMEDIATE.*1,200/);
-  assert.equal(w.document.getElementById('runGoalFill').style.width, '0%');
-  q('score=1800; updateHUD()');
-  assert.equal(w.document.getElementById('runGoalFill').style.width, '50%');
-  q('score=8400; updateHUD()');
-  assert.match(w.document.getElementById('runGoalLabel').textContent, /SINGULARITY.*ENDLESS/);
-  assert.equal(w.document.getElementById('runGoalFill').style.width, '100%');
-  for (const id of ['runGoalLabel','runGoalFill','runMission']) w.document.getElementById(id).remove();
-  assert.doesNotThrow(()=>q('updateHUD()'));
-});
-test('one incomplete run mission shows chain progress and era stays synchronized', ({q,w}) => {
-  q("start(); missions=[{id:'combo15',done:false},{id:'score5k',done:false}]; runStats.peakCombo=7; updateHUD()");
-  const node=w.document.getElementById('runMission');
-  assert.match(node.textContent,/Chain 15.*7\/15/);
-  q('runStats.peakCombo=15; updateHUD()');
-  assert.match(node.textContent,/Score 5,000/);
-  q('score=4800; update(0)');
-  assert.equal(q('runStats.era'),4);
-  assert.equal(q('eraLabel(20)'), 'SINGULARITY');
+test('HUD shows score, best and width only; goal/mission/chip/threat/toast surfaces are gone', ({q,w}) => {
+  for (const id of ['runGoal','runGoalLabel','runGoalFill','runMission',
+                    'comboWrap','comboBar','comboValue','chips','threatOut','toasts'])
+    assert.equal(w.document.getElementById(id), null, id + ' removed');
+  for (const id of ['hudScore','hudBest','scaleOut'])
+    assert.ok(w.document.getElementById(id), id + ' present');
+  q('start(); score=1199; shownScore=1199; best=4200; updateHUD()');
+  assert.equal(w.document.getElementById('hudScore').textContent, '1,199');
+  assert.equal(w.document.getElementById('hudBest').textContent, '4,200');
+  // Mission logic still runs for the game-over report; it just has no HUD.
+  q("missions=[{id:'combo15',done:false},{id:'score5k',done:false}]; runStats.peakCombo=15; score=4800; update(0)");
+  assert.equal(q('runStats.era'), 4);
+  assert.equal(q("eraLabel(20)"), 'SINGULARITY');
 });
 test('choice pick is fully removed; combo milestone fires AGN feedback directly', ({q,w}) => {
-  q("start(); variant='monk'; combo=5; comboT=1; coachDone=false; coachStep=2; update(0); updateHUD()");
-  const comboText = w.document.getElementById('comboValue').textContent;
-  assert.match(comboText,/COMBO 5/);
-  assert.ok(!/CHOICE IN/.test(comboText), 'no CHOICE IN countdown');
-  assert.ok(q("toasts.some(t => t.node.textContent.includes('Every 24 chained eats'))"));
+  q("start(); variant='monk'; combo=5; comboT=1; update(0); updateHUD()");
+  assert.equal(q("typeof coachStep"), 'undefined', 'coach state removed');
+  assert.equal(q("typeof newBestShown"), 'undefined', 'new-best toast state removed');
+  assert.equal(q("typeof toasts"), 'undefined', 'no toast state');
+  assert.equal(q("typeof comboPopT"), 'undefined', 'combo pop HUD timer removed');
   for (const name of ['PICK_OPTS','startPick','resolvePick','pickAbsorb','drawPick',
                       'pickT','pickHold','pendingWave'])
     assert.equal(q('typeof '+name), 'undefined', name + ' removed');

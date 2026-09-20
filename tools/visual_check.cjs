@@ -44,7 +44,6 @@ const PANEL_SCRIPT = `
       if (want === 'observe')  openObservatory();
       if (want === 'settings') openSettings('menu');
       if (want === 'daily')    openDailyReward();
-      if (want === 'guide')    openFieldGuide();
       if (want === 'board')    openLeaderboard();
       if (want === 'pause')    pauseGame();
       if (want === 'over')     { best = 0; score = 48210; die(); }
@@ -102,7 +101,6 @@ const SHOTS = [
   { name: 'settings',        w: 390, h: 844, url: '?panel=settings' },
   { name: 'settings-360',    w: 360, h: 640, url: '?panel=settings' },
   { name: 'gameover',        w: 390, h: 844, url: '?panel=over' },
-  { name: 'guide',           w: 390, h: 844, url: '?panel=guide' },
   { name: 'landscape',       w: 844, h: 390, url: '' },
 ];
 

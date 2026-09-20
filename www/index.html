@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>SINGULARITY</title>
-<meta name="description" content="An endless gravity-well game. Consume. Grow. Survive.">
+<meta name="description" content="An endless gravity-well game.">
 <meta name="theme-color" content="#10100f">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -13,7 +13,7 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/shantell-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="style.css?v=b26">
+<link rel="stylesheet" href="style.css?v=b27">
 </head>
 <body>
 <canvas id="game" aria-label="Singularity game field. Consume smaller bodies and avoid spiked hazards. Move with the selected touch controls or WASD and arrow keys.">Your browser needs canvas support to display the Singularity game field.</canvas>
@@ -21,8 +21,9 @@
 <div id="hud" class="layer hidden">
   <div class="hud-top">
     <div class="hud-block">
-      <div class="hud-label">MASS</div>
+      <div class="hud-label">SCORE</div>
       <div class="hud-value" id="hudScore">0</div>
+      <div id="scaleOut" aria-label="Current diameter"></div>
     </div>
     <div class="hud-block right">
       <div class="hud-label">BEST</div>
@@ -37,21 +38,6 @@
             stroke-width="2.6" stroke-linecap="round"/>
     </svg>
   </button>
-  </div>
-
-  <div id="comboWrap">
-    <div id="comboValue"></div>
-    <div id="comboBar"></div>
-  </div>
-  <div id="chips"></div>
-  <div id="threatOut" role="status" aria-live="polite"></div>
-  <div id="scaleOut"></div>
-  <div class="run-goal" id="runGoal" aria-label="Era progress">
-    <div class="run-goal-top">
-      <span id="runGoalLabel"></span>
-      <span id="runMission"></span>
-    </div>
-    <div class="run-goal-track"><div id="runGoalFill"></div></div>
   </div>
   <button id="muteBtn" class="icon-btn" aria-label="Mute sound" aria-pressed="false">
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -75,7 +61,6 @@
       </svg>
     </button>
     <h1 class="title">SINGULARITY</h1>
-    <div class="subtitle">Consume. Grow. Survive.</div>
     <button id="playBtn" class="btn cta">TAP TO BEGIN</button>
     <button id="dailyBtn" class="btn ghost wide">DAILY RUN</button>
     <div class="menu-best" id="menuBest">NO RUNS YET</div>
@@ -198,10 +183,6 @@
         <span class="setting-name">High contrast</span>
         <span class="setting-val">Off</span>
       </button>
-      <button id="threatBtn" class="setting wide" type="button" aria-pressed="false">
-        <span class="setting-name">Threat readout</span>
-        <span class="setting-val">Off</span>
-      </button>
       <button id="ghostBtn" class="setting wide" type="button">
         <span class="setting-name">Ghost rival</span>
         <span class="setting-val">On</span>
@@ -252,11 +233,10 @@
   </div>
 </div>
 
-<div id="toasts"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<script src="ads-config.js?v=b26"></script>
-<script src="rewarded-ads.js?v=b26"></script>
-<script src="game.js?v=b26"></script>
+<script src="ads-config.js?v=b27"></script>
+<script src="rewarded-ads.js?v=b27"></script>
+<script src="game.js?v=b27"></script>
 </body>
 </html>

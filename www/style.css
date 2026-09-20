@@ -181,9 +181,12 @@ html, body {
 .hidden { display: none !important; }
 
 /* ---------- HUD ----------
-   Previously these were loose strings of glowing text floating over the
-   starfield, which is the classic "no container, add a glow" fallback. They
-   are now anchored instrument clusters: a real surface, a label, a value. */
+   In-game information is deliberately minimal: SCORE, BEST, and the hole's
+   physical diameter. One font, quiet labels, no glow. The low-mass warning
+   is the only place the HUD is allowed to glow, because the glow is
+   semantic -- it means "you are about to die". */
+#hud { display: flex; flex-direction: column; align-items: stretch; }
+
 .hud-top {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
@@ -223,8 +226,6 @@ html, body {
   .hud-top { grid-template-columns: minmax(0, 1fr) minmax(64px, .65fr) 44px; }
   .hud-block { padding: 8px; }
   .hud-top .pause-btn { grid-column: 3; grid-row: 1; }
-  #chips { gap: 4px; }
-  .chip { padding: 2px 4px; letter-spacing: .02em; }
 }
 
 .hud-value {
@@ -239,13 +240,23 @@ html, body {
   display: inline-block;
 }
 
-/* Secondary readout: deliberately NOT glowing and deliberately dimmer, so
-   the eye lands on MASS first. */
+/* BEST is deliberately quieter, so the eye lands on SCORE first. */
 .hud-block.right .hud-value {
   font-size: var(--t-body);
   color: rgba(224, 208, 174, .62);
   margin-top: 4px;
 }
+
+/* Physical diameter of the hole, in real units -- a quiet line under SCORE. */
+#scaleOut {
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  letter-spacing: var(--ls-label);
+  color: var(--ink-soft);
+  margin-top: var(--s-1);
+  min-height: 1em;
+}
+#scaleOut:empty { display: none; }
 
 /* Low-mass warning. This is the one place the HUD is allowed to glow, because
    the glow is semantic -- it means "you are about to die". */
@@ -268,95 +279,6 @@ html, body {
   text-shadow: 0 0 26px rgba(255, 90, 70, .85);
   animation: heartbeat .7s ease-in-out infinite;
 }
-
-/* Shield / era / control chips under MASS. */
-#chips {
-  display: flex;
-  gap: var(--s-1);
-  margin-top: var(--s-1);
-  flex-wrap: wrap;
-}
-
-/* Threat + physical-scale readouts: quiet mono lines under the chips. */
-#threatOut,
-#scaleOut {
-  font-family: var(--font-ui);
-  font-size: var(--t-micro);
-  letter-spacing: var(--ls-label);
-  color: var(--ink-soft);
-  margin-top: var(--s-1);
-  min-height: 1em;
-}
-#threatOut:empty,
-#scaleOut:empty { display: none; }
-
-.chip {
-  font-family: var(--font-ui);
-  font-size: var(--t-micro);
-  font-weight: var(--w-label);
-  letter-spacing: var(--ls-label);
-  padding: 2px var(--s-1);
-  border-radius: var(--r-sm);
-  border: 1px solid var(--c-panel-line);
-  color: rgba(234, 217, 184, .8);
-  background: rgba(26, 21, 18, .55);
-  white-space: nowrap;
-}
-
-.chip.shield { border-color: rgba(255, 236, 205, .65); color: #ffecce; }
-.chip.era { border-color: rgba(212, 165, 116, .55); color: #e8cfa8; }
-
-.hud-label.dim { color: rgba(205, 191, 164, .45); margin-top: 6px; }
-
-/* ---------- Combo ---------- */
-/* Normal flow follows the tallest readout, including wrapped chips and large
-   text. The inset leaves room for the existing combo emphasis transform. */
-#comboWrap {
-  align-self: center;
-  width: 100%;
-  max-width: 320px;
-  padding: 8px 32px;
-  opacity: 0;
-  transition: opacity var(--dur-med) var(--ease-out);
-  text-align: center;
-}
-
-#comboValue { max-width: 100%; line-height: 1.45; overflow-wrap: anywhere; }
-
-#comboWrap.on { opacity: 1; }
-
-#comboValue {
-  font-family: var(--font-ui);
-  font-size: var(--t-body);
-  font-weight: var(--w-strong);
-  letter-spacing: var(--ls-tight);
-  font-variant-numeric: tabular-nums;
-  color: #f2e9d5;
-  margin-bottom: var(--s-1);
-  transform-origin: center;
-  display: inline-block;
-}
-
-/* Twenty pips: the bar reads as "distance to the next shockwave". */
-#comboBar {
-  display: flex;
-  gap: 2px;
-  height: 4px;
-}
-
-#comboBar i {
-  flex: 1 1 0;
-  border-radius: 2px;
-  background: rgba(205, 191, 164, .22);
-  transition: background .09s linear, box-shadow .09s linear;
-}
-
-#comboBar i.on {
-  background: var(--cyan);
-  box-shadow: 0 0 6px rgba(143, 184, 168, .45);
-}
-
-#hud { display: flex; flex-direction: column; align-items: center; }
 
 .icon-btn {
   position: static;
@@ -396,10 +318,8 @@ html, body {
   font-size: clamp(18px, 6vw, 32px);
   font-weight: 700;
   /* Shantell Sans paints a loose hand-drawn line box: its own ascent/descent
-     are larger than the em, so at line-height: 1 the glyphs overlapped the
-     subtitle underneath ("Consume. Grow. Survive." was drawn across the bottom
-     of the wordmark). 1.2 gives the face the room it actually needs, and the
-     subtitle no longer needs a negative margin to sit tight. */
+     are larger than the em, so at line-height: 1 the glyphs overlapped.
+     1.2 gives the face the room it actually needs. */
   line-height: 1.2;
   letter-spacing: var(--ls-display);
   margin-right: -.08em;
@@ -408,13 +328,6 @@ html, body {
   background-clip: text;
   color: transparent;
   filter: drop-shadow(0 0 30px rgba(143, 184, 168, .4));
-}
-
-.subtitle {
-  font-size: var(--t-label);
-  letter-spacing: var(--ls-label);
-  color: rgba(224, 208, 174, .62);
-  margin-top: 2px;
 }
 
 /* Hierarchy on this screen: the SCORE is the hero and owns the only glow.
@@ -601,10 +514,7 @@ html, body {
   .glass-card,
   .layer.center,
   .hud-value.warn,
-  .hud-value.crit,
-  #comboBar.ready i.on,
-  .toast-item,
-  .toast-item.show { animation: none !important; }
+  .hud-value.crit { animation: none !important; }
 
   .segmented::before,
   .btn,
@@ -613,9 +523,7 @@ html, body {
   .gear-btn,
   .icon-btn,
   .setting,
-  .obs-upgrade-btn,
-  .toast-item,
-  #comboBar i { transition: none !important; }
+  .obs-upgrade-btn { transition: none !important; }
 }
 
 body.no-motion .btn.cta,
@@ -624,10 +532,7 @@ body.no-motion .newbest,
 body.no-motion .glass-card,
 body.no-motion .layer.center,
 body.no-motion .hud-value.warn,
-body.no-motion .hud-value.crit,
-body.no-motion #comboBar.ready i.on,
-body.no-motion .toast-item,
-body.no-motion .toast-item.show { animation: none !important; }
+body.no-motion .hud-value.crit { animation: none !important; }
 
 body.no-motion .segmented::before,
 body.no-motion .btn,
@@ -636,9 +541,7 @@ body.no-motion .meta-btn,
 body.no-motion .gear-btn,
 body.no-motion .icon-btn,
 body.no-motion .setting,
-body.no-motion .obs-upgrade-btn,
-body.no-motion .toast-item,
-body.no-motion #comboBar i { transition: none !important; }
+body.no-motion .obs-upgrade-btn { transition: none !important; }
 
 /* Short viewports (landscape phones): compact the card so the CTA stays
    on-screen without scrolling. */
@@ -837,67 +740,6 @@ body.no-motion #comboBar i { transition: none !important; }
 
 .hint.dim { color: rgba(205, 191, 164, .42); }
 
-/* ---------- Toasts: a stack, not a single overwritten slot ---------- */
-#toasts {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: 30%;
-  z-index: 20;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  padding: 0 var(--s-2);
-}
-
-/* A toast is a notification, so it gets a surface to sit on. It used to be
-   bare glowing text, which competed with the HUD and with each other when
-   three stacked up.
-   It wraps now. `white-space: nowrap` meant a long message -- "SOMETHING
-   NOTICED YOU", an achievement name -- ran off both edges of a 360px phone
-   with no ellipsis and no scroll, so the text was simply unreadable. */
-.toast-item {
-  font-family: var(--font-ui);
-  font-size: var(--t-label);
-  font-weight: var(--w-label);
-  letter-spacing: var(--ls-label);
-  white-space: normal;
-  overflow-wrap: anywhere;
-  text-align: center;
-  line-height: 1.45;
-  max-width: min(340px, calc(100vw - 2 * var(--s-2)));
-  color: #f2e9d5;
-  padding: 6px var(--s-2);
-  border-radius: var(--r-sm);
-  background: rgba(26, 21, 18, .74);
-  border: 1px solid var(--c-panel-line);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  opacity: 0;
-  transform: translateY(-10px) scale(.96);
-  transition: opacity var(--dur-med) var(--ease-out),
-              transform var(--dur-med) var(--ease-out);
-}
-
-.toast-item.show { opacity: 1; transform: none; }
-
-/* ---------- Desktop key legend ---------- */
-/* Left-aligned, because the stick owns the bottom centre now. */
-#keysLegend {
-  position: fixed;
-  left: 22px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
-  z-index: 11;
-  text-align: left;
-  font-size: var(--t-micro);
-  letter-spacing: var(--ls-label);
-  color: rgba(160, 195, 225, .38);
-  pointer-events: none;
-  display: none;
-}
-
 @media (min-width: 820px) {
   #keysLegend { display: block; }
 }
@@ -1074,14 +916,10 @@ body.large .hint { max-width: 340px; }
 body.hc .hud-value,
 body.hc .hud-label,
 body.hc .hint,
-body.hc .subtitle,
 body.hc .report { color: #ffffff; text-shadow: none; }
 body.hc .hud-block.right .hud-value { color: #ffffff; }
 body.hc .layer.center { background: #000; -webkit-backdrop-filter: none; backdrop-filter: none; }
 body.hc .btn.ghost { border-color: #fff; color: #fff; }
-body.hc .toast-item { text-shadow: none; }
-body.hc .chip { border-color: #fff; color: #fff; background: #000; }
-body.hc #comboValue { color: #fff; text-shadow: none; }
 body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 
 /* ---------- Missions (three at a time) ----------
@@ -1270,19 +1108,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
    ============================================================ */
 
 /* ============================================================
-   NEW: Combo milestone pulse
-   When one away from a shockwave, the combo bar pulses.
-   ============================================================ */
-@keyframes comboReady {
-  0%, 100% { box-shadow: 0 0 6px rgba(143, 184, 168, .45); }
-  50% { box-shadow: 0 0 18px rgba(143, 184, 168, .9); }
-}
-
-#comboBar.ready i.on {
-  animation: comboReady .5s ease-in-out 3;
-}
-
-/* ============================================================
    NEW: Settings toggle dots
    Boolean settings show a colored dot next to the value.
    ============================================================ */
@@ -1410,15 +1235,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
   width: 100%;
 }
 
-/* ============================================================
-   NEW: Achievements toast
-   A special toast for unlocking achievements.
-   ============================================================ */
-.toast-item.achievement {
-  background: linear-gradient(135deg, rgba(143, 184, 168, .18), rgba(212, 165, 116, .12));
-  border-color: rgba(143, 184, 168, .35);
-  color: #f2e9d5;
-}
 
 /* ============================================================
    NEW: Near-miss death feedback
@@ -1624,7 +1440,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 .obs-upgrade-desc,
 .dr-info,
 .lb-name,
-.toast-item,
 .hint,
 #overGap,
 .report { overflow-wrap: anywhere; }
@@ -1705,11 +1520,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 }
 
 #menuCard.menu-min .title {
-  margin: 0;
-}
-
-#menuCard.menu-min .subtitle {
-  margin: 10px 0 36px;
+  margin: 0 0 36px;
 }
 
 #menuCard.menu-min #playBtn {
@@ -1750,8 +1561,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 }
 @media (max-height: 560px) {
   #menuCard.menu-min { justify-content: flex-start !important; }
-  #menuCard.menu-min .title { font-size: clamp(22px, 7vh, 32px); }
-  #menuCard.menu-min .subtitle { margin-bottom: 20px; }
+  #menuCard.menu-min .title { font-size: clamp(22px, 7vh, 32px); margin-bottom: 20px; }
 }
 
 #menuCard .title {
@@ -1765,15 +1575,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
   background-clip: text;
   color: transparent;
   filter: drop-shadow(0 2px 0 rgba(20, 15, 11, .55)) drop-shadow(0 0 18px rgba(232, 168, 76, .18));
-}
-
-#menuCard .subtitle {
-  font-family: var(--font-ui);
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 0.16em;
-  color: #728fa8;
-  margin-top: 8px;
 }
 
 #menuCard #playBtn {
@@ -2040,41 +1841,6 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 }
 .home-details-body .segmented { margin-top: 2px; }
 .home-details-body .hint { text-align: center; }
-
-/* In-run goal strip under the combo bar: era ladder + current mission. */
-.run-goal {
-  align-self: center;
-  width: 100%;
-  max-width: 320px;
-  margin-top: 6px;
-  opacity: .92;
-}
-.run-goal-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: var(--t-micro);
-  letter-spacing: var(--ls-tight);
-  color: rgba(224, 208, 174, .8);
-}
-#runGoalLabel { font-weight: var(--w-label); }
-#runMission { color: rgba(205, 191, 164, .6); white-space: nowrap; }
-.run-goal-track {
-  height: 3px;
-  margin-top: 4px;
-  border-radius: 2px;
-  background: rgba(205, 191, 164, .18);
-  overflow: hidden;
-}
-#runGoalFill {
-  height: 100%;
-  width: 0;
-  border-radius: 2px;
-  background: linear-gradient(90deg, rgba(212, 165, 116, .8), rgba(143, 184, 168, .95));
-  box-shadow: 0 0 8px rgba(143, 184, 168, .4);
-  transition: width var(--dur-med) var(--ease-out);
-}
 
 /* Meta buttons on the menu footer: icon pills with a tiny label. */
 .menu-meta-row .meta-btn {

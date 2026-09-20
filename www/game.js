@@ -113,7 +113,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b26';
+const BUILD_ID = 'b27';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -157,10 +157,10 @@ let runUpgrades = { gravity: 0, accretion: 0, horizon: 0, singularity: 0 };
 let runDustScore = 0, runEaten = 0, lastMealT = 0;
 let rareWindowActive = false, rareWindowT = 0, rareSpawnT = 0;
 const cosmeticRand = (a, b) => a + cosmeticRandom() * (b - a);
-let p, ents, parts, waves, shots, floats, cam;
+let p, ents, parts, waves, shots, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
-let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
+let hitstopT = 0, invuln = 0, flashT = 0;
 let shotT = 0;
 let panel = null;   // null | 'pause' | 'settings' | 'observe' | 'dailyreward' | 'leaderboard' | 'observatory'
 let camRoll = 0;    // proximity tilt wobble near big bodies
@@ -175,17 +175,14 @@ let nearDeath = 0;      // 0 = comfortable, 1 = about to evaporate
 let lastHurtT = -99;    // elapsed time of the last impact (death attribution)
 let overGuardT = 0;     // input guard so a stray tap cannot skip the score
 let drainRate = 0;      // current fractional decay, for the vignette pulse
-let coachStep = 0;      // first-run scripted hint index
 let bestAtRunStart = 0; // previous best, for the "N away from BEST" line
 let runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '' };
-let comboPopT = 0;      // combo-heat pop envelope
 let nextSystemId = 1;   // unique ID for star systems
 let satiatedT = 0;      // decay holiday after a meal (Tier 0 tension curve)
 let lastBeatT = -99;    // last heartbeat haptic, for the low-mass warning
 let sparseOn = false;   // low-mass music strip-back currently engaged
 let greedT = 0;         // greed-gate window remaining
 let greedE = null;      // the body the greed gate applies to
-let newBestShown = false; // live "NEW PERSONAL BEST" callout, once per run
 let spinA = 0;          // Kerr spin parameter a/M, 0 (Schwarzschild) .. 0.998
 let kilonovaWarned = false;  // kilonova telegraph already fired this cycle
 let menuDriftT = 0;     // elapsed time driving the menu camera drift
@@ -269,12 +266,7 @@ const el = {
   hud: document.getElementById('hud'),
   hudScore: document.getElementById('hudScore'),
   hudBest: document.getElementById('hudBest'),
-  chips: document.getElementById('chips'),
-  threatOut: document.getElementById('threatOut'),
   scaleOut: document.getElementById('scaleOut'),
-  comboWrap: document.getElementById('comboWrap'),
-  comboValue: document.getElementById('comboValue'),
-  comboBar: document.getElementById('comboBar'),
   menu: document.getElementById('menu'),
   playBtn: document.getElementById('playBtn'),
   menuBest: document.getElementById('menuBest'),
@@ -293,7 +285,6 @@ const el = {
   againBtn: document.getElementById('againBtn'),
   shareBtn: document.getElementById('shareBtn'),
   muteBtn: document.getElementById('muteBtn'),
-  toasts: document.getElementById('toasts'),
   pauseBtn: document.getElementById('pauseBtn'),
   pause: document.getElementById('pause'),
   pauseScore: document.getElementById('pauseScore'),
@@ -321,7 +312,6 @@ const el = {
   ctrlBtn: document.getElementById('ctrlBtn'),
   textBtn: document.getElementById('textBtn'),
   contrastBtn: document.getElementById('contrastBtn'),
-  threatBtn: document.getElementById('threatBtn'),
   settingsBackBtn: document.getElementById('settingsBackBtn'),
   keysLegend: document.getElementById('keysLegend')
 };
@@ -404,8 +394,6 @@ let motion = motionPreference && !(motionQuery && motionQuery.matches);
 // Accessibility + comfort options. All persisted in the same versioned blob.
 let textLarge = lsGet('text', '0') === '1';
 let highContrast = lsGet('contrast', '0') === '1';
-let threatReadout = lsGet('threat', '0') === '1';
-let coachDone = lsGet('coach', '0') === '1';
 // Older saves used ghost for BOTH the toggle string and the recording.
 // Migrate the preference only; never overwrite a surviving recording.
 if (save.ghostOn === undefined) {
@@ -2056,21 +2044,19 @@ function reset() {
   greedE = null; nextSystemId = 1;
   clearInput();
   p = { x: 0, y: 0, vx: 0, vy: 0, r: startMass * RS_PER_MASS, mass: startMass };
-  ents = []; parts = []; waves = []; shots = []; floats = [];
+  ents = []; parts = []; waves = []; shots = [];
   cam = { x: 0, y: 0, zoom: 1 };
   score = 0; shownScore = 0; combo = 0; comboT = 0;
-  elapsed = 0; era = 0; shakeMag = 0; hitstopT = 0; invuln = 0;
+  elapsed = 0; era = 0; hitstopT = 0; invuln = 0;
   flashT = 0; shotT = 5;
   camRoll = 0; shield = 0; kilonovaT = rand(35, 70);
-  eraFx = 0; hitFx = 0; nearDeath = 0; lastHurtT = -99; comboPopT = 0;
+  eraFx = 0; hitFx = 0; nearDeath = 0; lastHurtT = -99;
   satiatedT = 0; drainRate = 0; spinA = 0;
   greedT = 0;
-  newBestShown = false;
   kilonovaWarned = false; lastBeatT = -99;
   if (sparseOn) Snd.setSparse(false);
   sparseOn = false;
   ghostRec = []; ghostClock = 0;
-  coachStep = 0;
   runStats = { time: 0, peakCombo: 0, biggest: 0, biggestName: '', era: 0, cause: '', finale: false };
   bestAtRunStart = best;
   resetMissionCounters();
@@ -2173,7 +2159,7 @@ function burstFx(x, y, n, spread, scale, hue) {
   }
 }
 
-// Eras are thresholds of score, announced with a toast and a wave. The names
+// Eras are thresholds of score, announced with a wave. The names
 // are the mass classes of a growing hole, ending in the active-galactic-nucleus
 // phases -- a black hole has no main sequence or red giant phase, that is a
 // star's life, and the fiction should survive a player who knows astronomy.
@@ -2227,47 +2213,8 @@ const CAUSE = {
 //             STAR CONSUMED). All caps.
 //   SAY    -- anything the game explains to the player. Sentence case, with
 //             the explanation after an em dash when a headline needs one.
-// The old copy shouted everything, which is the single most recognisable
-// tell of sci-fi UI written by feel.
-const COACH = ['Push the stick to move', 'Chain eats to build a combo'];
+// (toasts removed: the HUD carries score/best/size only; feedback is audio/haptic)
 
-/* ---------- toasts ---------- */
-// A single slot meant era-up, KILONOVA and STAR CONSUMED clobbered each
-// other, so the most interesting line of a run was routinely lost. Up to
-// three now stack, newest at the bottom.
-const toasts = [];
-const TOAST_MAX = 3;
-
-function dropToast(i) {
-  const t = toasts[i];
-  if (!t) return;
-  toasts.splice(i, 1);
-  t.node.classList.remove('show');
-  setTimeout(() => { if (t.node.parentNode) t.node.parentNode.removeChild(t.node); }, 320);
-}
-
-function clearToasts() {
-  for (let i = toasts.length - 1; i >= 0; i--) dropToast(i);
-}
-
-function toast(msg, dur) {
-  if (!el.toasts) return;
-  while (toasts.length >= TOAST_MAX) dropToast(0);
-  const node = document.createElement('div');
-  node.className = 'toast-item';
-  node.textContent = msg;
-  el.toasts.appendChild(node);
-  void node.offsetWidth;            // force a reflow so the transition runs
-  node.classList.add('show');
-  toasts.push({ node, life: 0, max: dur || 1.9 });
-}
-
-function updateToasts(dt) {
-  for (let i = toasts.length - 1; i >= 0; i--) {
-    toasts[i].life += dt;
-    if (toasts[i].life >= toasts[i].max) dropToast(i);
-  }
-}
 
 // Tidal disruption event: a body torn apart outside the horizon shreds into
 // a stream instead of being swallowed whole. Uses the live entity array, so
@@ -2360,19 +2307,7 @@ function consume(e, idx, opts) {
     }
     if (era > runStats.era) runStats.era = era;
   }
-  // Combo heat pops on every AGN feedback.
-  if (combo > 0 && combo % WAVE_EVERY() === 0) comboPopT = 0.45;
   if (!quiet) buzz(8);
-
-  // Floating number, so a big eat lands without having to watch the HUD.
-  if (!quiet && floats.length < 24) {
-    floats.push({
-      x: e.x, y: e.y,
-      text: '+' + fmt(gained),
-      life: 0, max: 0.9,
-      big: gained >= 40
-    });
-  }
 
   if (!quiet) {
     absorbFx(e);
@@ -2385,10 +2320,8 @@ function consume(e, idx, opts) {
   if (!quiet) {
     if (wasStar) {
       supernova(e.x, e.y, e.r);
-      toast('STAR CONSUMED +' + fmt(gained));
     } else if (wasPulsar) {
       shield = 3;   // seconds of one-hit protection; impact consumes it
-      toast('PULSAR ABSORBED — your next impact is shielded', 2.2);
       burstFx(e.x, e.y, 24, e.r, 1.4, 205);
     } else if (type === 'magnetar') {
     // A starquake: the crust cracks and releases a burst that clears the
@@ -2404,7 +2337,6 @@ function consume(e, idx, opts) {
     }
     waves.push({ x: p.x, y: p.y, r: p.r, max: R, t: 0, hue: 205 });
     flashT = Math.max(flashT, 0.22);
-    toast('MAGNETAR STARQUAKE');
     Snd.boom();
   }       // end magnetar branch
   }       // end if (!quiet)
@@ -2428,7 +2360,6 @@ function supernova(x, y, r) {
     }
   }
   burstFx(x, y, 46, r * 1.6, 1.4, 196);
-  shakeMag = Math.max(shakeMag, 26);
   flashT = Math.max(flashT, 0.34);
   Snd.nova();
 }
@@ -2462,7 +2393,6 @@ function hurt(e) {
   if (shield > 0) {
     shield = 0;
     invuln = 0.3;   // grace period: overlapping bodies must not hit again this frame
-    toast('SHIELD — impact blocked', 1.4);
     if (Snd.ac) Snd.tone(520, 'sine', 0.18, 0.005, 0.16);
     burstFx(p.x, p.y, 22, p.r * 0.5, 1.2, 196);
     return;
@@ -2487,7 +2417,6 @@ function hurt(e) {
   // the number.
   if (combo >= 10) Snd.fall();
   combo = 0; comboT = 0;
-  shakeMag = Math.max(shakeMag, 12 + prof.frac * 46);
   hitstopT = Math.max(hitstopT, 0.09);
   if (prof.flash) flashT = Math.max(flashT, 0.30);
   if (prof.burn) flashT = Math.max(flashT, 0.16);
@@ -2507,7 +2436,6 @@ function hurt(e) {
 
   Snd.thud();
   Snd.setDrone(true, 0);
-  if (prof.msg) toast(prof.msg, 1.6);
 }
 
 function pulse() {
@@ -2527,7 +2455,6 @@ function pulse() {
     }
   }
   if (runMission && kills > runMission.waveBest) runMission.waveBest = kills;
-  shakeMag = Math.max(shakeMag, 12);
   Snd.boom();
   Snd.sting('wave');
   buzz(45);
@@ -2564,7 +2491,6 @@ function die() {
   Snd.collapse();
   Snd.sting('death');
   Snd.setDrone(false, 0);
-  shakeMag = Math.max(shakeMag, 28);
   flashT = Math.max(flashT, 0.25);
   burstFx(p.x, p.y, 70, p.r, 1.6, 8);
   buzz(180);
@@ -2608,7 +2534,6 @@ function die() {
   renderReport();
   show(el.over);
   overGuardT = 0.8;      // one stray tap must not wipe the score you're reading
-  clearToasts();
 }
 
 // Returns a thrust vector with magnitude 0..1 for whichever scheme is active.
@@ -2653,7 +2578,6 @@ function update(dt) {
   era = Math.floor(score / ERA_SCORE);
   if (era !== prevEra && runStats) runStats.era = Math.max(runStats.era, era);
   if (era !== prevEra && era > 0) {
-    toast(eraLabel(era));
     // Milestone celebration: the only progression system in the game
     // deserved more than a line of text.
     eraFx = 1;
@@ -2673,35 +2597,11 @@ function update(dt) {
     }
   }
 
-  // Live new-best callout. The death screen used to be the only place a
-  // record was celebrated, so a monster run hid its own milestone until it
-  // was over. One toast, the first frame the old best falls.
-  if (!newBestShown && bestAtRunStart > 0 && score > bestAtRunStart) {
-    newBestShown = true;
-    toast('NEW PERSONAL BEST', 2.2);
-    Snd.sting('mission');
-    buzz(50);
-  }
-
-  updateToasts(dt);
   if (overGuardT > 0) overGuardT -= dt;
   if (flashT > 0) flashT = Math.max(0, flashT - dt * 2.2);
   if (shield > 0) shield = Math.max(0, shield - dt * 0.6);
   if (eraFx > 0) eraFx = Math.max(0, eraFx - dt * 1.1);
   if (hitFx > 0) hitFx = Math.max(0, hitFx - dt * 2.4);
-  if (comboPopT > 0) comboPopT = Math.max(0, comboPopT - dt);
-
-  // First-run coach marks. Only on run 1, and only until all three land.
-  if (!coachDone && state === 'play') {
-    if (coachStep === 0 && elapsed > 1.2) { toast(COACH[0], 2.4); coachStep = 1; }
-    else if (coachStep === 1 && combo >= 1) { toast(COACH[1], 2.4); coachStep = 2; }
-    else if (coachStep === 2 && combo >= 5) {
-      toast('Every ' + WAVE_EVERY() + ' chained eats fires an AGN feedback burst', 2.6);
-      coachStep = 3;
-      coachDone = true;
-      saveSet('coach', '1');
-    }
-  }
 
   // Low-mass warning: evaporation death used to arrive untelegraphed.
   nearDeath = state === 'play'
@@ -2723,7 +2623,6 @@ function update(dt) {
     if (gate) {
       gate.greedT = 2.5;
       greedT = 6;
-      toast('GREED GATE — eat the big one', 1.6);
       Snd.tick(1200, 1.0, 0.08, 0.12);
     }
   }
@@ -2764,7 +2663,6 @@ function update(dt) {
     // biggest relief moment in the loop lands with anticipation.
     if (!kilonovaWarned && kilonovaT <= 1.2 && kilonovaT > 0) {
       kilonovaWarned = true;
-      toast('KILONOVA INCOMING', 1.2);
       Snd.riser();
     }
     if (kilonovaT <= 0) {
@@ -2782,8 +2680,6 @@ function update(dt) {
         }
       }
       flashT = Math.max(flashT, 0.45);
-      shakeMag = Math.max(shakeMag, 18);
-      toast('KILONOVA — heavy elements forged', 2.4);
       Snd.boom();
     }
   }
@@ -2962,10 +2858,6 @@ function update(dt) {
           e.grazed = true;
           const g = Math.max(1, Math.round(e.r * 0.06 * comboMult()));
           score += g;
-          if (floats.length < 24) {
-            floats.push({ x: p.x, y: p.y - p.r, text: '+' + fmt(g) + ' GRAZE',
-                          life: 0, max: 0.7, big: false });
-          }
           burstFx(p.x, p.y, 3, p.r * 0.4, 0.6, entHue(e.r / p.r));
           Snd.tick(2400, 1.2, 0.05, 0.05);
           if (runMission) runMission.graze++;
@@ -2980,9 +2872,6 @@ function update(dt) {
   updateParts(dt);
   updateWaves(dt);
   updateShots(dt);
-  updateFloats(dt);
-
-  if (shakeMag > 0) shakeMag = Math.max(0, shakeMag - shakeMag * 7 * dt - 0.5 * dt);
 }
 
 function updateEnts(dt) {
@@ -3078,7 +2967,6 @@ function updateEnts(dt) {
             p.r = p.mass * RS_PER_MASS;
             burstFx(p.x, p.y, 4, p.r * 0.4, 0.7, 210);
             Snd.tick(1800, 1.2, 0.07, 0.08);
-            shakeMag = Math.max(shakeMag, 4);
           }
         }
       }
@@ -3193,15 +3081,6 @@ function updateShots(dt) {
   }
 }
 
-function updateFloats(dt) {
-  for (let i = floats.length - 1; i >= 0; i--) {
-    const f = floats[i];
-    f.life += dt;
-    f.y -= p.r * 0.55 * dt;              // drift upward, in world units
-    if (f.life >= f.max) floats.splice(i, 1);
-  }
-}
-
 /* ============================================================
    RENDER
    ============================================================ */
@@ -3228,11 +3107,8 @@ function render() {
   drawStars();
   drawShots();
 
-  let sx = 0, sy = 0;
-  if (motion && shakeMag > 0.2) { sx = cosmeticRand(-shakeMag, shakeMag); sy = cosmeticRand(-shakeMag, shakeMag); }
-
   ctx.save();
-  ctx.translate(W / 2 + sx, H / 2 + sy);
+  ctx.translate(W / 2, H / 2);
   ctx.rotate(camRoll);                     // frame-dragging tilt
   ctx.scale(cam.zoom, cam.zoom);
   ctx.translate(-cam.x, -cam.y);
@@ -3272,7 +3148,6 @@ function render() {
   if (state === 'menu') drawMenuVignette();
 
   drawDangerArrows();                     // screen space
-  drawFloats();                           // screen space
   drawJoystick();                         // joystick is screen-space, not world
 
   ctx.fillStyle = vignette;
@@ -3303,8 +3178,8 @@ function render() {
     ctx.fillRect(0, 0, W, H);
   }
 
-  // Era-up celebration: a brief warm amber tint + a ring swell instead of a
-  // bare toast. Amber, not violet: the celebration should feel like
+  // Era-up celebration: a brief warm amber tint + a ring swell.
+  // Amber, not violet: the celebration should feel like
   // candlelight, not a UI accent.
   if (eraFx > 0.01 && motion) {
     ctx.globalCompositeOperation = 'lighter';
@@ -3313,8 +3188,8 @@ function render() {
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  // MOTION: OFF has to kill the fullscreen white strobe as well. That flash,
-  // not the shake, is the real photosensitivity risk.
+  // MOTION: OFF has to kill the fullscreen white strobe as well. That flash
+  // is the real photosensitivity risk.
   if (flashT > 0 && motion) {
     ctx.globalCompositeOperation = 'lighter';
     ctx.fillStyle = `rgba(255,246,224,${(flashT * 0.55).toFixed(3)})`;
@@ -3438,27 +3313,6 @@ function drawJoystick() {
   ctx.strokeStyle = 'rgba(233,223,201,' + ((0.55 + mag * 0.40) * idle).toFixed(3) + ')';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB * 0.72, 0, TAU); ctx.stroke();
-}
-function drawFloats() {
-  // Hand-lettered floating score text, ink on the page.
-  ctx.save();
-  ctx.textAlign = 'center';
-  for (let i = 0; i < floats.length; i++) {
-    const f = floats[i];
-    const a = clamp(f.life / f.max, 0, 1);
-    const t = 1 - a;
-    const size = (f.size || 16) * (1 + t * 0.25);
-    ctx.font = '600 ' + size + 'px "Shantell Sans", "Segoe UI", sans-serif';
-    ctx.globalAlpha = a;
-    // Paper-light text with a soft ink halo so it reads on dark and light.
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(13,11,8,' + (a * 0.8).toFixed(3) + ')';
-    const fx = f.x, fy = f.y - t * 46;
-    ctx.strokeText(f.text, fx, fy);
-    ctx.fillStyle = 'rgba(233,223,201,' + (a * 0.98).toFixed(3) + ')';
-    ctx.fillText(f.text, fx, fy);
-  }
-  ctx.restore();
 }
 function drawGhost() {
   // Best-run ghost: a chalked dashed ring where your best self was, with a
@@ -3921,35 +3775,6 @@ function drawReferenceBlackHole(r, cx, cy) {
 }
 function drawPlayer() {
   const r = p.r;
-  const beam = beamSide();
-
-  if (era >= 5) {
-    const jl = r * 7;
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(Math.sin(elapsed * 0.25) * 0.12);
-    for (let s = -1; s <= 1; s += 2) {
-      // Pale wash jet with hand-drawn ink edges — the AGN in sketchbook form.
-      ctx.fillStyle = 'rgba(215,232,248,0.28)';
-      ctx.beginPath();
-      ctx.moveTo(-r * 0.14, 0);
-      ctx.lineTo(r * 0.14, 0);
-      ctx.lineTo(r * 0.42, s * jl);
-      ctx.lineTo(-r * 0.42, s * jl);
-      ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = 'rgba(220,236,250,0.55)';
-      ctx.lineWidth = Math.max(1, r * 0.03);
-      ctx.lineCap = 'round';
-      const wob = r * 0.05;
-      ctx.beginPath();
-      ctx.moveTo(-r * 0.14, 0);
-      ctx.quadraticCurveTo(-r * 0.30 + wob, s * jl * 0.5, -r * 0.42, s * jl);
-      ctx.moveTo(r * 0.14, 0);
-      ctx.quadraticCurveTo(r * 0.30 - wob, s * jl * 0.5, r * 0.42, s * jl);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
 
   // Bow shock: a pale wash piled up on the leading edge.
   const spd = Math.hypot(p.vx, p.vy);
@@ -4049,36 +3874,6 @@ function drawWaves() {
   }
   ctx.restore();
 }
-const PIP_COUNT = 20;
-
-function buildPips() {
-  if (!el.comboBar) return;
-  el.comboBar.innerHTML = '';
-  for (let i = 0; i < PIP_COUNT; i++) el.comboBar.appendChild(document.createElement('i'));
-}
-
-// Nearest lethal body, its size relative to yours, and which way it lies.
-// The danger arrows already knew this; a number makes it learnable.
-function threatLine() {
-  let bestD2 = Infinity, ratio = 0, ang = 0;
-  const reach = viewWorldRadius();
-  const reach2 = reach * reach;
-  for (const e of ents) {
-    if (edibleAt(e)) continue;
-    // Dark matter cannot collide, so it is never a THREAT (see danger
-    // arrows): the lensing rings are its tell.
-    if (e.darkMatter) continue;
-    const dx = e.x - p.x, dy = e.y - p.y;
-    const d2 = dx * dx + dy * dy;
-    if (d2 > reach2 || d2 >= bestD2) continue;
-    bestD2 = d2;
-    ratio = e.r / p.r;
-    ang = Math.atan2(dy, dx);
-  }
-  if (bestD2 === Infinity) return 'CLEAR';
-  const dir = COMPASS[Math.round(mod(ang, TAU) / (TAU / 8)) % 8];
-  return 'THREAT ' + ratio.toFixed(1) + '× ' + dir;
-}
 
 // Only touch the DOM when something actually changed -- this runs every frame.
 // The hole's real size, in whatever unit keeps the number readable. Returns
@@ -4100,9 +3895,10 @@ function scaleReadout() {
   return n.toLocaleString('en-US') + ' km ACROSS';
 }
 
-const hudCache = { chips: '', threat: '', scale: null, warn: null, crit: null, pips: -1 };
+const hudCache = { scale: null, warn: null, crit: null };
 
 function updateHUD() {
+  // In-game information is deliberately minimal: score, best, size.
   // Don't let the rolling counter keep easing while paused -- nothing should
   // animate on screen when the game is stopped.
   if (state !== 'paused') {
@@ -4111,20 +3907,6 @@ function updateHUD() {
     el.hudScore.textContent = fmt(Math.round(shownScore));
   }
   el.hudBest.textContent = fmt(best);
-  const goal = runGoal();
-  const goalLabel = document.getElementById('runGoalLabel');
-  const goalFill = document.getElementById('runGoalFill');
-  const missionLabel = document.getElementById('runMission');
-  if (goalLabel && goalLabel.textContent !== goal.label) goalLabel.textContent = goal.label;
-  if (goalFill) goalFill.style.width = goal.fill + '%';
-  if (missionLabel) {
-    const current = missions.find((m) => !m.done && MISSION_DEF(m.id) &&
-      runMission && MISSION_DEF(m.id).prog() < MISSION_DEF(m.id).need);
-    const def = current && MISSION_DEF(current.id);
-    const text = def ? def.text + ' · ' + Math.max(0, Math.min(def.need, def.prog())) + '/' + def.need
-      : 'Run missions complete';
-    if (missionLabel.textContent !== text) missionLabel.textContent = text;
-  }
 
   // Low-mass warning state: amber, then red, with a heartbeat.
   const warn = nearDeath > 0.45;
@@ -4138,69 +3920,12 @@ function updateHUD() {
     hudCache.crit = crit;
   }
 
-  // Chips answer "why did I survive that?" and "what stage am I in?".
-  const chips = [];
-  if (shield > 0) chips.push('shield|MAGNETOSPHERE');
-  chips.push('era|' + eraLabel(era));
-  if (spinA > 0.5) chips.push('spin|SPIN ' + spinA.toFixed(2));
-  chips.push('|' + (CTRL_LABEL[controlMode] || 'STICK'));
-  const chipKey = chips.join(',');
-  if (chipKey !== hudCache.chips) {
-    hudCache.chips = chipKey;
-    el.chips.innerHTML = '';
-    for (const c of chips) {
-      const parts = c.split('|');
-      const d = document.createElement('div');
-      d.className = 'chip' + (parts[0] ? ' ' + parts[0] : '');
-      d.textContent = parts[1];
-      el.chips.appendChild(d);
-    }
-  }
-
-  const threat = (threatReadout && state === 'play') ? threatLine() : '';
-  if (threat !== hudCache.threat) {
-    hudCache.threat = threat;
-    el.threatOut.textContent = threat;
-  }
-
   // Real-unit size. Only meaningful while playing, and only worth touching the
   // DOM when the rendered string actually changes.
   const scale = (state === 'play' || state === 'paused') ? scaleReadout() : '';
   if (scale !== hudCache.scale) {
     hudCache.scale = scale;
     el.scaleOut.textContent = scale;
-  }
-
-  const on = combo >= 3 && comboT > 0;
-  el.comboWrap.classList.toggle('on', on);
-  if (on) {
-    // Pips read as distance to the next AGN feedback under any variant cadence.
-    const WE = WAVE_EVERY();
-    const intoWave = combo % WE;
-    el.comboValue.textContent =
-      'COMBO ' + combo + '  ×' + comboMult().toFixed(1);
-    // Combo heat: the text grows and runs hotter toward the AGN feedback, then
-    // pops when it fires.
-    const heat = clamp(intoWave / WE, 0, 1);
-    const pop = comboPopT > 0 ? comboPopT : 0;
-    el.comboValue.style.transform =
-      'scale(' + (1 + heat * 0.30 + pop * 0.55).toFixed(3) + ')';
-    el.comboValue.style.color = highContrast
-      ? ''
-      : 'rgb(' + Math.round(79 + heat * 176) + ',' +
-        Math.round(240 - heat * 40) + ',' +
-        Math.round(255 - heat * 70) + ')';
-    if (intoWave !== hudCache.pips) {
-      hudCache.pips = intoWave;
-      const kids = el.comboBar.children;
-      const lit = Math.round((intoWave / WE) * kids.length);
-      for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('on', i < lit);
-    }
-    // Near the next AGN feedback the bar switches to its ready pulse.
-    el.comboBar.classList.toggle('ready', (WE - intoWave) <= 3);
-  } else {
-    hudCache.pips = -1;
-    el.comboBar.classList.remove('ready');
   }
 }
 
@@ -4272,7 +3997,6 @@ function toMenu() {
   syncControlPick();
   syncVariantPick();
   Snd.setDrone(false, 0);
-  clearToasts();
 }
 
 function pauseGame() {
@@ -4281,7 +4005,7 @@ function pauseGame() {
   state = 'paused';
   panel = 'pause';
   commitBest();
-  if (el.pauseScore) el.pauseScore.textContent = 'MASS ' + fmt(score) + ' BEST ' + fmt(best);
+  if (el.pauseScore) el.pauseScore.textContent = 'SCORE ' + fmt(score) + '  ·  BEST ' + fmt(best);
   show(el.pause); hide(el.settings);
   Snd.setDrone(false, 0);
 }
@@ -4404,7 +4128,6 @@ function syncSettingsUI() {
   setSetting(el.hapticBtn, HAPTIC_LABEL[haptics] || 'Off');
   setSetting(el.textBtn, textLarge ? 'Large' : 'Normal');
   setSetting(el.contrastBtn, highContrast ? 'On' : 'Off', highContrast);
-  setSetting(el.threatBtn, threatReadout ? 'On' : 'Off', threatReadout);
   setSetting(el.ghostBtn, ghostData ? (ghostOn ? 'On' : 'Off') : 'No ghost yet', ghostOn && !!ghostData);
   if (el.musicRange) el.musicRange.value = String(Math.round(Snd.musicVol * 100));
   if (el.sfxRange) el.sfxRange.value = String(Math.round(Snd.sfxVol * 100));
@@ -4421,9 +4144,8 @@ function syncSettingsUI() {
 // app, and a mouse-steering channel that only exists on desktop made the same
 // hole handle differently depending on the device.
 const CTRL_ORDER = ['joystick', 'follow', 'relative'];
-const CTRL_LABEL = { joystick: 'STICK', follow: 'FOLLOW', relative: 'DRAG' };
-// Title case for the settings row, where the value reads as a word; the chip
-// and the menu's segmented control keep the caps form.
+// Title case for the settings row, where the value reads as a word; the
+// menu's segmented control keeps the caps form.
 const CTRL_VALUE = { joystick: 'Stick', follow: 'Follow', relative: 'Drag' };
 const CTRL_HINT = {
   joystick: 'push the stick at the bottom of the screen',
@@ -4541,7 +4263,6 @@ function checkMissions() {
     if (def && def.prog() >= def.need) {
       m.done = true;
       changed = true;
-      toast('MISSION — ' + def.text, 2.4);
       Snd.sting('mission');
       buzz(50);
     }
@@ -4593,7 +4314,6 @@ function renderDaily() {
 }
 function startDaily() {
   if (save.daily === todayStr()) {
-    toast('Daily already run — come back tomorrow', 2.2);
     return;
   }
   seedOverride = dailySeedInt();
@@ -4603,7 +4323,6 @@ function startDaily() {
   saveSet('daily', todayStr());
   start();
   dailyRun = true;
-  toast('DAILY RUN — one attempt', 2.2);
 }
 
 // Screen-space anchor used by the two drag schemes.
@@ -4853,7 +4572,7 @@ el.soundBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMute()
 function applyA11y() {
   document.body.classList.toggle('large', textLarge);
   document.body.classList.toggle('hc', highContrast);
-  // MOTION: OFF has to reach the menu too, not just the in-game shake. The
+  // MOTION: OFF has to reach the menu too. The
   // breathing CTA and the drifting aurora are decorative motion, so they are
   // gated by the same preference as the screen flash.
   document.body.classList.toggle('no-motion', !motion);
@@ -4864,9 +4583,9 @@ el.motionBtn.addEventListener('click', (e) => {
   motionPreference = !motionPreference;
   motion = motionPreference && !(motionQuery && motionQuery.matches);
   lsSet('motion', motionPreference ? '1' : '0');
-  // MOTION: OFF must also kill the fullscreen white strobe -- that flash, not
-  // the shake, is the actual photosensitivity risk.
-  if (!motion) { shakeMag = 0; camRoll = 0; flashT = 0; eraFx = 0; }
+  // MOTION: OFF must also kill the fullscreen white strobe -- that flash
+  // is the actual photosensitivity risk.
+  if (!motion) { camRoll = 0; flashT = 0; eraFx = 0; }
   applyA11y();
   syncSettingsUI();
 });
@@ -4910,14 +4629,6 @@ el.contrastBtn.addEventListener('click', (e) => {
   syncSettingsUI();
 });
 
-el.threatBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  threatReadout = !threatReadout;
-  lsSet('threat', threatReadout ? '1' : '0');
-  syncSettingsUI();
-});
-
-
 if (el.ghostBtn) {
   el.ghostBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -4955,7 +4666,7 @@ function shareRun() {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const g = c.getContext('2d');
-    if (!g) { toast('Sharing unavailable on this device'); return; }
+    if (!g) { return; }
 
     const bg = g.createLinearGradient(0, 0, w, h);
     bg.addColorStop(0, '#04050d');
@@ -5020,7 +4731,7 @@ function shareRun() {
     g.fillText('BEST ' + fmt(best), 64, 462);
 
     const done = (blob) => {
-      if (!blob) { toast('Sharing unavailable on this device'); return; }
+      if (!blob) { return; }
       let file = null;
       try { file = new File([blob], 'singularity.png', { type: 'image/png' }); } catch (_) {}
 
@@ -5049,9 +4760,9 @@ function shareRun() {
                 files: [res.uri],
                 dialogTitle: 'Share your run'
               }))
-              .catch(() => toast('Sharing unavailable on this device'));
+              .catch(() => {});
           };
-          reader.onerror = () => toast('Sharing unavailable on this device');
+          reader.onerror = () => {};
           reader.readAsDataURL(blob);
           return;
         }
@@ -5064,7 +4775,7 @@ function shareRun() {
       }
       if (navigator.clipboard && window.ClipboardItem) {
         navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })])
-          .then(() => toast('Card copied', 1.8))
+          .then(() => {})
           .catch(() => save());
         return;
       }
@@ -5080,14 +4791,11 @@ function shareRun() {
           if (a.parentNode) a.parentNode.removeChild(a);
           URL.revokeObjectURL(url);
         }, 1200);
-        toast('Card saved', 1.8);
       }
     };
 
     if (c.toBlob) c.toBlob(done, 'image/png');
-    else toast('Sharing unavailable on this device');
   } catch (_) {
-    toast('Sharing unavailable on this device');
   }
 }
 
@@ -5137,7 +4845,6 @@ try {
 } catch (_) {}
 
 applyA11y();
-buildPips();
 loadMissions();
 syncSettingsUI();
 
@@ -5261,7 +4968,6 @@ function dailyRewardForDay(day) {
 function claimDailyReward() {
   const today = localDateKey();
   if (dailyClaimedToday()) {
-    toast('Already claimed today', 1.6);
     return;
   }
   dailyLastClaim = today;
@@ -5282,13 +4988,11 @@ function claimDailyReward() {
   const newBadges = ['daily7', 'daily28'].filter((id) => save.achievements[id] && !achievements[id]);
   skins = { ...save.skins };
   achievements = { ...save.achievements };
-  if (newSkin) { toast('SKIN UNLOCKED', 2.0); Snd.sting('mission'); }
+  if (newSkin) { Snd.sting('mission'); }
   for (const id of newBadges) {
-    toast('ACHIEVEMENT: ' + ACH_DEFS[id].name, 2.6);
     Snd.sting('mission');
     buzz(60);
   }
-  toast('+' + reward.stardust + ' STARDUST', 2.2);
   Snd.sting('mission');
   renderDailyReward();
 }
@@ -5345,7 +5049,6 @@ function unlockSkin(id) {
   if (!Object.prototype.hasOwnProperty.call(SKIN_HUES, id) || skins[id]) return;
   skins[id] = true;
   try { saveSet('skins', skins); } catch (_) {}
-  toast('SKIN UNLOCKED', 2.0);
   Snd.sting('mission');
 }
 
@@ -5381,7 +5084,6 @@ function unlockAchievement(id) {
   achievements[id] = true;
   try { saveSet('achievements', achievements); } catch (_) {}
   const def = ACH_DEFS[id];
-  toast('ACHIEVEMENT: ' + (def ? def.name : id), 2.6);
   Snd.sting('mission');
   buzz(60);
 }
@@ -5571,7 +5273,6 @@ document.addEventListener('click', (e) => {
     if (earned) {
       renderObservatory();
       if (status) status.textContent = '+' + ((ads.config.rewardAmount) || 25) + ' stardust added.';
-      toast('+' + ((ads.config.rewardAmount) || 25) + ' stardust', 1.8);
     } else if (status) {
       status.textContent = 'No ad available or closed early — stardust unchanged.';
     }
@@ -5639,7 +5340,6 @@ function renderObservatory() {
           stardust -= cost;
           upgrades[def.key] = lvl + 1;
           try { saveSet('stardust', stardust); saveSet('upgrades', upgrades); } catch (_) {}
-          toast(def.name + ' L' + (lvl + 1), 1.8);
           Snd.sting('mission');
           renderObservatory();
         }
