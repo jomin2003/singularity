@@ -36,7 +36,10 @@
     const value = JSON.parse(raw);
     if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value.day) ||
         !Number.isInteger(value.count) || value.count < 0 || value.count > 3) throw new Error('Invalid cap');
-    return value.day < day ? { day, count: 0 } : value;
+    // A pending (earned but not yet applied) reward survives the UTC-day
+    // rollover: otherwise a reward earned near midnight and applied after
+    // the date changes would silently disappear.
+    return value.day < day ? { day, count: 0, pendingRewardId: value.pendingRewardId } : value;
   }
   function remaining() {
     try { return Math.max(0, config.dailyLimit - ledger().count); }
@@ -52,9 +55,13 @@
   // Native requests cannot be cancelled. On timeout, disable this service until
   // reload rather than letting a late load overlap a new request. Never used on
   // a consent/privacy form or show call: those may legitimately remain visible.
-  function bounded(work, ms) {
+  // Pass { soft: true } for consent/prepare calls: a slow network there must
+  // reject (so the caller can retry next attempt) without killing ads for the
+  // whole session.
+  function bounded(work, ms, opts) {
+    const soft = !!(opts && opts.soft);
     return new Promise((resolve, reject) => {
-      const timer = w.setTimeout(() => { blocked = true; reject(new Error('Native timeout')); }, ms);
+      const timer = w.setTimeout(() => { if (!soft) blocked = true; reject(new Error('Native timeout')); }, ms);
       Promise.resolve().then(work).then(value => {
         w.clearTimeout(timer); resolve(value);
       }, error => { w.clearTimeout(timer); reject(error); });
@@ -64,7 +71,7 @@
     return { tagForUnderAgeOfConsent: config.tagForUnderAgeOfConsent };
   }
   async function consent(ad) {
-    let info = await bounded(() => ad.requestConsentInfo(consentOptions()), 15000);
+    let info = await bounded(() => ad.requestConsentInfo(consentOptions()), 15000, { soft: true });
     if (info.status === 'REQUIRED') info = await ad.showConsentForm();
     return info.canRequestAds === true;
   }
@@ -117,7 +124,7 @@
       await listen('onRewardedVideoAdDismissed', () => { if (showing) finish(earned); });
       await listen('onRewardedVideoAdFailedToShow', () => { if (showing) finish(false); });
       const adId = config.testMode ? TEST_ID : config.androidRewardedAdUnitId;
-      await bounded(() => ad.prepareRewardVideoAd({ adId, isTesting: config.testMode }), 30000);
+      await bounded(() => ad.prepareRewardVideoAd({ adId, isTesting: config.testMode }), 30000, { soft: true });
       showing = true;
       // Plugin show promise resolves at reward, not dismissal; early close can
       // leave it pending forever. Do not await it or treat resolution as reward.
@@ -140,12 +147,23 @@
     locked = true;
     try {
       const ad = native();
-      const info = await bounded(() => ad.requestConsentInfo(consentOptions()), 15000);
+      const info = await bounded(() => ad.requestConsentInfo(consentOptions()), 15000, { soft: true });
       if (info.privacyOptionsRequirementStatus !== 'REQUIRED') return false;
       await ad.showPrivacyOptionsForm(); // No UI timeout. Consent refreshed on next watch.
       return true;
     } catch (_) { return false; }
     finally { locked = false; }
+  }
+  async function privacyAvailable() {
+    // True only where the privacy form can actually open: native Android
+    // with the AdMob plugin, ads configured, and the consent backend
+    // reporting that privacy options are required in this region.
+    if (!supported() || !configured()) return false;
+    try {
+      const ad = native();
+      const info = await bounded(() => ad.requestConsentInfo(consentOptions()), 15000, { soft: true });
+      return info.privacyOptionsRequirementStatus === 'REQUIRED';
+    } catch (_) { return false; }
   }
   function getPendingReward() {
     try {
@@ -162,5 +180,5 @@
       }
     } catch (_) {}
   }
-  w.RewardedAds = Object.freeze({ available, busy: () => locked, remaining, watch, privacy, config, getPendingReward, clearPendingReward });
+  w.RewardedAds = Object.freeze({ available, busy: () => locked, remaining, watch, privacy, privacyAvailable, config, getPendingReward, clearPendingReward });
 })(window);

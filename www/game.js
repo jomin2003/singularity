@@ -113,7 +113,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b23';
+const BUILD_ID = 'b24';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -156,6 +156,7 @@ let state = 'menu';
 let runUpgrades = { gravity: 0, accretion: 0, horizon: 0, singularity: 0 };
 let runDustScore = 0, runEaten = 0, lastMealT = 0;
 let rareWindowActive = false, rareWindowT = 0, rareSpawnT = 0;
+let civT = 0, nextCivIn = 7;   // time-based civ deployment (see updateEnts)
 const cosmeticRand = (a, b) => a + cosmeticRandom() * (b - a);
 let p, ents, parts, waves, shots, slugs, floats, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
@@ -206,8 +207,14 @@ let ghostClock = 0;     // 10 Hz recording accumulator
 function loadGhost() {
   try {
     const g = save.ghost;
+    // Validate the recording: equal-length non-empty arrays, every sample a
+    // finite number, length capped like the recorder's own 3600-sample cap.
+    // Corrupt or tampered saves must not reach the playback lerp.
     if (g && Array.isArray(g.x) && Array.isArray(g.y) &&
-        g.x.length === g.y.length && g.x.length) return g;
+        g.x.length === g.y.length && g.x.length && g.x.length <= 3600 &&
+        g.x.every((v) => typeof v === 'number' && Number.isFinite(v)) &&
+        g.y.every((v) => typeof v === 'number' && Number.isFinite(v)) &&
+        (g.t0 === undefined || (typeof g.t0 === 'number' && Number.isFinite(g.t0)))) return g;
   } catch (_) {}
   return null;
 }
@@ -893,79 +900,174 @@ function pickSpectral(rnd) {
   return SPECTRAL[0];
 }
 
-function blobs(g, rnd, col, n, rmin, rmax, alpha) {
-  g.globalAlpha = alpha;
-  g.fillStyle = col;
+/* ============================================================
+   INDIE ART KIT — hand-drawn ink & watercolor on dark paper.
+
+   Direction: a sketchbook page, not a render farm. Every body is
+   painted once into an offscreen sprite with three passes —
+     1. watercolor wash   flat muted fill + soft tonal blobs
+     2. ink outline        a wobbly hand-drawn ring, never a circle
+     3. hatch shade        short diagonal strokes on the shadow side
+   Washes are thin, so the paper grain underneath keeps showing
+   through. Deterministic: every wobble comes from the sprite's own
+   seeded rnd stream, so a body looks identical every frame.
+   ============================================================ */
+const INK_DK = '#0d0b08';   // ink strokes on light bodies
+const BONE = '#e9dfc9';     // chalk strokes on dark bodies
+const PAPER_BG = '#171310'; // the page itself
+
+// A closed ring that wobbles like a hand-drawn circle. Builds the path;
+// the caller decides fill or stroke.
+function wobPath(g, rnd, cx, cy, r, wob, n) {
+  n = n || 28;
+  g.beginPath();
+  for (let i = 0; i <= n; i++) {
+    const a = (i / n) * TAU;
+    const rr = r * (1 + (rnd() * 2 - 1) * wob);
+    const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.closePath();
+}
+
+// Trace a precomputed polygon with soft quadratic smoothing.
+function polyPath(g, pts) {
+  const n = pts.length;
+  g.beginPath();
+  g.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i <= n; i++) {
+    const x = pts[i % n][0], y = pts[i % n][1];
+    const px = pts[i - 1][0], py = pts[i - 1][1];
+    g.quadraticCurveTo(px, py, (x + px) / 2, (y + py) / 2);
+  }
+  g.closePath();
+}
+
+// Flat watercolor wash: soft tonal blobs inside the current clip.
+// Ellipses at low alpha — no gradients, so the paper grain underneath
+// keeps showing through.
+function washBlobs(g, rnd, cx, cy, r, cols, n, alpha) {
   for (let i = 0; i < n; i++) {
-    const a = rnd() * TAU, d = Math.sqrt(rnd()) * SPR_R * 0.9;
-    const rr = rmin + rnd() * (rmax - rmin);
+    const a = rnd() * TAU, d = Math.sqrt(rnd()) * r * 0.72;
+    const bx = cx + Math.cos(a) * d, by = cy + Math.sin(a) * d;
+    const br = r * (0.18 + rnd() * 0.42);
+    g.globalAlpha = alpha * (0.6 + rnd() * 0.6);
+    g.fillStyle = cols[(rnd() * cols.length) | 0];
     g.beginPath();
-    g.ellipse(SPR_R + Math.cos(a) * d, SPR_R + Math.sin(a) * d,
-              rr, rr * (0.55 + rnd() * 0.6), rnd() * TAU, 0, TAU);
+    g.ellipse(bx, by, br, br * (0.55 + rnd() * 0.5), rnd() * TAU, 0, TAU);
     g.fill();
   }
   g.globalAlpha = 1;
 }
 
-function craters(g, rnd, n, maxR) {
-  for (let i = 0; i < n; i++) {
-    const a = rnd() * TAU, d = Math.sqrt(rnd()) * SPR_R * 0.86;
-    const x = SPR_R + Math.cos(a) * d, y = SPR_R + Math.sin(a) * d;
-    const rr = 1.5 + rnd() * maxR;
-    g.fillStyle = 'rgba(0,0,0,0.34)';
-    g.beginPath(); g.arc(x, y, rr, 0, TAU); g.fill();
-    g.fillStyle = 'rgba(255,255,255,0.14)';
-    g.beginPath(); g.arc(x - rr * 0.25, y - rr * 0.25, rr * 0.7, 0, TAU); g.fill();
-  }
-}
-
-function bands(g, rnd, cols, alphaLo) {
-  let y = -4;
-  while (y < SPR) {
-    const h = 3 + rnd() * 10;
-    g.fillStyle = cols[(rnd() * cols.length) | 0];
-    g.globalAlpha = alphaLo + rnd() * 0.35;
-    const ph = rnd() * 6;
-    g.beginPath();
-    g.moveTo(-2, y);
-    for (let x = -2; x <= SPR + 2; x += 7) g.lineTo(x, y + Math.sin(x * 0.055 + ph) * 2.6);
-    for (let x = SPR + 2; x >= -2; x -= 7) g.lineTo(x, y + h + Math.sin(x * 0.055 + ph) * 2.6);
-    g.closePath(); g.fill();
-    y += h * 0.92;
-  }
-  g.globalAlpha = 1;
-}
-
-function fissures(g, rnd, n, col, glow) {
-  g.globalCompositeOperation = glow ? 'lighter' : 'source-over';
+// Hatch shading on the shadow side (lower-right, opposite LIGHT). Short
+// diagonal strokes clipped to the body — the sketchbook's crosshatch.
+function hatchShade(g, rnd, cx, cy, r, col, n, wob) {
+  g.save();
+  wobPath(g, rnd, cx, cy, r, wob == null ? 0.03 : wob, 28);
+  g.clip();
   g.strokeStyle = col;
   g.lineCap = 'round';
+  const ang = Math.PI * 0.25;
+  const dx = Math.cos(ang), dy = Math.sin(ang);
   for (let i = 0; i < n; i++) {
-    let x = rnd() * SPR, y = rnd() * SPR;
-    let a = rnd() * TAU;
-    g.lineWidth = 0.7 + rnd() * 2.1;
-    g.beginPath(); g.moveTo(x, y);
-    const segs = 3 + ((rnd() * 4) | 0);
-    for (let s = 0; s < segs; s++) {
-      a += (rnd() - 0.5) * 1.5;
-      x += Math.cos(a) * (4 + rnd() * 12);
-      y += Math.sin(a) * (4 + rnd() * 12);
-      g.lineTo(x, y);
-    }
+    const t = rnd();
+    const px = cx + (rnd() * 2 - 1) * r * 0.9 + r * 0.38 * t;
+    const py = cy + (rnd() * 2 - 1) * r * 0.9 + r * 0.38 * t;
+    const len = r * (0.10 + rnd() * 0.22);
+    g.lineWidth = Math.max(0.7, r * 0.022);
+    g.globalAlpha = 0.26 + rnd() * 0.30;
+    g.beginPath();
+    g.moveTo(px - dx * len, py - dy * len);
+    g.lineTo(px + dx * len, py + dy * len);
     g.stroke();
   }
-  g.globalCompositeOperation = 'source-over';
+  g.globalAlpha = 1;
+  g.restore();
 }
 
-function polarCaps(g, rnd, col) {
-  g.globalAlpha = 0.75; g.fillStyle = col;
-  g.beginPath(); g.ellipse(SPR_R, 1, SPR_R * 0.92, SPR_R * (0.13 + rnd() * 0.1), 0, 0, TAU); g.fill();
-  g.beginPath(); g.ellipse(SPR_R, SPR - 1, SPR_R * 0.92, SPR_R * (0.13 + rnd() * 0.1), 0, 0, TAU); g.fill();
+// Stipple: small dots for granulation, speckle, texture.
+function stipple(g, rnd, cx, cy, r, col, n, rMin, rMax, alpha) {
+  g.fillStyle = col;
+  for (let i = 0; i < n; i++) {
+    const a = rnd() * TAU, d = Math.sqrt(rnd()) * r * 0.85;
+    const rr = rMin + rnd() * (rMax - rMin);
+    g.globalAlpha = alpha * (0.5 + rnd() * 0.5);
+    g.beginPath();
+    g.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, rr, 0, TAU);
+    g.fill();
+  }
   g.globalAlpha = 1;
+}
+
+// A hand-drawn wobbly line — the sketchbook's contour stroke.
+function wobLine(g, rnd, x0, y0, x1, y1, wob, segs) {
+  segs = segs || 6;
+  g.beginPath();
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const w = Math.sin(t * Math.PI) * wob;
+    const x = x0 + (x1 - x0) * t + (rnd() * 2 - 1) * w;
+    const y = y0 + (y1 - y0) * t + (rnd() * 2 - 1) * w;
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.stroke();
+}
+
+// A full hand-drawn disc in one call: wash fill, ink outline, hatch.
+// opt: { fill, tones[], toneN, washAlpha, ink, inkW, wob,
+//        hatch, hatchCol, hatchN, stip{col,n,r0,r1,a} }
+function inkDisc(g, rnd, cx, cy, r, opt) {
+  const o = opt || {};
+  const wob = o.wob == null ? 0.045 : o.wob;
+  // 1. wash fill inside a wobbled clip
+  g.save();
+  wobPath(g, rnd, cx, cy, r, wob, 30);
+  g.clip();
+  g.fillStyle = o.fill || '#888888';
+  g.fillRect(cx - r, cy - r, r * 2, r * 2);
+  if (o.tones) washBlobs(g, rnd, cx, cy, r, o.tones, o.toneN || 10, o.washAlpha || 0.5);
+  if (o.stip) stipple(g, rnd, cx, cy, r, o.stip.col, o.stip.n, o.stip.r0, o.stip.r1, o.stip.a);
+  g.restore();
+  // 2. ink outline, sketched twice with a slight offset for the hand feel
+  const ink = o.ink || INK_DK;
+  const inkW = o.inkW || Math.max(1.2, r * 0.035);
+  g.strokeStyle = ink;
+  g.lineWidth = inkW;
+  g.lineJoin = 'round';
+  g.lineCap = 'round';
+  wobPath(g, rnd, cx, cy, r, wob, 30);
+  g.stroke();
+  g.globalAlpha = 0.45;
+  wobPath(g, rnd, cx, cy, r * 0.985, wob * 1.4, 30);
+  g.stroke();
+  g.globalAlpha = 1;
+  // 3. hatch on the shadow side
+  if (o.hatch !== false) {
+    hatchShade(g, rnd, cx, cy, r * 0.96, o.hatchCol || 'rgba(10,8,6,0.55)',
+               o.hatchN || 26, wob);
+  }
+}
+
+// Crater: an ink-ringed dent with a hatch on its shadow side.
+function inkCrater(g, rnd, x, y, rr) {
+  g.fillStyle = 'rgba(12,10,8,0.30)';
+  wobPath(g, rnd, x, y, rr, 0.14, 14);
+  g.fill();
+  g.strokeStyle = 'rgba(12,10,8,0.62)';
+  g.lineWidth = Math.max(0.8, rr * 0.20);
+  wobPath(g, rnd, x, y, rr, 0.14, 14);
+  g.stroke();
+  // lit lip on the sunward side
+  g.strokeStyle = 'rgba(233,223,201,0.30)';
+  g.lineWidth = Math.max(0.7, rr * 0.12);
+  g.beginPath();
+  g.arc(x, y, rr * 0.92, Math.PI * 0.9, Math.PI * 1.7);
+  g.stroke();
 }
 
 function drawAsteroid(g, rnd) {
-  // Irregular silhouette rather than a perfect circle.
+  // Irregular silhouette, watercolor rock, ink-ringed craters.
   const N = 9 + ((rnd() * 4) | 0);
   const pts = [];
   for (let i = 0; i < N; i++) {
@@ -973,549 +1075,667 @@ function drawAsteroid(g, rnd) {
     const rr = SPR_R * (0.70 + rnd() * 0.30);
     pts.push([SPR_R + Math.cos(a) * rr, SPR_R + Math.sin(a) * rr]);
   }
-  g.beginPath();
-  g.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i <= N; i++) {
-    const [x, y] = pts[i % N];
-    const [px, py] = pts[i - 1];
-    g.quadraticCurveTo(px, py, (x + px) / 2, (y + py) / 2);
+  g.save();
+  polyPath(g, pts);
+  g.clip();
+  g.fillStyle = '#5c5248';
+  g.fillRect(0, 0, SPR, SPR);
+  washBlobs(g, rnd, SPR_R, SPR_R, SPR_R, ['#6e6257', '#4a4239', '#7a6c5e', '#3c352d'], 14, 0.55);
+  const nc = 6 + ((rnd() * 6) | 0);
+  for (let i = 0; i < nc; i++) {
+    const a = rnd() * TAU, d = Math.sqrt(rnd()) * SPR_R * 0.72;
+    inkCrater(g, rnd, SPR_R + Math.cos(a) * d, SPR_R + Math.sin(a) * d,
+              SPR_R * (0.07 + rnd() * 0.13));
   }
-  g.closePath();
-  // Real asteroids are darker than charcoal -- typical albedo is 0.05-0.15,
-// which is why they are so hard to see against space.
-  const grd = g.createLinearGradient(0, 0, SPR, SPR);
-  grd.addColorStop(0, '#6b6259');
-  grd.addColorStop(0.5, '#423c35');
-  grd.addColorStop(1, '#201d19');
-  g.fillStyle = grd; g.fill();
-  g.save(); g.clip();
-  craters(g, rnd, 7 + ((rnd() * 6) | 0), SPR_R * 0.16);
-  blobs(g, rnd, '#000000', 7, 2, 7, 0.20);
+  hatchShade(g, rnd, SPR_R, SPR_R, SPR_R, 'rgba(12,10,8,0.5)', 30, 0.05);
   g.restore();
+  g.strokeStyle = INK_DK;
+  g.lineWidth = Math.max(1.6, SPR_R * 0.05);
+  g.lineJoin = 'round';
+  polyPath(g, pts);
+  g.stroke();
 }
 
-// Main-sequence stars and evolved giants. Colour comes from the real
-// spectral sequence (O B A F G K M) weighted by true galactic frequency, so
-// most stars you meet are red dwarfs -- the opposite of what most games
-// draw. Includes limb darkening and a granulation texture. Giants are
-// distended and have much larger convection cells.
+// Main-sequence stars and evolved giants, painted as watercolor discs with
+// stippled granulation and a hand-drawn corona of short arcs. Colour still
+// follows the real spectral sequence; the indie pass only changes the hand.
 function drawStar(g, rnd, sub) {
   const giant = sub === 'redgiant' || sub === 'supergiant' || sub === 'bluegiant';
   let spec;
-  if (sub === 'bluegiant') spec = SPECTRAL[5];        // B: hot, blue-white
-  else if (sub === 'redgiant') spec = SPECTRAL[1];    // K: orange
-  else if (sub === 'supergiant') spec = SPECTRAL[0];  // M: Betelgeuse red
+  if (sub === 'bluegiant') spec = SPECTRAL[5];
+  else if (sub === 'redgiant') spec = SPECTRAL[1];
+  else if (sub === 'supergiant') spec = SPECTRAL[0];
   else spec = pickSpectral(rnd);
 
-  const R = giant ? SPR_R * 0.98 : SPR_R * 0.86;
-  const grd = g.createRadialGradient(SPR_R, SPR_R, R * 0.05, SPR_R, SPR_R, R);
-  grd.addColorStop(0.00, spec.hi);
-  grd.addColorStop(0.42, spec.mid);
-  grd.addColorStop(0.88, spec.lo);
-  grd.addColorStop(1.00, spec.lo);
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
-
-  g.save();
-  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.clip();
-  g.globalCompositeOperation = 'lighter';
-  blobs(g, rnd, spec.hi, 26, 2, 8, 0.22);            // granulation
-  g.globalCompositeOperation = 'source-over';
+  const R = giant ? SPR_R * 0.82 : SPR_R * 0.72;
+  inkDisc(g, rnd, SPR_R, SPR_R, R, {
+    fill: spec.mid, tones: [spec.hi, spec.lo, spec.mid], toneN: giant ? 16 : 12,
+    washAlpha: 0.55, ink: '#241a12', inkW: Math.max(1.4, R * 0.04), wob: 0.05,
+    hatch: true, hatchCol: 'rgba(60,20,8,0.4)', hatchN: 22,
+    stip: { col: spec.hi, n: giant ? 40 : 26, r0: 0.8, r1: R * 0.07, a: 0.5 }
+  });
   if (giant) {
-    blobs(g, rnd, 'rgba(120,30,10,0.30)', 6, 6, 16, 0.34);   // huge cells
-  } else {
-    blobs(g, rnd, 'rgba(90,30,8,0.45)', 4, 2, 5, 0.38);      // starspots
+    // Huge convection cells as darker wash blobs.
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.94, 0.05, 30);
+    g.clip();
+    washBlobs(g, rnd, SPR_R, SPR_R, R, ['rgba(120,40,12,0.5)'], 6, 0.5);
+    g.restore();
   }
-  g.restore();
-
-  // Corona. Giants have large, tenuous, cooler envelopes.
-  g.globalCompositeOperation = 'lighter';
-  const cg = g.createRadialGradient(SPR_R, SPR_R, R * 0.9, SPR_R, SPR_R, SPR_R);
-  cg.addColorStop(0, giant ? 'rgba(255,180,120,0.30)' : 'rgba(255,220,170,0.22)');
-  cg.addColorStop(1, 'rgba(255,180,120,0)');
-  g.fillStyle = cg;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-}
-
-// A brown dwarf -- a "failed star" too small to sustain hydrogen fusion.
-// Dim, magenta-brown, with patchy methane/ammonia cloud bands.
-function drawBrownDwarf(g, rnd) {
-  const R = SPR_R * 0.82;
-  const grd = g.createRadialGradient(SPR_R, SPR_R, R * 0.05, SPR_R, SPR_R, R);
-  grd.addColorStop(0.00, '#c89a86');
-  grd.addColorStop(0.45, '#8a5a4a');
-  grd.addColorStop(1.00, '#3a2018');
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
-  g.save();
-  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.clip();
-  bands(g, rnd, ['#a06a55', '#7a4a3c', '#5c342a'], 0.22);
-  g.restore();
-  // Very faint glow -- these barely shine in visible light.
-  g.globalCompositeOperation = 'lighter';
-  const cg = g.createRadialGradient(SPR_R, SPR_R, R * 0.8, SPR_R, SPR_R, SPR_R);
-  cg.addColorStop(0, 'rgba(180,90,60,0.18)');
-  cg.addColorStop(1, 'rgba(180,90,60,0)');
-  g.fillStyle = cg;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-}
-
-// A white dwarf -- Earth-sized and immensely dense, so it renders as a tiny
-// brilliant blue-white point. Very high mass for its size.
-function drawWhiteDwarf(g, rnd) {
-  const R = SPR_R * 0.34;
-  g.globalCompositeOperation = 'lighter';
-  const cg = g.createRadialGradient(SPR_R, SPR_R, R * 0.2, SPR_R, SPR_R, SPR_R);
-  cg.addColorStop(0.00, 'rgba(255,255,255,0.95)');
-  cg.addColorStop(0.30, 'rgba(200,225,255,0.42)');
-  cg.addColorStop(1.00, 'rgba(160,200,255,0)');
-  g.fillStyle = cg;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = '#ffffff';
-  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
-  g.fillStyle = '#dbe9ff';
-  g.beginPath(); g.arc(SPR_R, SPR_R, R * 0.7, 0, TAU); g.fill();
-}
-
-// A magnetar -- a neutron star with a magnetic field around 10^15 gauss,
-// strong enough to distort atoms. Rendered with dipole field loops.
-function drawMagnetar(g, rnd) {
-  const R = SPR_R * 0.30;
-  g.globalCompositeOperation = 'lighter';
-  const cg = g.createRadialGradient(SPR_R, SPR_R, R * 0.2, SPR_R, SPR_R, SPR_R * 0.92);
-  cg.addColorStop(0.00, 'rgba(230,245,255,0.95)');
-  cg.addColorStop(0.35, 'rgba(120,190,255,0.35)');
-  cg.addColorStop(1.00, 'rgba(90,150,255,0)');
-  g.fillStyle = cg;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.92, 0, TAU); g.fill();
-  // Dipole field loops.
-  g.strokeStyle = 'rgba(150,205,255,0.50)';
-  g.lineWidth = 1.4;
-  for (let k = 1; k <= 3; k++) {
+  // Corona: short hand-drawn arcs around the limb, not a gradient halo.
+  g.strokeStyle = spec.hi;
+  g.lineCap = 'round';
+  const na = 10 + ((rnd() * 6) | 0);
+  for (let i = 0; i < na; i++) {
+    const a = rnd() * TAU;
+    const r0 = R * (1.06 + rnd() * 0.05), r1 = R * (1.22 + rnd() * 0.22);
+    g.globalAlpha = 0.35 + rnd() * 0.4;
+    g.lineWidth = 1 + rnd() * 1.6;
     g.beginPath();
-    g.ellipse(SPR_R, SPR_R, SPR_R * 0.26 * k, SPR_R * 0.76, 0, 0, TAU);
+    g.moveTo(SPR_R + Math.cos(a) * r0, SPR_R + Math.sin(a) * r0);
+    const mid = a + (rnd() - 0.5) * 0.5;
+    g.quadraticCurveTo(SPR_R + Math.cos(mid) * (r0 + r1) / 2,
+                       SPR_R + Math.sin(mid) * (r0 + r1) / 2,
+                       SPR_R + Math.cos(a + (rnd() - 0.5) * 0.4) * r1,
+                       SPR_R + Math.sin(a + (rnd() - 0.5) * 0.4) * r1);
     g.stroke();
   }
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = '#eaf6ff';
-  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
+  g.globalAlpha = 1;
 }
 
-// A quasar -- an active galactic nucleus. A supermassive black hole with a
-// hot accretion torus and two relativistic polar jets.
-function drawQuasar(g, rnd) {
-  g.globalCompositeOperation = 'lighter';
-  for (let s = -1; s <= 1; s += 2) {
-    const jg = g.createLinearGradient(SPR_R, SPR_R, SPR_R, SPR_R + s * SPR_R);
-    jg.addColorStop(0.00, 'rgba(215,238,255,0.95)');
-    jg.addColorStop(0.35, 'rgba(150,200,255,0.55)');
-    jg.addColorStop(1.00, 'rgba(120,180,255,0)');
-    g.fillStyle = jg;
+// A brown dwarf — a "failed star". Dim mauve-brown watercolor with soft
+// methane band washes.
+function drawBrownDwarf(g, rnd) {
+  const R = SPR_R * 0.74;
+  inkDisc(g, rnd, SPR_R, SPR_R, R, {
+    fill: '#6b4a3e', tones: ['#8a624f', '#4a2e26', '#7a5546'], toneN: 12,
+    washAlpha: 0.55, ink: '#1c130e', wob: 0.05,
+    hatchCol: 'rgba(20,10,8,0.5)', hatchN: 22
+  });
+  g.save();
+  wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.05, 28);
+  g.clip();
+  for (let i = 0; i < 4; i++) {
+    const y = SPR_R - R * 0.6 + i * R * 0.4 + (rnd() - 0.5) * R * 0.12;
+    g.globalAlpha = 0.30;
+    g.fillStyle = i % 2 ? '#8a624f' : '#4a2e26';
     g.beginPath();
-    g.moveTo(SPR_R - SPR_R * 0.10, SPR_R);
-    g.lineTo(SPR_R + SPR_R * 0.10, SPR_R);
-    g.lineTo(SPR_R + SPR_R * 0.32, SPR_R + s * SPR_R);
-    g.lineTo(SPR_R - SPR_R * 0.32, SPR_R + s * SPR_R);
-    g.closePath(); g.fill();
+    g.ellipse(SPR_R, y, R * 0.95, R * 0.10, (rnd() - 0.5) * 0.2, 0, TAU);
+    g.fill();
   }
-  const tg = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.1, SPR_R, SPR_R, SPR_R * 0.8);
-  tg.addColorStop(0.00, 'rgba(255,245,220,0.95)');
-  tg.addColorStop(0.40, 'rgba(255,190,120,0.45)');
-  tg.addColorStop(1.00, 'rgba(255,150,90,0)');
-  g.fillStyle = tg;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.8, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = '#120a06';
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.26, 0, TAU); g.fill();
-  g.strokeStyle = 'rgba(255,240,210,0.95)';
-  g.lineWidth = 2;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.31, 0, TAU); g.stroke();
+  g.globalAlpha = 1;
+  g.restore();
+}
+
+// A white dwarf — Earth-sized, immensely dense: a tiny brilliant
+// bone-white point with a hand-drawn sparkle.
+function drawWhiteDwarf(g, rnd) {
+  const R = SPR_R * 0.30;
+  inkDisc(g, rnd, SPR_R, SPR_R, R, {
+    fill: '#f2f6ff', tones: ['#ffffff', '#d7e4ff'], toneN: 6, washAlpha: 0.6,
+    ink: '#2a2620', inkW: 1.2, wob: 0.06, hatch: false
+  });
+  // Hand sparkle: four short wobbly arms.
+  g.strokeStyle = 'rgba(240,246,255,0.85)';
+  g.lineCap = 'round';
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2 + rnd() * 0.3;
+    g.lineWidth = 1.4;
+    wobLine(g, rnd, SPR_R + Math.cos(a) * R * 1.25, SPR_R + Math.sin(a) * R * 1.25,
+            SPR_R + Math.cos(a) * R * 2.1, SPR_R + Math.sin(a) * R * 2.1, 1.2, 4);
+  }
+}
+
+// A magnetar — pale ink core with hand-drawn dipole field loops.
+function drawMagnetar(g, rnd) {
+  const R = SPR_R * 0.28;
+  inkDisc(g, rnd, SPR_R, SPR_R, R, {
+    fill: '#dcecfb', tones: ['#ffffff', '#aecdf5'], toneN: 6, washAlpha: 0.6,
+    ink: '#232a33', inkW: 1.2, wob: 0.06, hatch: false
+  });
+  g.strokeStyle = 'rgba(174,205,245,0.75)';
+  g.lineCap = 'round';
+  for (let k = 1; k <= 3; k++) {
+    g.lineWidth = 1.6 - k * 0.3;
+    g.save();
+    g.translate(SPR_R, SPR_R);
+    g.rotate((rnd() - 0.5) * 0.2);
+    g.beginPath();
+    const ex = SPR_R * 0.26 * k, ey = SPR_R * 0.72;
+    for (let i = 0; i <= 24; i++) {
+      const a = (i / 24) * TAU;
+      const w = 1 + (rnd() - 0.5) * 0.05;
+      const x = Math.cos(a) * ex * w, y = Math.sin(a) * ey * w;
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.closePath();
+    g.stroke();
+    g.restore();
+  }
+}
+
+// A quasar — an ink-black throat with a bone ring and two hand-drawn
+// watercolor jets.
+function drawQuasar(g, rnd) {
+  const R = SPR_R * 0.30;
+  // Jets first, behind the throat.
+  for (let s = -1; s <= 1; s += 2) {
+    g.fillStyle = 'rgba(190,215,240,0.30)';
+    g.beginPath();
+    g.moveTo(SPR_R - R * 0.5, SPR_R);
+    g.lineTo(SPR_R + R * 0.5, SPR_R);
+    const tipX = SPR_R + (rnd() - 0.5) * R * 0.6;
+    g.lineTo(tipX + R * 0.5, SPR_R + s * SPR_R * 0.95);
+    g.lineTo(tipX - R * 0.5, SPR_R + s * SPR_R * 0.95);
+    g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(215,232,248,0.5)';
+    g.lineWidth = 1.2;
+    wobLine(g, rnd, SPR_R - R * 0.4, SPR_R + s * R * 0.4, tipX - R * 0.3, SPR_R + s * SPR_R * 0.9, 2, 5);
+    wobLine(g, rnd, SPR_R + R * 0.4, SPR_R + s * R * 0.4, tipX + R * 0.3, SPR_R + s * SPR_R * 0.9, 2, 5);
+  }
+  // Ink throat with a chalk ring.
+  g.fillStyle = '#060505';
+  wobPath(g, rnd, SPR_R, SPR_R, R, 0.08, 20);
+  g.fill();
+  g.strokeStyle = BONE;
+  g.lineWidth = Math.max(1.4, R * 0.10);
+  wobPath(g, rnd, SPR_R, SPR_R, R * 1.12, 0.06, 24);
+  g.stroke();
+  g.globalAlpha = 0.5;
+  g.strokeStyle = 'rgba(233,223,201,0.6)';
+  g.lineWidth = 1;
+  wobPath(g, rnd, SPR_R, SPR_R, R * 1.30, 0.08, 24);
+  g.stroke();
+  g.globalAlpha = 1;
 }
 
 function drawPlanet(g, rnd, type) {
   const pal = PLANET_PAL[type] || PLANET_PAL.rocky;
-  const grd = g.createLinearGradient(0, 0, 0, SPR);
-  grd.addColorStop(0, pal.lo);
-  grd.addColorStop(0.42, pal.mid);
-  grd.addColorStop(1, pal.lo);
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-
-  g.save();
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.clip();
+  const R = SPR_R * 0.94;
+  const inkFor = (type === 'rogue' || type === 'lava') ? BONE : INK_DK;
 
   if (type === 'giant' || type === 'rogue') {
-    bands(g, rnd, [pal.hi, pal.mid, pal.lo, pal.spot], 0.5);
-    blobs(g, rnd, pal.spot, 3, 4, 13, 0.5);
-    if (rnd() < 0.6) {                       // great storm
-      g.globalAlpha = 0.8; g.fillStyle = pal.spot;
-      g.beginPath();
-      g.ellipse(SPR_R * 1.34, SPR_R * 1.22, SPR_R * 0.26, SPR_R * 0.14, 0.25, 0, TAU);
-      g.fill(); g.globalAlpha = 1;
-    }
-  } else if (type === 'ice') {
-    // Europa-like: a bright ice shell scored by brown/red lineae -- salt and
-    // sulphur dragged up from the ocean beneath. White cracks are wrong.
-    blobs(g, rnd, pal.hi, 14, 4, 16, 0.4);
-    fissures(g, rnd, 14, 'rgba(168,112,90,0.55)', false);
-    fissures(g, rnd, 6, 'rgba(120,70,52,0.45)', false);
-    polarCaps(g, rnd, '#f2fbff');
-  } else if (type === 'uranus') {
-    // Tipped ~98 deg, so its banding runs nearly pole-to-pole instead of
-    // along the equator like every other giant.
-    blobs(g, rnd, pal.hi, 8, 6, 18, 0.30);
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.hi, pal.lo, pal.spot], toneN: 12, washAlpha: 0.5,
+      ink: inkFor, wob: 0.045, hatchCol: 'rgba(10,8,6,0.5)'
+    });
+    // Hand-drawn band washes.
     g.save();
-    g.translate(SPR_R, SPR_R);
-    g.rotate(Math.PI / 2);
-    g.translate(-SPR_R, -SPR_R);
-    bands(g, rnd, [pal.hi, pal.mid, pal.lo], 0.16);
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.045, 28);
+    g.clip();
+    for (let i = 0; i < 5; i++) {
+      const y = SPR_R - R * 0.7 + i * R * 0.35 + (rnd() - 0.5) * R * 0.14;
+      g.globalAlpha = 0.32;
+      g.fillStyle = [pal.hi, pal.mid, pal.lo, pal.spot][i % 4];
+      g.beginPath();
+      g.ellipse(SPR_R, y, R * 0.98, R * (0.08 + rnd() * 0.08), (rnd() - 0.5) * 0.15, 0, TAU);
+      g.fill();
+    }
+    // Great storm: an ink-ringed oval.
+    if (rnd() < 0.6) {
+      const sx = SPR_R + R * 0.30, sy = SPR_R + R * 0.22;
+      g.globalAlpha = 0.85;
+      g.fillStyle = pal.spot;
+      g.beginPath();
+      g.ellipse(sx, sy, R * 0.26, R * 0.15, 0.25, 0, TAU);
+      g.fill();
+      g.globalAlpha = 0.8;
+      g.strokeStyle = inkFor;
+      g.lineWidth = Math.max(1, R * 0.03);
+      g.beginPath();
+      g.ellipse(sx, sy, R * 0.26, R * 0.15, 0.25, 0, TAU);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    g.restore();
+  } else if (type === 'ice') {
+    // Europa-like: bright ice shell scored by brown/red lineae.
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.hi, pal.lo], toneN: 10, washAlpha: 0.5,
+      ink: INK_DK, wob: 0.045, hatchCol: 'rgba(40,50,60,0.4)'
+    });
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.045, 28);
+    g.clip();
+    g.lineCap = 'round';
+    for (let i = 0; i < 12; i++) {
+      g.strokeStyle = i % 3 ? 'rgba(168,112,90,0.6)' : 'rgba(120,70,52,0.55)';
+      g.lineWidth = 0.8 + rnd() * 1.6;
+      const x0 = rnd() * SPR, y0 = rnd() * SPR;
+      wobLine(g, rnd, x0, y0, x0 + (rnd() - 0.5) * R * 1.6, y0 + (rnd() - 0.5) * R * 1.6, 3, 6);
+    }
+    // Polar caps as wash blobs.
+    g.globalAlpha = 0.7;
+    g.fillStyle = '#f2fbff';
+    g.beginPath(); g.ellipse(SPR_R, 2, R * 0.9, R * 0.16, 0, 0, TAU); g.fill();
+    g.beginPath(); g.ellipse(SPR_R, SPR - 2, R * 0.9, R * 0.16, 0, 0, TAU); g.fill();
+    g.globalAlpha = 1;
+    g.restore();
+  } else if (type === 'uranus') {
+    // Tipped ~98 deg: banding runs pole-to-pole.
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.hi, pal.lo], toneN: 8, washAlpha: 0.45,
+      ink: INK_DK, wob: 0.045, hatchCol: 'rgba(40,60,64,0.4)'
+    });
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.045, 28);
+    g.clip();
+    for (let i = 0; i < 4; i++) {
+      const x = SPR_R - R * 0.6 + i * R * 0.4;
+      g.globalAlpha = 0.22;
+      g.fillStyle = i % 2 ? pal.hi : pal.lo;
+      g.beginPath();
+      g.ellipse(x, SPR_R, R * 0.10, R * 0.95, 0, 0, TAU);
+      g.fill();
+    }
+    g.globalAlpha = 1;
     g.restore();
   } else if (type === 'neptune') {
-    // Deep blue, faint banding, dark storm spots, and methane cloud streaks.
-    // Windiest planet in the Solar System (up to 2,100 km/h).
-    bands(g, rnd, [pal.hi, pal.mid, pal.lo], 0.30);
-    blobs(g, rnd, pal.spot, 3, 5, 12, 0.55);
-    blobs(g, rnd, '#ffffff', 5, 3, 7, 0.28);
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.hi, pal.lo], toneN: 10, washAlpha: 0.5,
+      ink: BONE, wob: 0.045, hatchCol: 'rgba(6,8,16,0.55)'
+    });
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.045, 28);
+    g.clip();
+    for (let i = 0; i < 3; i++) {
+      const y = SPR_R - R * 0.5 + i * R * 0.5;
+      g.globalAlpha = 0.25;
+      g.fillStyle = pal.hi;
+      g.beginPath();
+      g.ellipse(SPR_R, y, R * 0.95, R * 0.09, 0, 0, TAU);
+      g.fill();
+    }
+    // Dark storm spots, ink-ringed.
+    for (let i = 0; i < 2; i++) {
+      const sx = SPR_R + (rnd() - 0.5) * R, sy = SPR_R + (rnd() - 0.5) * R;
+      g.globalAlpha = 0.8;
+      g.fillStyle = pal.spot;
+      g.beginPath(); g.ellipse(sx, sy, R * 0.20, R * 0.12, 0.3, 0, TAU); g.fill();
+      g.globalAlpha = 0.7;
+      g.strokeStyle = BONE; g.lineWidth = 1;
+      g.beginPath(); g.ellipse(sx, sy, R * 0.20, R * 0.12, 0.3, 0, TAU); g.stroke();
+    }
+    // Methane streaks.
+    g.globalAlpha = 0.30;
+    g.strokeStyle = '#ffffff'; g.lineWidth = 1.4; g.lineCap = 'round';
+    for (let i = 0; i < 5; i++) {
+      const y = SPR_R + (rnd() - 0.5) * R * 1.4;
+      wobLine(g, rnd, SPR_R - R * 0.8, y, SPR_R + R * 0.8, y + (rnd() - 0.5) * 6, 2, 5);
+    }
+    g.globalAlpha = 1;
+    g.restore();
   } else if (type === 'lava') {
-    blobs(g, rnd, pal.lo, 16, 5, 18, 0.5);
-    fissures(g, rnd, 16, pal.spot, true);
-    blobs(g, rnd, '#ffb04a', 8, 1.5, 5, 0.7);
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.lo, '#3a1410'], toneN: 12, washAlpha: 0.6,
+      ink: BONE, wob: 0.05, hatch: false
+    });
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.05, 28);
+    g.clip();
+    // Glowing fissures: hand-drawn cracks with hot wash around them.
+    g.lineCap = 'round';
+    for (let i = 0; i < 12; i++) {
+      let x = rnd() * SPR, y = rnd() * SPR, a = rnd() * TAU;
+      g.strokeStyle = 'rgba(255,110,40,0.75)';
+      g.lineWidth = 1 + rnd() * 2.2;
+      g.beginPath(); g.moveTo(x, y);
+      const segs = 3 + ((rnd() * 4) | 0);
+      for (let s = 0; s < segs; s++) {
+        a += (rnd() - 0.5) * 1.5;
+        x += Math.cos(a) * (4 + rnd() * 12);
+        y += Math.sin(a) * (4 + rnd() * 12);
+        g.lineTo(x, y);
+      }
+      g.stroke();
+      g.strokeStyle = 'rgba(255,176,74,0.5)';
+      g.lineWidth = 0.8;
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    g.restore();
   } else if (type === 'ocean') {
-    blobs(g, rnd, pal.spot, 7, 6, 20, 0.75);   // continents
-    blobs(g, rnd, pal.hi, 12, 5, 16, 0.35);    // shallows
-    blobs(g, rnd, '#ffffff', 9, 4, 14, 0.30);  // cloud
-    polarCaps(g, rnd, '#e8f6ff');
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.hi, pal.lo], toneN: 10, washAlpha: 0.5,
+      ink: INK_DK, wob: 0.045, hatchCol: 'rgba(8,20,36,0.45)'
+    });
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.045, 28);
+    g.clip();
+    // Continents as ink-outlined wash blobs.
+    for (let i = 0; i < 6; i++) {
+      const a = rnd() * TAU, d = Math.sqrt(rnd()) * R * 0.6;
+      const cx = SPR_R + Math.cos(a) * d, cy = SPR_R + Math.sin(a) * d;
+      const cr = R * (0.14 + rnd() * 0.22);
+      g.globalAlpha = 0.85;
+      g.fillStyle = pal.spot;
+      wobPath(g, rnd, cx, cy, cr, 0.25, 12);
+      g.fill();
+      g.globalAlpha = 0.6;
+      g.strokeStyle = INK_DK; g.lineWidth = 1;
+      wobPath(g, rnd, cx, cy, cr, 0.25, 12);
+      g.stroke();
+    }
+    // Cloud wisps.
+    g.globalAlpha = 0.35;
+    g.strokeStyle = '#ffffff'; g.lineWidth = 1.6; g.lineCap = 'round';
+    for (let i = 0; i < 7; i++) {
+      const y = SPR_R + (rnd() - 0.5) * R * 1.5;
+      wobLine(g, rnd, SPR_R - R * 0.7, y, SPR_R + R * 0.7, y + (rnd() - 0.5) * 8, 3, 6);
+    }
+    g.globalAlpha = 0.7;
+    g.fillStyle = '#e8f6ff';
+    g.beginPath(); g.ellipse(SPR_R, 2, R * 0.85, R * 0.15, 0, 0, TAU); g.fill();
+    g.globalAlpha = 1;
+    g.restore();
   } else if (type === 'desert') {
-    blobs(g, rnd, pal.spot, 12, 5, 18, 0.45);
-    fissures(g, rnd, 6, 'rgba(60,26,12,0.5)', false);
-    blobs(g, rnd, '#e8b78d', 6, 6, 16, 0.22);
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.hi, pal.lo, pal.spot], toneN: 12, washAlpha: 0.5,
+      ink: INK_DK, wob: 0.045, hatchCol: 'rgba(60,30,12,0.45)'
+    });
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.045, 28);
+    g.clip();
+    g.lineCap = 'round';
+    for (let i = 0; i < 6; i++) {
+      g.strokeStyle = 'rgba(60,26,12,0.5)';
+      g.lineWidth = 1 + rnd() * 1.4;
+      const x0 = rnd() * SPR, y0 = rnd() * SPR;
+      wobLine(g, rnd, x0, y0, x0 + (rnd() - 0.5) * R, y0 + (rnd() - 0.5) * R, 3, 6);
+    }
+    g.globalAlpha = 1;
+    g.restore();
   } else if (type === 'barren') {
-    craters(g, rnd, 20, SPR_R * 0.14);
-    blobs(g, rnd, pal.spot, 8, 3, 11, 0.35);
-  } else {                                     // rocky
-    blobs(g, rnd, pal.spot, 10, 6, 20, 0.55);
-    craters(g, rnd, 9 + ((rnd() * 7) | 0), SPR_R * 0.12);
-    blobs(g, rnd, pal.hi, 6, 3, 10, 0.28);
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.hi, pal.lo, pal.spot], toneN: 10, washAlpha: 0.5,
+      ink: INK_DK, wob: 0.045, hatchCol: 'rgba(20,18,16,0.5)'
+    });
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.045, 28);
+    g.clip();
+    for (let i = 0; i < 14; i++) {
+      const a = rnd() * TAU, d = Math.sqrt(rnd()) * R * 0.8;
+      inkCrater(g, rnd, SPR_R + Math.cos(a) * d, SPR_R + Math.sin(a) * d,
+                R * (0.05 + rnd() * 0.10));
+    }
+    g.restore();
+  } else {
+    // Rocky: brown-grey wash, darker blobs, ink-ringed craters.
+    inkDisc(g, rnd, SPR_R, SPR_R, R, {
+      fill: pal.mid, tones: [pal.hi, pal.lo, pal.spot], toneN: 12, washAlpha: 0.5,
+      ink: INK_DK, wob: 0.045, hatchCol: 'rgba(24,18,12,0.5)'
+    });
+    g.save();
+    wobPath(g, rnd, SPR_R, SPR_R, R * 0.92, 0.045, 28);
+    g.clip();
+    for (let i = 0; i < 8; i++) {
+      const a = rnd() * TAU, d = Math.sqrt(rnd()) * R * 0.75;
+      inkCrater(g, rnd, SPR_R + Math.cos(a) * d, SPR_R + Math.sin(a) * d,
+                R * (0.06 + rnd() * 0.10));
+    }
+    g.restore();
   }
 
-  // ---- Shading, applied over the surface detail ------------------------
-  // A planet used to be a flat vertical gradient clipped to a circle, which
-  // reads as a sticker rather than a sphere. Three cheap passes fix it.
-
-  // 1. Limb darkening. A real disc is darker at its edge, because at a grazing
-  // angle you are looking through more atmosphere and less surface.
-  const limb = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.52, SPR_R, SPR_R, SPR_R);
-  limb.addColorStop(0.00, 'rgba(0,0,0,0)');
-  limb.addColorStop(0.74, 'rgba(0,0,0,0.10)');
-  limb.addColorStop(1.00, 'rgba(0,0,0,0.40)');
-  g.fillStyle = limb;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-
-  // 2. A lit rim on the sunward limb. Painted as a full ring here and then
-  // half-eaten by the terminator below, which leaves only the lit side bright.
-  g.globalCompositeOperation = 'lighter';
-  const rim = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.87, SPR_R, SPR_R, SPR_R);
-  rim.addColorStop(0.00, 'rgba(255,255,255,0)');
-  rim.addColorStop(1.00, 'rgba(255,252,244,0.20)');
-  g.fillStyle = rim;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-
-  // 3. Terminator -- the day/night line. The scene light is fixed, so the
-  // shadowed hemisphere is always the lower-right. This is the single change
-  // that makes the bodies look like they are being lit by something.
-  const lx = SPR_R - LIGHT.x * SPR_R * 1.6;
-  const ly = SPR_R - LIGHT.y * SPR_R * 1.6;
-  const term = g.createLinearGradient(lx, ly, SPR_R * 2 - lx, SPR_R * 2 - ly);
-  term.addColorStop(0.00, 'rgba(0,0,0,0)');
-  term.addColorStop(0.42, 'rgba(0,0,0,0.05)');
-  term.addColorStop(1.00, 'rgba(2,4,10,0.46)');
-  g.fillStyle = term;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-
-  g.restore();
-
-  // 4. Atmospheric halo, outside the clip so it can bleed past the limb. Only
-  // bodies that actually have an atmosphere get one.
+  // Atmospheric wash: a soft hand-painted ring outside the limb, only for
+  // bodies that actually have air.
   if (ATMO_TYPES[type]) {
-    g.globalCompositeOperation = 'lighter';
-    const at = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.94, SPR_R, SPR_R, SPR_R * 1.20);
-    at.addColorStop(0.00, ATMO_TYPES[type]);
-    at.addColorStop(1.00, 'rgba(0,0,0,0)');
-    g.fillStyle = at;
-    g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 1.20, 0, TAU); g.fill();
-    g.globalCompositeOperation = 'source-over';
+    g.strokeStyle = ATMO_TYPES[type].replace(/[\d.]+\)$/, '0.35)');
+    g.lineWidth = Math.max(2, R * 0.10);
+    g.lineCap = 'round';
+    g.globalAlpha = 0.8;
+    wobPath(g, rnd, SPR_R, SPR_R, R * 1.10, 0.04, 30);
+    g.stroke();
+    g.globalAlpha = 1;
   }
 }
 
-// A pulsar — a rapidly rotating neutron star with two crossing emission
-// beams. Eating one gives a one-hit shield (next impact is ignored).
+// A pulsar — a hand-drawn lighthouse: bone wash core, ink ring, two
+// sketch beams. The sweep itself stays live in drawEnts.
 function drawPulsar(g, rnd) {
-  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.04, SPR_R, SPR_R, SPR_R);
-  grd.addColorStop(0.00, '#ffffff');
-  grd.addColorStop(0.18, '#eaf4ff');
-  grd.addColorStop(0.55, '#9ed1ff');
-  grd.addColorStop(1.00, 'rgba(140,200,255,0)');
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-  // Two crossed beams. They sweep in `drawEnts`, this paints the static sprite.
-  g.globalCompositeOperation = 'lighter';
+  const R = SPR_R * 0.34;
   g.save();
   g.translate(SPR_R, SPR_R);
+  g.rotate(rnd() * TAU);
+  g.fillStyle = 'rgba(220,238,252,0.35)';
   for (let i = 0; i < 2; i++) {
-    g.rotate(i * Math.PI / 2);
-    const lg = g.createLinearGradient(0, 0, SPR, 0);
-    lg.addColorStop(0.00, 'rgba(255,255,255,0.85)');
-    lg.addColorStop(0.55, 'rgba(180,220,255,0.45)');
-    lg.addColorStop(1.00, 'rgba(180,220,255,0)');
-    g.fillStyle = lg;
-    g.fillRect(0, -2.5, SPR, 5);
+    g.rotate(i * Math.PI);
+    g.beginPath();
+    g.moveTo(0, -R * 0.22);
+    g.lineTo(SPR_R * 0.98, -R * 0.06);
+    g.lineTo(SPR_R * 0.98, R * 0.06);
+    g.lineTo(0, R * 0.22);
+    g.closePath(); g.fill();
   }
   g.restore();
-  g.globalCompositeOperation = 'source-over';
+  inkDisc(g, rnd, SPR_R, SPR_R, R, {
+    fill: '#e8f2fc', tones: ['#ffffff', '#bcd8f5'], toneN: 6, washAlpha: 0.6,
+    ink: '#232a33', inkW: 1.4, wob: 0.06, hatch: false
+  });
 }
 
-// A wormhole — a violet ring with a dark throat. The paired exit is
-// stored on the entity; we just draw the entrance here.
+// A wormhole — a violet ink ring, hand-drawn twice, with a dark throat.
 function drawWormhole(g, rnd) {
-  // Soft outer halo
-  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.45, SPR_R, SPR_R, SPR_R);
-  grd.addColorStop(0.00, 'rgba(220,180,255,0.7)');
-  grd.addColorStop(0.50, 'rgba(180,140,255,0.35)');
-  grd.addColorStop(1.00, 'rgba(140,100,220,0)');
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-  // Bright ring
-  g.strokeStyle = 'rgba(255,240,255,0.95)';
-  g.lineWidth = 6;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.54, 0, TAU); g.stroke();
-  g.strokeStyle = 'rgba(200,160,255,0.6)';
-  g.lineWidth = 3;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.40, 0, TAU); g.stroke();
-  // Dark throat
-  g.fillStyle = '#000';
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.34, 0, TAU); g.fill();
-  // Faint inner sparkle
-  g.globalCompositeOperation = 'lighter';
-  g.fillStyle = 'rgba(255,240,255,0.6)';
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.10, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
+  const R = SPR_R * 0.62;
+  // Outer wash aura.
+  g.save();
+  wobPath(g, rnd, SPR_R, SPR_R, SPR_R * 0.96, 0.05, 30);
+  g.clip();
+  washBlobs(g, rnd, SPR_R, SPR_R, SPR_R, ['rgba(150,110,200,0.5)'], 8, 0.4);
+  g.restore();
+  // Ink ring, sketched twice.
+  g.strokeStyle = '#c9a4e8';
+  g.lineCap = 'round';
+  g.lineWidth = Math.max(2.4, R * 0.12);
+  wobPath(g, rnd, SPR_R, SPR_R, R, 0.05, 30);
+  g.stroke();
+  g.globalAlpha = 0.5;
+  g.lineWidth = Math.max(1.2, R * 0.06);
+  wobPath(g, rnd, SPR_R, SPR_R, R * 0.94, 0.07, 30);
+  g.stroke();
+  g.globalAlpha = 1;
+  // Dark throat.
+  g.fillStyle = '#050406';
+  wobPath(g, rnd, SPR_R, SPR_R, R * 0.62, 0.08, 24);
+  g.fill();
+  g.strokeStyle = 'rgba(201,164,232,0.7)';
+  g.lineWidth = 1.2;
+  wobPath(g, rnd, SPR_R, SPR_R, R * 0.62, 0.08, 24);
+  g.stroke();
+  // Chalk sparkles caught in the throat.
+  stipple(g, rnd, SPR_R, SPR_R, R * 0.5, '#efe2ff', 8, 0.6, 1.6, 0.8);
 }
 
 // ---- Civilisation installations ---------------------------------------
-// Deliberately angular and emissive so they read as artificial at a glance
-// against every natural body in the field.
+// Angular ink schematics on transparent paper: bone line-work with thin
+// wash fills, so they read as artificial against every natural body.
 
-function drawShield(g) {
-  g.strokeStyle = 'rgba(120,225,255,0.55)';
-  g.lineWidth = 2.5;
-  g.beginPath();
-  g.arc(SPR_R, SPR_R * 1.05, SPR_R * 0.72, Math.PI, TAU);
-  g.stroke();
-  g.strokeStyle = 'rgba(120,225,255,0.26)';
-  g.lineWidth = 1.3;
-  for (let k = 1; k <= 3; k++) {
-    g.beginPath();
-    g.arc(SPR_R, SPR_R * 1.05, SPR_R * 0.72 * (k / 4), Math.PI, TAU);
-    g.stroke();
-  }
-  g.fillStyle = '#2b3a48';
-  g.fillRect(SPR_R - SPR_R * 0.78, SPR_R * 1.02, SPR_R * 1.56, SPR_R * 0.30);
-  g.fillStyle = '#7fe0ff';
-  g.fillRect(SPR_R - SPR_R * 0.30, SPR_R * 0.94, SPR_R * 0.60, SPR_R * 0.11);
-  g.globalCompositeOperation = 'lighter';
-  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.2, SPR_R, SPR_R, SPR_R);
-  grd.addColorStop(0, 'rgba(90,200,255,0.22)');
-  grd.addColorStop(1, 'rgba(90,200,255,0)');
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-}
-
-function drawRepulsor(g) {
-  g.fillStyle = '#2f3b46';
-  g.beginPath();
-  g.moveTo(SPR_R - SPR_R * 0.42, SPR);
-  g.lineTo(SPR_R - SPR_R * 0.16, SPR_R * 0.30);
-  g.lineTo(SPR_R + SPR_R * 0.16, SPR_R * 0.30);
-  g.lineTo(SPR_R + SPR_R * 0.42, SPR);
-  g.closePath(); g.fill();
-  g.strokeStyle = 'rgba(255,180,120,0.85)';
-  g.lineWidth = 3;
-  for (let k = 0; k < 3; k++) {
-    g.beginPath();
-    g.ellipse(SPR_R, SPR_R * (0.34 + k * 0.16),
-              SPR_R * (0.52 - k * 0.10), SPR_R * 0.10, 0, 0, TAU);
-    g.stroke();
-  }
-  g.globalCompositeOperation = 'lighter';
-  const grd = g.createRadialGradient(SPR_R, SPR_R * 0.35, SPR_R * 0.1,
-                                     SPR_R, SPR_R * 0.35, SPR_R * 0.9);
-  grd.addColorStop(0, 'rgba(255,170,110,0.35)');
-  grd.addColorStop(1, 'rgba(255,170,110,0)');
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R * 0.35, SPR_R * 0.9, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-}
-
-function drawDriver(g) {
-  g.fillStyle = '#333a42';
-  g.fillRect(SPR_R - SPR_R * 0.62, SPR_R * 0.72, SPR_R * 1.24, SPR_R * 0.34);
-  g.save();
-  g.translate(SPR_R, SPR_R * 0.70);
-  g.rotate(-0.5);
-  g.fillStyle = '#4a535d';
-  g.fillRect(-SPR_R * 0.10, -SPR_R * 0.72, SPR_R * 0.20, SPR_R * 0.90);
-  g.fillStyle = '#ffd08a';
-  g.fillRect(-SPR_R * 0.055, -SPR_R * 0.72, SPR_R * 0.11, SPR_R * 0.24);
-  g.restore();
-  g.fillStyle = '#7fd8ff';
-  g.beginPath(); g.arc(SPR_R, SPR_R * 0.86, SPR_R * 0.10, 0, TAU); g.fill();
-}
-
-function drawArk(g) {
-  g.fillStyle = '#5a6470';
-  g.beginPath();
-  g.moveTo(SPR_R + SPR_R * 0.86, SPR_R);
-  g.lineTo(SPR_R - SPR_R * 0.20, SPR_R - SPR_R * 0.30);
-  g.lineTo(SPR_R - SPR_R * 0.72, SPR_R - SPR_R * 0.22);
-  g.lineTo(SPR_R - SPR_R * 0.72, SPR_R + SPR_R * 0.22);
-  g.lineTo(SPR_R - SPR_R * 0.20, SPR_R + SPR_R * 0.30);
-  g.closePath(); g.fill();
-  g.fillStyle = 'rgba(150,220,255,0.9)';
-  for (let k = 0; k < 4; k++) {
-    g.fillRect(SPR_R - SPR_R * 0.50 + k * SPR_R * 0.24,
-               SPR_R - SPR_R * 0.07, SPR_R * 0.12, SPR_R * 0.14);
-  }
-  g.globalCompositeOperation = 'lighter';
-  const grd = g.createLinearGradient(SPR_R - SPR_R * 0.70, SPR_R,
-                                     SPR_R - SPR_R * 1.00, SPR_R);
-  grd.addColorStop(0, 'rgba(150,210,255,0.75)');
-  grd.addColorStop(1, 'rgba(150,210,255,0)');
-  g.fillStyle = grd;
-  g.beginPath();
-  g.moveTo(SPR_R - SPR_R * 0.70, SPR_R - SPR_R * 0.14);
-  g.lineTo(SPR_R - SPR_R * 1.00, SPR_R);
-  g.lineTo(SPR_R - SPR_R * 0.70, SPR_R + SPR_R * 0.14);
-  g.closePath(); g.fill();
-  g.globalCompositeOperation = 'source-over';
-}
-
-// A Penrose-process station. It mines your ergosphere for rotational
-// energy, so being near one actually costs you mass.
-function drawExtractor(g) {
-  g.strokeStyle = 'rgba(190,150,255,0.85)';
-  g.lineWidth = 7;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.62, 0, TAU); g.stroke();
-  g.strokeStyle = 'rgba(240,225,255,0.90)';
-  g.lineWidth = 2;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.62, 0, TAU); g.stroke();
-  g.strokeStyle = 'rgba(190,150,255,0.60)';
-  g.lineWidth = 3;
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * TAU;
-    g.beginPath();
-    g.moveTo(SPR_R + Math.cos(a) * SPR_R * 0.62, SPR_R + Math.sin(a) * SPR_R * 0.62);
-    g.lineTo(SPR_R + Math.cos(a) * SPR_R * 0.92, SPR_R + Math.sin(a) * SPR_R * 0.92);
-    g.stroke();
-  }
-  g.globalCompositeOperation = 'lighter';
-  const grd = g.createRadialGradient(SPR_R, SPR_R, SPR_R * 0.3, SPR_R, SPR_R, SPR_R);
-  grd.addColorStop(0, 'rgba(170,120,255,0.30)');
-  grd.addColorStop(1, 'rgba(170,120,255,0)');
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-}
-
-// A rival singularity — a real black hole with its own accretion disk. It is
-// the most dangerous thing in the field and it pulls you in.
-//
-// The old version painted a cream radial gradient straight over the shadow
-// (a radial gradient repeats its first stop all the way inward), so the hole
-// rendered as a beige ball with a dark rim instead of a black one. Same
-// structure as the player now: disk first, then the shadow on top, then the
-// photon ring.
-function drawRival(g) {
-  const R = SPR_R * 0.50;
-
-  // Disk: a thin band seen almost edge-on, so it crosses the shadow.
-  // Layered exactly like the player's disk so the two holes read as the
-  // same kind of object -- one projected circle would give a hard-edged bar.
-  const RD = SPR_R * 0.98;
-  const flats = [1.00, 0.74, 0.48, 0.26];
-  const share = 1 / flats.length;
-  g.globalCompositeOperation = 'lighter';
-  for (const flat of flats) {
-    g.save();
-    g.translate(SPR_R, SPR_R);
-    g.scale(1, 0.15 * flat);
-    const dg = g.createRadialGradient(0, 0, 0, 0, 0, RD);
-    dg.addColorStop(0.00, 'rgba(255,246,228,' + (0.95 * share).toFixed(3) + ')');
-    dg.addColorStop(0.34, 'rgba(255,214,152,' + (0.72 * share).toFixed(3) + ')');
-    dg.addColorStop(0.70, 'rgba(255,150,80,' + (0.30 * share).toFixed(3) + ')');
-    dg.addColorStop(1.00, 'rgba(255,118,48,0)');
-    g.fillStyle = dg;
-    g.beginPath(); g.arc(0, 0, RD, 0, TAU); g.fill();
-    g.restore();
-  }
-
-  // Lensed far side, hugging the shadow.
-  const hg = g.createRadialGradient(SPR_R, SPR_R, R * 1.0, SPR_R, SPR_R, SPR_R * 0.96);
-  hg.addColorStop(0.00, 'rgba(255,244,224,0.50)');
-  hg.addColorStop(0.45, 'rgba(255,180,110,0.20)');
-  hg.addColorStop(1.00, 'rgba(255,140,80,0)');
-  g.fillStyle = hg;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R * 0.96, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-
-  // Bent background: the same concentric light-wrapping bands the player's
-  // hole wears, so the two read as the same class of object. Static here
-  // because this is a pre-rendered sprite.
-  g.globalCompositeOperation = 'lighter';
-  const rbands = [
-    { k: 1.16, a: 0.150, w: 0.042 },
-    { k: 1.32, a: 0.090, w: 0.032 },
-    { k: 1.54, a: 0.052, w: 0.024 },
-    { k: 1.82, a: 0.028, w: 0.018 }
-  ];
-  for (const b of rbands) {
-    const rad = R * b.k;
-    const g2 = g.createLinearGradient(SPR_R - rad, 0, SPR_R + rad, 0);
-    g2.addColorStop(0.00, 'rgba(255,214,178,' + (b.a * 0.15).toFixed(3) + ')');
-    g2.addColorStop(0.50, 'rgba(255,240,220,' + (b.a * 0.45).toFixed(3) + ')');
-    g2.addColorStop(1.00, 'rgba(255,214,178,' + b.a.toFixed(3) + ')');
-    g.strokeStyle = g2;
-    g.lineWidth = Math.max(1, R * b.w);
-    g.beginPath(); g.arc(SPR_R, SPR_R, rad, 0, TAU); g.stroke();
-  }
-  g.globalCompositeOperation = 'source-over';
-
-  g.fillStyle = '#000';
-  g.beginPath(); g.arc(SPR_R, SPR_R, R, 0, TAU); g.fill();
-
-  // The lensed far side, come back round as a knot on the limb.
-  g.globalCompositeOperation = 'lighter';
-  const kx = SPR_R + R * 1.02;
-  const ky = SPR_R + R * 0.18;
-  const kg = g.createRadialGradient(kx, ky, 0, kx, ky, R * 0.34);
-  kg.addColorStop(0.00, 'rgba(255,252,242,0.88)');
-  kg.addColorStop(0.45, 'rgba(255,226,186,0.34)');
-  kg.addColorStop(1.00, 'rgba(255,190,130,0)');
-  g.fillStyle = kg;
-  g.beginPath(); g.arc(kx, ky, R * 0.34, 0, TAU); g.fill();
-  g.globalCompositeOperation = 'source-over';
-
-  g.globalCompositeOperation = 'lighter';
-  g.strokeStyle = 'rgba(255,244,226,0.95)';
+function drawShield(g, rnd) {
+  const c = SPR_R;
+  g.strokeStyle = BONE;
+  g.lineCap = 'round';
   g.lineWidth = 2.2;
-  g.beginPath(); g.arc(SPR_R, SPR_R, R * 1.07, 0, TAU); g.stroke();
-  g.globalCompositeOperation = 'source-over';
+  wobPath(g, rnd, c, c * 1.05, SPR_R * 0.66, 0.03, 20);
+  g.stroke();
+  g.globalAlpha = 0.45;
+  g.lineWidth = 1.2;
+  wobPath(g, rnd, c, c * 1.05, SPR_R * 0.44, 0.04, 20);
+  g.stroke();
+  g.globalAlpha = 1;
+  // Dome base: a small ink plate with bone windows.
+  g.fillStyle = 'rgba(20,18,16,0.9)';
+  g.strokeStyle = BONE;
+  g.lineWidth = 1.4;
+  g.beginPath();
+  g.rect(c - SPR_R * 0.72, c * 1.02, SPR_R * 1.44, SPR_R * 0.26);
+  g.fill(); g.stroke();
+  g.fillStyle = BONE;
+  g.fillRect(c - SPR_R * 0.28, c * 1.08, SPR_R * 0.56, SPR_R * 0.10);
+  washBlobs(g, rnd, c, c, SPR_R * 0.6, ['rgba(150,200,230,0.35)'], 5, 0.4);
 }
 
+function drawRepulsor(g, rnd) {
+  const c = SPR_R;
+  // Projector pylon.
+  g.fillStyle = 'rgba(24,20,17,0.95)';
+  g.strokeStyle = BONE;
+  g.lineWidth = 1.6;
+  g.beginPath();
+  g.moveTo(c - SPR_R * 0.40, SPR);
+  g.lineTo(c - SPR_R * 0.15, SPR_R * 0.32);
+  g.lineTo(c + SPR_R * 0.15, SPR_R * 0.32);
+  g.lineTo(c + SPR_R * 0.40, SPR);
+  g.closePath(); g.fill(); g.stroke();
+  // Hand-drawn repulsion arcs.
+  g.strokeStyle = '#e8b06a';
+  g.lineCap = 'round';
+  for (let k = 0; k < 3; k++) {
+    g.lineWidth = 2.4 - k * 0.5;
+    g.globalAlpha = 0.85 - k * 0.2;
+    g.beginPath();
+    const ry = SPR_R * (0.30 + k * 0.17), rx = SPR_R * (0.50 - k * 0.09);
+    for (let i = 0; i <= 16; i++) {
+      const a = Math.PI + (i / 16) * Math.PI;
+      const w = 1 + (rnd() - 0.5) * 0.06;
+      const x = c + Math.cos(a) * rx * w, y = ry + Math.sin(a) * SPR_R * 0.10 * w;
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  g.globalAlpha = 1;
+  washBlobs(g, rnd, c, SPR_R * 0.35, SPR_R * 0.5, ['rgba(232,176,106,0.4)'], 5, 0.4);
+}
+
+function drawDriver(g, rnd) {
+  const c = SPR_R;
+  // Railgun battery: ink housing, bone rails, hot muzzle wash.
+  g.fillStyle = 'rgba(22,19,16,0.95)';
+  g.strokeStyle = BONE;
+  g.lineWidth = 1.6;
+  g.beginPath();
+  g.rect(c - SPR_R * 0.60, SPR_R * 0.72, SPR_R * 1.20, SPR_R * 0.32);
+  g.fill(); g.stroke();
+  g.save();
+  g.translate(c, SPR_R * 0.70);
+  g.rotate(-0.5);
+  g.fillStyle = 'rgba(30,26,22,0.95)';
+  g.strokeStyle = BONE;
+  g.lineWidth = 1.2;
+  g.beginPath();
+  g.rect(-SPR_R * 0.10, -SPR_R * 0.70, SPR_R * 0.20, SPR_R * 0.88);
+  g.fill(); g.stroke();
+  g.fillStyle = '#e8a45c';
+  g.fillRect(-SPR_R * 0.05, -SPR_R * 0.70, SPR_R * 0.10, SPR_R * 0.22);
+  g.restore();
+  g.fillStyle = BONE;
+  g.beginPath(); g.arc(c, SPR_R * 0.86, SPR_R * 0.09, 0, TAU); g.fill();
+}
+
+function drawArk(g, rnd) {
+  const c = SPR_R;
+  // Evacuation ship: ink hull, bone window slits, wash engine glow.
+  g.fillStyle = 'rgba(26,23,20,0.95)';
+  g.strokeStyle = BONE;
+  g.lineWidth = 1.8;
+  g.lineJoin = 'round';
+  g.beginPath();
+  g.moveTo(c + SPR_R * 0.84, c);
+  g.lineTo(c - SPR_R * 0.20, c - SPR_R * 0.30);
+  g.lineTo(c - SPR_R * 0.70, c - SPR_R * 0.22);
+  g.lineTo(c - SPR_R * 0.70, c + SPR_R * 0.22);
+  g.lineTo(c - SPR_R * 0.20, c + SPR_R * 0.30);
+  g.closePath(); g.fill(); g.stroke();
+  g.fillStyle = 'rgba(190,220,235,0.9)';
+  for (let k = 0; k < 4; k++) {
+    g.fillRect(c - SPR_R * 0.48 + k * SPR_R * 0.23, c - SPR_R * 0.07,
+               SPR_R * 0.11, SPR_R * 0.14);
+  }
+  g.fillStyle = 'rgba(150,200,230,0.35)';
+  g.beginPath();
+  g.moveTo(c - SPR_R * 0.70, c - SPR_R * 0.13);
+  g.lineTo(c - SPR_R * 1.00, c);
+  g.lineTo(c - SPR_R * 0.70, c + SPR_R * 0.13);
+  g.closePath(); g.fill();
+  g.strokeStyle = 'rgba(190,220,235,0.6)';
+  g.lineWidth = 1.2;
+  wobLine(g, rnd, c - SPR_R * 0.70, c - SPR_R * 0.13, c - SPR_R * 1.00, c, 1.5, 4);
+  wobLine(g, rnd, c - SPR_R * 0.70, c + SPR_R * 0.13, c - SPR_R * 1.00, c, 1.5, 4);
+}
+
+function drawExtractor(g, rnd) {
+  const c = SPR_R;
+  // Penrose-process station: a violet ink ring with struts.
+  g.strokeStyle = '#b48ae0';
+  g.lineCap = 'round';
+  g.lineWidth = Math.max(2.4, SPR_R * 0.09);
+  wobPath(g, rnd, c, c, SPR_R * 0.60, 0.04, 30);
+  g.stroke();
+  g.globalAlpha = 0.6;
+  g.strokeStyle = '#e4d2f7';
+  g.lineWidth = 1.2;
+  wobPath(g, rnd, c, c, SPR_R * 0.60, 0.06, 30);
+  g.stroke();
+  g.globalAlpha = 1;
+  g.strokeStyle = '#b48ae0';
+  g.lineWidth = 2;
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * TAU + rnd() * 0.1;
+    wobLine(g, rnd, c + Math.cos(a) * SPR_R * 0.60, c + Math.sin(a) * SPR_R * 0.60,
+            c + Math.cos(a) * SPR_R * 0.90, c + Math.sin(a) * SPR_R * 0.90, 1.5, 3);
+  }
+  washBlobs(g, rnd, c, c, SPR_R * 0.8, ['rgba(150,110,200,0.4)'], 6, 0.4);
+}
+
+// A rival singularity — an ink-wash black hole: wobbly black shadow,
+// chalk ring, rust watercolor disk band, chalk crescents. Same visual
+// language as the player, in a hostile red-ink hand.
+function drawRival(g, rnd) {
+  const R = SPR_R * 0.50;
+  // Disk band: rust watercolor, edge-on.
+  g.save();
+  g.translate(SPR_R, SPR_R);
+  g.scale(1, 0.16);
+  g.fillStyle = 'rgba(190,110,70,0.5)';
+  g.beginPath();
+  g.ellipse(0, 0, SPR_R * 0.98, SPR_R * 0.98, 0, 0, TAU);
+  g.fill();
+  g.fillStyle = 'rgba(230,170,110,0.45)';
+  g.beginPath();
+  g.ellipse(0, 0, SPR_R * 0.80, SPR_R * 0.80, 0, 0, TAU);
+  g.fill();
+  g.restore();
+  g.strokeStyle = 'rgba(230,170,110,0.6)';
+  g.lineWidth = 1.4;
+  for (let i = -1; i <= 1; i++) {
+    wobLine(g, rnd, SPR_R - SPR_R * 0.9, SPR_R + i * SPR_R * 0.10,
+            SPR_R + SPR_R * 0.9, SPR_R + i * SPR_R * 0.10, 2, 8);
+  }
+  // Chalk crescents: bent background light.
+  g.strokeStyle = 'rgba(233,223,201,0.5)';
+  g.lineCap = 'round';
+  const bands = [1.20, 1.42, 1.68];
+  for (let i = 0; i < bands.length; i++) {
+    g.lineWidth = Math.max(1, R * (0.05 - i * 0.01));
+    g.globalAlpha = 0.55 - i * 0.14;
+    g.beginPath();
+    g.arc(SPR_R, SPR_R, R * bands[i], rnd() * TAU, rnd() * TAU + Math.PI * 1.2);
+    g.stroke();
+  }
+  g.globalAlpha = 1;
+  // Shadow: pure black with a wobbly ink edge.
+  g.fillStyle = '#000000';
+  wobPath(g, rnd, SPR_R, SPR_R, R, 0.05, 26);
+  g.fill();
+  // Hostile red-ink photon ring, hand-drawn twice.
+  g.strokeStyle = '#d95f43';
+  g.lineWidth = Math.max(1.8, R * 0.09);
+  wobPath(g, rnd, SPR_R, SPR_R, R * 1.06, 0.05, 26);
+  g.stroke();
+  g.globalAlpha = 0.5;
+  g.lineWidth = 1;
+  wobPath(g, rnd, SPR_R, SPR_R, R * 1.06, 0.08, 26);
+  g.stroke();
+  g.globalAlpha = 1;
+}
 function makeBodySprite(type, variant, sub) {
   const c = document.createElement('canvas');
   c.width = c.height = SPR;
@@ -1524,18 +1744,18 @@ function makeBodySprite(type, variant, sub) {
                          variant * 104729 + 17 + (sub ? sub.length * 131 : 0));
   if (type === 'asteroid') drawAsteroid(g, rnd);
   else if (type === 'star') drawStar(g, rnd, sub);
-  else if (type === 'rival') drawRival(g);
+  else if (type === 'rival') drawRival(g, rnd);
   else if (type === 'pulsar') drawPulsar(g, rnd);
   else if (type === 'wormhole') drawWormhole(g, rnd);
   else if (type === 'brownDwarf') drawBrownDwarf(g, rnd);
   else if (type === 'whiteDwarf') drawWhiteDwarf(g, rnd);
   else if (type === 'magnetar') drawMagnetar(g, rnd);
   else if (type === 'quasar') drawQuasar(g, rnd);
-  else if (type === 'shield') drawShield(g);
-  else if (type === 'repulsor') drawRepulsor(g);
-  else if (type === 'driver') drawDriver(g);
-  else if (type === 'ark') drawArk(g);
-  else if (type === 'extractor') drawExtractor(g);
+  else if (type === 'shield') drawShield(g, rnd);
+  else if (type === 'repulsor') drawRepulsor(g, rnd);
+  else if (type === 'driver') drawDriver(g, rnd);
+  else if (type === 'ark') drawArk(g, rnd);
+  else if (type === 'extractor') drawExtractor(g, rnd);
   else drawPlanet(g, rnd, type);
   return c;
 }
@@ -1553,52 +1773,50 @@ function bodySprite(type, variant, sub) {
   return s;
 }
 
-/* ---------- shared shading + glow ---------- */
+/* ---------- shared shading + aura (indie pass) ---------- */
 let shadeSprite = null;
 function buildShade() {
   const c = document.createElement('canvas');
   c.width = c.height = SPR;
   const g = c.getContext('2d');
-  const lx = SPR_R + LIGHT.x * SPR_R * 0.5, ly = SPR_R + LIGHT.y * SPR_R * 0.5;
-  const grd = g.createRadialGradient(lx, ly, SPR_R * 0.06, SPR_R, SPR_R, SPR_R * 1.02);
-  grd.addColorStop(0.00, 'rgba(255,255,255,0.12)');
-  grd.addColorStop(0.34, 'rgba(0,0,0,0)');
-  grd.addColorStop(0.70, 'rgba(0,0,0,0.30)');
-  grd.addColorStop(1.00, 'rgba(0,0,0,0.80)');
-  g.fillStyle = grd;
-  g.beginPath(); g.arc(SPR_R, SPR_R, SPR_R, 0, TAU); g.fill();
+  const rnd = mulberry32(777);
+  // Soft shadow wash on the lower-right (away from LIGHT), then hatch.
+  g.save();
+  wobPath(g, rnd, SPR_R, SPR_R, SPR_R * 0.98, 0.03, 28);
+  g.clip();
+  washBlobs(g, rnd, SPR_R + SPR_R * 0.45, SPR_R + SPR_R * 0.5, SPR_R * 0.9,
+            ['rgba(8,6,5,1)'], 10, 0.40);
+  g.restore();
+  hatchShade(g, rnd, SPR_R, SPR_R, SPR_R * 0.96, 'rgba(8,6,5,0.5)', 22, 0.03);
   shadeSprite = c;
 }
 
 const glowCache = new Map();
+// Threat aura: a soft irregular watercolor bleed in the body's threat hue,
+// muted like everything else on the page. Same bucketing as before.
 function glowSprite(hue) {
   const key = Math.round(hue / 24) * 24;
   if (glowCache.has(key)) return glowCache.get(key);
   const c = document.createElement('canvas');
   c.width = c.height = 128;
   const g = c.getContext('2d');
-  const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grd.addColorStop(0.00, `hsla(${key}, 100%, 74%, 1)`);
-  grd.addColorStop(0.22, `hsla(${key}, 100%, 62%, 0.55)`);
-  grd.addColorStop(0.55, `hsla(${key}, 100%, 55%, 0.14)`);
-  grd.addColorStop(1.00, `hsla(${key}, 100%, 50%, 0)`);
-  g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+  const rnd = mulberry32(key * 7919 + 5);
+  g.save();
+  wobPath(g, rnd, 64, 64, 60, 0.10, 24);
+  g.clip();
+  g.fillStyle = 'hsla(' + key + ', 42%, 52%, 0.26)';
+  g.fillRect(0, 0, 128, 128);
+  washBlobs(g, rnd, 64, 64, 60, ['hsla(' + key + ', 45%, 60%, 1)'], 10, 0.26);
+  g.restore();
   glowCache.set(key, c);
   return c;
 }
 
 let starLayers = [];
-// Cosmic microwave background: the oldest light there is, released 380,000
-// years after the Big Bang. It is a nearly uniform glow with temperature
-// fluctuations of about one part in 100,000 -- real maps of it look like a
-// faint mottling of warm and cool patches. Drawn beneath the starfield at very
-// low alpha, it gives the void a floor instead of flat black.
+// Paper mottling: the faintest warm/cool blotches in the page, sitting where
+// the CMB used to be. Same tile/pattern plumbing, sketchbook content.
 let cmbPattern = null;
-// Stellar spectral classes, weighted roughly the way a real field is weighted:
-// the sky is dominated by cool K/M dwarfs, with hot blue stars rare. The old
-// field painted every star the same rgba(198,228,255) -- one colour across
-// three layers and fifty-eight stars, which is a large part of why it read as
-// a texture rather than a sky.
+// Stellar spectral classes, weighted the way a real field is weighted.
 const STAR_CLASSES = [
   { c: [155, 176, 255], w: 3,  lum: 1.00 },   // O/B  blue-white, rare, bright
   { c: [170, 191, 255], w: 6,  lum: 0.90 },   // A
@@ -1615,25 +1833,27 @@ function pickStarClass(r) {
   return STAR_CLASSES[STAR_CLASSES.length - 1];
 }
 
-// One star, plus its four-point diffraction cross if it is bright enough.
-// Spikes are what make a bright star read as BRIGHT rather than merely large.
-function paintStar(g, x, y, r, a, col, spike) {
-  g.fillStyle = 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + a.toFixed(3) + ')';
+// One hand-drawn star: an ink dot, plus a wobbly four-point sparkle if it is
+// bright enough. The uneven arms are what make it read as drawn, not plotted.
+function paintStar(g, x, y, r, a, col, sparkle) {
+  const cs = 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',';
+  g.fillStyle = cs + a.toFixed(3) + ')';
   g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
-  if (!spike) return;
-  const L = r * 7;
-  const lg = g.createLinearGradient(x - L, y, x + L, y);
-  lg.addColorStop(0.00, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
-  lg.addColorStop(0.50, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (a * 0.5).toFixed(3) + ')');
-  lg.addColorStop(1.00, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
-  g.fillStyle = lg;
-  g.fillRect(x - L, y - r * 0.16, L * 2, r * 0.32);
-  const lg2 = g.createLinearGradient(x, y - L, x, y + L);
-  lg2.addColorStop(0.00, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
-  lg2.addColorStop(0.50, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + (a * 0.5).toFixed(3) + ')');
-  lg2.addColorStop(1.00, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0)');
-  g.fillStyle = lg2;
-  g.fillRect(x - r * 0.16, y - L, r * 0.32, L * 2);
+  if (!sparkle) return;
+  g.strokeStyle = cs + (a * 0.65).toFixed(3) + ')';
+  g.lineCap = 'round';
+  g.lineWidth = Math.max(0.6, r * 0.30);
+  const L = r * 6;
+  for (let k = 0; k < 2; k++) {
+    const ang = k * Math.PI / 2 + 0.25;
+    const wob = (k - 0.5) * r * 1.2;
+    const x0 = x - Math.cos(ang) * L * 0.8, y0 = y - Math.sin(ang) * L * 0.8;
+    const x1 = x + Math.cos(ang) * L, y1 = y + Math.sin(ang) * L;
+    g.beginPath();
+    g.moveTo(x0, y0 + wob);
+    g.quadraticCurveTo(x + wob * 0.4, y - wob * 0.4, x1, y1);
+    g.stroke();
+  }
 }
 
 function buildStars() {
@@ -1652,20 +1872,16 @@ function buildStars() {
     for (let i = 0; i < cfg.n; i++) {
       const x = cosmeticRandom() * px, y = cosmeticRandom() * px;
       const cls = pickStarClass(cosmeticRandom());
-      // Luminosity drives size: hot stars are both brighter and larger, which
-      // is what makes a real field read as having depth rather than being
-      // scattered confetti.
+      // Luminosity drives size: hot stars are both brighter and larger.
       const r = (cosmeticRandom() * cfg.maxR * cls.lum + 0.32) * DPR;
       const a = Math.min(1, (cosmeticRandom() * 0.5 + 0.5) * cfg.a * (0.55 + cls.lum * 0.65));
-      const spike = i < cfg.hero && cls.lum > 0.55;
+      const sparkle = i < cfg.hero && cls.lum > 0.55;
 
       // Draw at nine offsets so a star crossing a tile edge reappears on the
-      // far side. Without this the tile has hard seams where stars are sliced
-      // in half -- which, with a 180px tile, was half of why the field read as
-      // a repeating pattern rather than a sky.
+      // far side -- no seams.
       for (let ox = -1; ox <= 1; ox++) {
         for (let oy = -1; oy <= 1; oy++) {
-          paintStar(g, x + ox * px, y + oy * px, r, a, cls.c, spike);
+          paintStar(g, x + ox * px, y + oy * px, r, a, cls.c, sparkle);
         }
       }
     }
@@ -1674,34 +1890,23 @@ function buildStars() {
 }
 
 
-// A tileable CMB field. Built from soft overlapping blobs rather than
-// per-pixel noise: per-pixel would cost a full-canvas ImageData pass and, at
-// this alpha, would just read as film grain anyway. Seeded so the pattern is
-// stable across resizes instead of shimmering every time the window changes.
+// A tileable paper-mottling field: soft overlapping warm/cool blotches at
+// very low alpha, seeded so the pattern is stable across resizes.
 function buildCmb() {
   const T = 256;
   const c = document.createElement('canvas');
   c.width = c.height = T;
   const g = c.getContext('2d');
-  const rr = mulberry32(20240917);          // fixed seed: one canonical sky
-  // No opaque base: the tile stays transparent and only carries the
-  // fluctuations. The nebula wash is fully opaque, so anything painted under
-  // it would simply vanish -- the CMB has to be an overlay on top of it.
-  g.globalCompositeOperation = 'lighter';
-  const N = 46;
+  const rr = mulberry32(20240917);          // fixed seed: one canonical page
+  const N = 40;
   for (let i = 0; i < N; i++) {
-    // Wrap at nine offsets like the starfield does, so blobs crossing an edge
-    // reappear on the far side and the tile has no seams.
     const bx = rr() * T, by = rr() * T;
-    const rad = (18 + rr() * 46);
-    // Temperature fluctuation: slightly warm or slightly cool. Kept within a
-    // narrow band -- a strong colour spread would read as a nebula, not as
-    // the CMB.
+    const rad = (20 + rr() * 48);
     const warm = rr() < 0.5;
-    const r = warm ? 120 : 90;
-    const gg = warm ? 110 : 120;
-    const b = warm ? 120 : 175;
-    const a = 0.020 + rr() * 0.028;
+    const r = warm ? 96 : 70;
+    const gg = warm ? 78 : 66;
+    const b = warm ? 58 : 88;
+    const a = 0.030 + rr() * 0.035;
     for (let ox = -1; ox <= 1; ox++) {
       for (let oy = -1; oy <= 1; oy++) {
         const x = bx + ox * T, y = by + oy * T;
@@ -1713,33 +1918,96 @@ function buildCmb() {
       }
     }
   }
-  g.globalCompositeOperation = 'source-over';
   cmbPattern = ctx.createPattern(c, 'repeat');
 }
 
 let vignette = null;
 function buildVignette() {
-  const g = ctx.createRadialGradient(W / 2, H / 2, MIN * 0.32, W / 2, H / 2, Math.max(W, H) * 0.78);
-  g.addColorStop(0, 'rgba(0,0,0,0)');
-  g.addColorStop(1, 'rgba(0,0,0,0.72)');
+  // Warm ink edges, not cold black: the page darkens toward the corners.
+  const g = ctx.createRadialGradient(W / 2, H / 2, MIN * 0.34, W / 2, H / 2, Math.max(W, H) * 0.78);
+  g.addColorStop(0, 'rgba(10,8,6,0)');
+  g.addColorStop(1, 'rgba(10,8,6,0.70)');
   vignette = g;
 }
 
 let nebula = null, nebulaHue = -999, nebulaHeat = -1;
-// The nebula already shifted HUE per era, but hue alone is a rotation, not a
-// progression. Saturation and lightness now climb with it, so the sky goes
-// from cold and thin to hot and dense across a run -- the palette carries the
-// same arc as the mass.
+// Era watercolor washes: big soft irregular blobs in muted tones derived
+// from the era hue, pre-rendered to a small canvas and blitted. Saturation
+// and warmth still climb with era, so the page goes from cold and thin to
+// hot and dense across a run.
 function getNebula(hue, heat) {
-  if (Math.abs(hue - nebulaHue) < 3 && Math.abs(heat - nebulaHeat) < 0.02) return nebula;
-  const sat = 44 + heat * 26;
-  const li = 6 + heat * 5;
-  const g = ctx.createRadialGradient(W * 0.5, H * 0.42, 0, W * 0.5, H * 0.42, Math.max(W, H) * 0.85);
-  g.addColorStop(0.00, `hsl(${hue}, ${sat.toFixed(0)}%, ${(li + 3).toFixed(1)}%)`);
-  g.addColorStop(0.45, `hsl(${(hue + 28) % 360}, ${(sat - 4).toFixed(0)}%, ${li.toFixed(1)}%)`);
-  g.addColorStop(1.00, `hsl(${(hue + 52) % 360}, ${(sat - 10).toFixed(0)}%, ${Math.max(2, li - 3).toFixed(1)}%)`);
-  nebula = g; nebulaHue = hue; nebulaHeat = heat;
-  return g;
+  const hb = Math.round(hue / 12) * 12, tb = Math.round(heat * 10) / 10;
+  if (hb === nebulaHue && tb === nebulaHeat) return nebula;
+  const S = 480;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const rnd = mulberry32(hb * 131 + 7);
+  const cols = [
+    'hsl(' + hb + ', 30%, 16%)',
+    'hsl(' + ((hb + 42) % 360) + ', 28%, 13%)',
+    'hsl(' + ((hb - 34 + 360) % 360) + ', 26%, 19%)',
+    'hsl(' + ((hb + 80) % 360) + ', ' + (20 + heat * 14) + '%, ' + (12 + heat * 7) + '%)'
+  ];
+  for (let i = 0; i < 26; i++) {
+    const bx = rnd() * S, by = rnd() * S;
+    const br = S * (0.10 + rnd() * 0.24);
+    g.globalAlpha = 0.16 + rnd() * 0.20;
+    g.fillStyle = cols[(rnd() * cols.length) | 0];
+    g.beginPath();
+    // Irregular blob: a wobbled ellipse reads as a wash, not a stamp.
+    const wob = 0.25;
+    for (let k = 0; k <= 18; k++) {
+      const a = (k / 18) * TAU;
+      const rr = br * (1 + (rnd() * 2 - 1) * wob);
+      const x = bx + Math.cos(a) * rr, y = by + Math.sin(a) * rr * 0.7;
+      if (k === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.closePath(); g.fill();
+  }
+  g.globalAlpha = 1;
+  nebula = c; nebulaHue = hb; nebulaHeat = tb;
+  return c;
+}
+
+// Paper grain: a tileable speckle + fiber pattern drawn over the background
+// at low alpha. Built once per resize from the cosmetic stream.
+let grainPattern = null;
+function buildGrain() {
+  const T = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = T;
+  const g = c.getContext('2d');
+  for (let i = 0; i < 900; i++) {
+    const x = cosmeticRandom() * T, y = cosmeticRandom() * T;
+    const light = cosmeticRandom() < 0.4;
+    g.fillStyle = light ? 'rgba(233,223,201,0.05)' : 'rgba(0,0,0,0.07)';
+    const r = 0.4 + cosmeticRandom() * 1.1;
+    g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill();
+  }
+  // A few paper fibers.
+  g.strokeStyle = 'rgba(233,223,201,0.04)';
+  g.lineWidth = 0.7;
+  for (let i = 0; i < 26; i++) {
+    const x = cosmeticRandom() * T, y = cosmeticRandom() * T;
+    const a = cosmeticRandom() * TAU, l = 6 + cosmeticRandom() * 18;
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+    g.stroke();
+  }
+  grainPattern = ctx.createPattern(c, 'repeat');
+}
+
+function drawNebulaWash() {
+  const wash = getNebula((210 + era * 24) % 360, clamp(era / 6, 0, 1));
+  ctx.drawImage(wash, 0, 0, W, H);
+}
+
+function drawGrain() {
+  if (!grainPattern) return;
+  ctx.fillStyle = grainPattern;
+  ctx.fillRect(0, 0, W, H);
 }
 
 function resize() {
@@ -1750,12 +2018,12 @@ function resize() {
   cvs.height = Math.round(H * DPR);
   buildStars();
   buildCmb();
+  buildGrain();
   buildVignette();
   nebulaHue = -999;
   nebulaHeat = -1;
   layoutStick();
 }
-
 // Geometry for the bottom-centre stick. Scaled off viewport HEIGHT rather than
 // width, because the stick's budget is vertical: on a landscape phone the
 // screen is short, and a 78px-radius stick would eat half of it.
@@ -2028,6 +2296,8 @@ function reset() {
   const startMass = M0 * VARMODS[variant].startMul * (1 + 0.02 * runUpgrades.gravity);
   runDustScore = 0; runEaten = 0; lastMealT = 0;
   rareWindowActive = false; rareWindowT = 0; rareSpawnT = 0;
+  civT = 0; nextCivIn = 7;   // fixed first interval; no rng() here so the
+                             // reset() seed stream stays identical
   pendingWave = 0; greedE = null; nextSystemId = 1; eventKey = null;
   clearInput();
   p = { x: 0, y: 0, vx: 0, vy: 0, r: startMass * RS_PER_MASS, mass: startMass };
@@ -2291,7 +2561,12 @@ function bodyMass(e) {
   return e.mass;
 }
 
-function consume(e, idx) {
+function consume(e, idx, opts) {
+  // opts.quiet: full ingestion accounting (mass, score, combo, stardust,
+  // field guide, achievements, counters, skins) but no per-body fanfare and
+  // no special gameplay effects -- used by the ABSORB pick, whose subtitle
+  // promises "no special effects".
+  const quiet = !!(opts && opts.quiet);
   const type = e.body && e.body.type;
   const wasStar = type === 'star';
   const wasPulsar = type === 'pulsar';
@@ -2336,10 +2611,10 @@ function consume(e, idx) {
   }
   // Combo heat pops on every AGN feedback.
   if (combo > 0 && combo % WAVE_EVERY() === 0) comboPopT = 0.45;
-  buzz(8);
+  if (!quiet) buzz(8);
 
   // Floating number, so a big eat lands without having to watch the HUD.
-  if (floats.length < 24) {
+  if (!quiet && floats.length < 24) {
     floats.push({
       x: e.x, y: e.y,
       text: '+' + fmt(gained),
@@ -2348,20 +2623,23 @@ function consume(e, idx) {
     });
   }
 
-  absorbFx(e);
-  if (type === 'asteroid') Snd.crunch();
-  else Snd.blip(combo - 1);
+  if (!quiet) {
+    absorbFx(e);
+    if (type === 'asteroid') Snd.crunch();
+    else Snd.blip(combo - 1);
+  }
   Snd.setDrone(true, combo);
   ents.splice(idx, 1);
 
-  if (wasStar) {
-    supernova(e.x, e.y, e.r);
-    toast('STAR CONSUMED +' + fmt(gained));
-  } else if (wasPulsar) {
-    shield = 3;   // seconds of one-hit protection; impact consumes it
-    toast('PULSAR ABSORBED — your next impact is shielded', 2.2);
-    burstFx(e.x, e.y, 24, e.r, 1.4, 205);
-  } else if (wasWormhole) {
+  if (!quiet) {
+    if (wasStar) {
+      supernova(e.x, e.y, e.r);
+      toast('STAR CONSUMED +' + fmt(gained));
+    } else if (wasPulsar) {
+      shield = 3;   // seconds of one-hit protection; impact consumes it
+      toast('PULSAR ABSORBED — your next impact is shielded', 2.2);
+      burstFx(e.x, e.y, 24, e.r, 1.4, 205);
+    } else if (wasWormhole) {
     // Teleport along the stored pair vector. Move the player AND the camera
     // so the world scrolls instead of jumping under the finger.
     const tx = Math.cos(e.pairAng) * e.pairDist;
@@ -2388,15 +2666,16 @@ function consume(e, idx) {
     toast('MAGNETAR STARQUAKE');
     Snd.boom();
   } else if (type === 'ark') {
-    toast('ARK CONSUMED +' + fmt(gained), 1.8);
-    burstFx(e.x, e.y, 26, e.r, 1.2, entHue(e.r / p.r));
+      toast('ARK CONSUMED +' + fmt(gained), 1.8);
+      burstFx(e.x, e.y, 26, e.r, 1.2, entHue(e.r / p.r));
+    }
   }
   // The AGN feedback cadence is the no-pause choice moment, and it belongs to
   // the COMBO, not to the body: a star or pulsar landing on the 20th used to
-  // swallow the milestone entirely.
-  if (combo > 0 && combo % WAVE_EVERY() === 0) startPick();
+  // swallow the milestone entirely. Never re-trigger from inside a pick.
+  if (!quiet && combo > 0 && combo % WAVE_EVERY() === 0) startPick();
   // Big things break apart visibly instead of just vanishing.
-  if (e.r > p.r * 0.55) burstFx(e.x, e.y, 14, e.r, 0.8, entHue(e.r / p.r));
+  if (!quiet && e.r > p.r * 0.55) burstFx(e.x, e.y, 14, e.r, 0.8, entHue(e.r / p.r));
 }
 
 function supernova(x, y, r) {
@@ -2415,6 +2694,30 @@ function supernova(x, y, r) {
   shakeMag = Math.max(shakeMag, 26);
   flashT = Math.max(flashT, 0.34);
   Snd.nova();
+}
+
+// Quasar jet collision: the jets are drawn as the lethal hazard (length
+// 5.5r, half-width 0.10r at the base widening to 0.30r at the tip, sweeping
+// with jetA) and the death message blames them, so they collide as drawn.
+// Same rule as the body: an edible quasar is food, otherwise a jet touch
+// hurts with the normal invulnerability window respected.
+function quasarJetHit(e, ddx, ddy) {
+  const ja = e.jetA || 0;
+  const ca = Math.cos(ja), sa = Math.sin(ja);
+  // Player position relative to the quasar, rotated into the jet frame
+  // (jets are drawn along local +/-y after rotate(jetA)).
+  const px = -ddx, py = -ddy;
+  const lx = px * ca + py * sa;
+  const ly = -px * sa + py * ca;
+  const jl = e.r * 5.5;
+  const pr = p.r * 0.5;
+  for (let s = -1; s <= 1; s += 2) {
+    const t = Math.max(0, Math.min(1, (s * ly) / jl));
+    const hw = e.r * (0.10 + 0.20 * t) + pr;
+    const dx = lx, dy = ly - s * t * jl;
+    if (dx * dx + dy * dy < hw * hw) return true;
+  }
+  return false;
 }
 
 function hurt(e) {
@@ -2539,7 +2842,8 @@ function die() {
   newBest = score > prevBest && score > 0;
   commitBest();
   pushHistory(score);
-  // A daily attempt is consumed by dying, win or lose.
+  // The daily attempt was already consumed at launch (see startDaily);
+  // this is belt-and-braces so an interrupted write cannot reopen the day.
   if (dailyRun) {
     try { saveSet('daily', todayStr()); } catch (_) {}
     dailyRun = false;
@@ -2551,7 +2855,9 @@ function die() {
     try {
       const xs = [], ys = [];
       for (const q of ghostRec) { xs.push(q[1]); ys.push(q[2]); }
-      saveSet('ghost', { x: xs, y: ys, score: Math.round(score) });
+      // t0: the first sample's timestamp. Playback indexes from it, so the
+      // ghost is not ~0.1 s ahead of the player's historical position.
+      saveSet('ghost', { x: xs, y: ys, t0: ghostRec[0][0], score: Math.round(score) });
       ghostData = save.ghost;
     } catch (_) {}
   }
@@ -2911,6 +3217,12 @@ function update(dt) {
       const ddx = e.x - p.x, ddy = e.y - p.y;
       const reach = p.r + e.r * 0.5;
       const d2c = ddx * ddx + ddy * ddy;
+      // Quasar jets kill before the body circle is reached.
+      if (e.body && e.body.type === 'quasar' && !edibleAt(e) && invuln <= 0 &&
+          quasarJetHit(e, ddx, ddy)) {
+        hurt(e);
+        continue;
+      }
       if (d2c < reach * reach) {
         // Dark matter has no surface and no collision -- you pass straight
         // through it, but its gravity bends your trajectory.
@@ -2999,9 +3311,22 @@ function updateEnts(dt) {
 
   // The civilisation starts deploying countermeasures once you are big
   // enough for someone to have noticed.
-  // Roughly one installation every 7 seconds, so they trickle in and escalate
-// rather than all appearing the instant you cross the threshold.
-  if (state === 'play' && score > CIV_ALERT && rng() < 0.0025) spawnCiv();
+  // Time-based, not per-frame: a fixed per-frame probability would deploy
+  // faster on 120 Hz screens than on 30 Hz ones and consume a frame-rate
+  // dependent number of seeded rng() draws, so seeded runs would diverge
+  // across devices. The interval jitters 5-9 s (mean ~7 s) and the jitter
+  // draw happens once per deployment, on sim time, keeping the seeded
+  // stream reproducible at fixed dt.
+  if (state === 'play' && score > CIV_ALERT) {
+    civT += dt;
+    if (civT >= nextCivIn) {
+      civT = 0;
+      nextCivIn = 5 + rng() * 4;
+      spawnCiv();
+    }
+  } else {
+    civT = 0;
+  }
 
   const v = viewWorldRadius();
   const despawnR = v * 1.95;
@@ -3275,12 +3600,25 @@ function updateSlugs(dt) {
       const rr = p.r + s.r;
       if (dx * dx + dy * dy < rr * rr) {
         // Small chip of mass and a shove -- they are trying to deflect
-        // you, not kill you outright.
+        // you, not kill you outright. The shove follows the round's travel
+        // direction: the old player->slug vector knocked you TOWARD the
+        // battery that fired it.
+        // Slugs respect the same defences as any other impact: the
+        // post-hurt grace window and the pulsar shield.
+        if (invuln > 0) { slugs.splice(i, 1); continue; }
+        if (shield > 0) {
+          shield = 0;
+          invuln = Math.max(invuln, 0.3);
+          toast('SHIELD — slug blocked', 1.2);
+          burstFx(s.x, s.y, 12, s.r * 4, 0.8, 196);
+          slugs.splice(i, 1);
+          continue;
+        }
         p.mass = Math.max(1, p.mass * 0.97);
         p.r = p.mass * RS_PER_MASS;
-        const d = Math.hypot(dx, dy) || 1;
-        p.vx += dx / d * 3 * p.r;
-        p.vy += dy / d * 3 * p.r;
+        const sv = Math.hypot(s.vx, s.vy) || 1;
+        p.vx += s.vx / sv * 3 * p.r;
+        p.vy += s.vy / sv * 3 * p.r;
         burstFx(s.x, s.y, 8, s.r * 4, 0.7, 196);
         shakeMag = Math.max(shakeMag, 6);
         slugs.splice(i, 1);
@@ -3303,29 +3641,23 @@ function updateFloats(dt) {
    RENDER
    ============================================================ */
 function drawMenuVignette() {
-  // Title-card dressing: a static radial scrim that keeps the card's column
-  // readable over whatever the drifting field is doing behind it, plus a soft
-  // edge falloff so the screen reads as composed rather than full-bleed.
-  // Painted once per frame in screen space; no DOM, no compositor layer.
-  const g = ctx.createRadialGradient(W * 0.5, H * 0.46, MIN * 0.18, W * 0.5, H * 0.46, Math.max(W, H) * 0.75);
-  g.addColorStop(0.00, 'rgba(4, 6, 15, 0.30)');
-  g.addColorStop(0.55, 'rgba(4, 6, 15, 0.10)');
-  g.addColorStop(1.00, 'rgba(4, 6, 15, 0.62)');
+  // A warm scrim behind menus: sepia wash at the corners, page-clear center.
+  const g = ctx.createRadialGradient(W / 2, H / 2, MIN * 0.18, W / 2, H / 2, Math.max(W, H) * 0.75);
+  g.addColorStop(0, 'rgba(10,8,6,0)');
+  g.addColorStop(1, 'rgba(20,14,10,0.78)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 }
-
 function render() {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
 
-  ctx.fillStyle = '#05060f';
+  ctx.fillStyle = PAPER_BG;
   ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = getNebula((210 + era * 24) % 360, clamp(era / 6, 0, 1));
-  ctx.fillRect(0, 0, W, H);
-  // Over the nebula wash, under the stars: the CMB is the farthest light, so
-  // it belongs behind the starfield but cannot sit under an opaque fill.
+  drawNebulaWash();
+  drawGrain();
+  drawCmb();
   drawCmb();
 
   drawStars();
@@ -3408,10 +3740,12 @@ function render() {
     ctx.fillRect(0, 0, W, H);
   }
 
-  // Era-up celebration: a brief tint + a ring swell instead of a bare toast.
+  // Era-up celebration: a brief warm amber tint + a ring swell instead of a
+  // bare toast. Amber, not violet: the celebration should feel like
+  // candlelight, not a UI accent.
   if (eraFx > 0.01 && motion) {
     ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = 'rgba(150,110,255,' + (eraFx * 0.20).toFixed(3) + ')';
+    ctx.fillStyle = 'rgba(255,176,87,' + (eraFx * 0.20).toFixed(3) + ')';
     ctx.fillRect(0, 0, W, H);
     ctx.globalCompositeOperation = 'source-over';
   }
@@ -3477,41 +3811,48 @@ function drawShots() {
 // it never moves, it can be hit blind -- which is the only way a thumb control
 // is usable while you are watching the hole instead of your hands.
 function drawJoystick() {
-  if (controlMode !== 'joystick') return;   // drag modes steer themselves
+  // Sketchbook joystick: a hand-inked ring with cardinal ticks, a sepia
+  // wash well, and a chalk knob. Same contract as the original: controlMode,
+  // joy.{dx,dy,active}, JOY_BASE_X/Y, JOY_R, JOY_KNOB, JOY_DEADZONE.
+  if (controlMode !== 'joystick') return;
   if (state !== 'play') return;
 
   const cx = JOY_BASE_X, cy = JOY_BASE_Y;
   const kx = cx + joy.dx * JOY_R;
   const ky = cy + joy.dy * JOY_R;
   const mag = Math.min(1, Math.hypot(joy.dx, joy.dy));
-
-  // The stick sits over the bottom of the play area, which is where a lot of
-  // the food arrives from. Dim it while nobody is touching it, so it is
-  // findable but does not sit on top of the game the rest of the time.
   const idle = joy.active ? 1 : 0.55;
 
-  ctx.globalCompositeOperation = 'lighter';
-
-  // Base well. A soft dark disc keeps the knob readable over a bright nebula.
-  const well = ctx.createRadialGradient(cx, cy, 0, cx, cy, JOY_R * 1.12);
-  well.addColorStop(0.00, 'rgba(10,20,36,' + (0.42 * idle).toFixed(3) + ')');
-  well.addColorStop(1.00, 'rgba(10,20,36,0)');
-  ctx.fillStyle = well;
+  // Base well: a sepia wash so the knob reads over bright nebulae.
+  ctx.globalAlpha = 0.42 * idle;
+  ctx.fillStyle = 'rgba(150,130,105,1)';
   ctx.beginPath(); ctx.arc(cx, cy, JOY_R * 1.12, 0, TAU); ctx.fill();
+  ctx.globalAlpha = 1;
 
-  // Outer ring brightens as you push, so the stick reports its own deflection.
-  ctx.strokeStyle = 'rgba(79,240,255,' +
-    ((0.24 + mag * 0.34) * idle).toFixed(3) + ')';
-  ctx.lineWidth = 1.4;
-  ctx.beginPath(); ctx.arc(cx, cy, JOY_R, 0, TAU); ctx.stroke();
+  // Outer ring, hand-wobbled, brightens as you push.
+  ctx.strokeStyle = 'rgba(233,223,201,' + ((0.35 + mag * 0.45) * idle).toFixed(3) + ')';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const wob = JOY_R * 0.03, segs = 40;
+  for (let i = 0; i <= segs; i++) {
+    const a = (i / segs) * TAU;
+    const rr = JOY_R * (1 + Math.sin(a * 5) * 0.03);
+    const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath(); ctx.stroke();
 
-  // Deadzone guide at 25% -- the throw before the hole actually moves.
-  ctx.strokeStyle = 'rgba(150,200,230,' + (0.13 * idle).toFixed(3) + ')';
+  // Deadzone guide at 25%.
+  ctx.strokeStyle = 'rgba(150,135,115,' + (0.30 * idle).toFixed(3) + ')';
   ctx.lineWidth = 1;
+  ctx.setLineDash([6, 6]);
   ctx.beginPath(); ctx.arc(cx, cy, JOY_R * JOY_DEADZONE, 0, TAU); ctx.stroke();
+  ctx.setLineDash([]);
 
-  // Four cardinal ticks, so the ring reads as a control and not a decoration.
-  ctx.strokeStyle = 'rgba(150,200,230,' + (0.20 * idle).toFixed(3) + ')';
+  // Four cardinal ticks.
+  ctx.strokeStyle = 'rgba(150,135,115,' + (0.45 * idle).toFixed(3) + ')';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
   for (let i = 0; i < 4; i++) {
     const a = i * Math.PI * 0.5;
     const ux = Math.cos(a), uy = Math.sin(a);
@@ -3521,52 +3862,45 @@ function drawJoystick() {
     ctx.stroke();
   }
 
-  // Thrust vector: a line from the centre to the knob, thickening with push.
+  // Thrust vector: a chalk line from centre to knob, thickening with push.
   if (mag > 0.02) {
-    ctx.strokeStyle = 'rgba(79,240,255,' + (0.16 + mag * 0.34).toFixed(3) + ')';
-    ctx.lineWidth = 1 + mag * 2;
+    ctx.strokeStyle = 'rgba(233,223,201,' + (0.25 + mag * 0.45).toFixed(3) + ')';
+    ctx.lineWidth = 1 + mag * 3;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(kx, ky); ctx.stroke();
   }
 
-  // Knob.
-  const knob = ctx.createRadialGradient(kx, ky, 0, kx, ky, JOY_KNOB);
-  knob.addColorStop(0.00, 'rgba(190,250,255,' + ((0.55 + mag * 0.30) * idle).toFixed(3) + ')');
-  knob.addColorStop(0.70, 'rgba(79,240,255,' + ((0.32 + mag * 0.28) * idle).toFixed(3) + ')');
-  knob.addColorStop(1.00, 'rgba(79,240,255,0)');
-  ctx.fillStyle = knob;
+  // Knob: paper disc with an ink rim.
+  ctx.fillStyle = 'rgba(38,33,26,' + (0.85 * idle).toFixed(3) + ')';
   ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB, 0, TAU); ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,' + ((0.40 + mag * 0.40) * idle).toFixed(3) + ')';
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(233,223,201,' + ((0.55 + mag * 0.40) * idle).toFixed(3) + ')';
+  ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(kx, ky, JOY_KNOB * 0.72, 0, TAU); ctx.stroke();
-
-  ctx.globalCompositeOperation = 'source-over';
 }
-
-// Floating "+1,240" numbers. Drawn in screen space so the type stays a
-// constant size no matter how far the camera has zoomed out.
 function drawFloats() {
-  if (!floats.length) return;
+  // Hand-lettered floating score text, ink on the page.
+  ctx.save();
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  for (const f of floats) {
-    const k = 1 - f.life / f.max;
-    const sx = (f.x - cam.x) * cam.zoom + W / 2;
-    const sy = (f.y - cam.y) * cam.zoom + H / 2;
-    if (sx < -60 || sx > W + 60 || sy < -40 || sy > H + 40) continue;
-    const size = (f.big ? 17 : 12) * (0.9 + k * 0.3);
-    ctx.globalAlpha = Math.min(1, k * 1.6);
-    ctx.font = `700 ${size.toFixed(1)}px ui-monospace, monospace`;
-    ctx.fillStyle = f.big ? 'rgba(255,236,190,0.95)' : 'rgba(200,238,255,0.92)';
-    ctx.fillText(f.text, sx, sy);
+  for (let i = 0; i < floats.length; i++) {
+    const f = floats[i];
+    const a = clamp(f.life / f.max, 0, 1);
+    const t = 1 - a;
+    const size = (f.size || 16) * (1 + t * 0.25);
+    ctx.font = '600 ' + size + 'px "Shantell Sans", "Segoe UI", sans-serif';
+    ctx.globalAlpha = a;
+    // Paper-light text with a soft ink halo so it reads on dark and light.
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(13,11,8,' + (a * 0.8).toFixed(3) + ')';
+    const fx = f.x, fy = f.y - t * 46;
+    ctx.strokeText(f.text, fx, fy);
+    ctx.fillStyle = 'rgba(233,223,201,' + (a * 0.98).toFixed(3) + ')';
+    ctx.fillText(f.text, fx, fy);
   }
-  ctx.globalAlpha = 1;
-  ctx.textAlign = 'start';
-  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
 }
-
-// Shockwave steering pick, drawn as three lanes. No DOM: the choice lives in
-// the movement space, so it never interrupts flow with a menu.
 function drawPick() {
+  // Shockwave steering choice: three hand-inked cards (hold left / shockwave /
+  // hold right) with dwell-progress fill. Same data contract as the original:
+  // pickT, pickHold.{l,c,r}, PICK_OPTS[i].{name,sub}.
   if (pickT <= 0 || !pickHold || state !== 'play') return;
   const holds = [pickHold.l, pickHold.c, pickHold.r];
   const bw = Math.min(150, W * 0.28), bh = 54;
@@ -3576,87 +3910,93 @@ function drawPick() {
   for (let i = 0; i < 3; i++) {
     const cx = W / 2 + (i - 1) * W * 0.30;
     const frac = clamp(holds[i] / (i === 1 ? 0.6 : 0.35), 0, 1);
-    ctx.globalCompositeOperation = 'source-over';
-    // 40% opacity background like real mobile games
-    ctx.fillStyle = 'rgba(8,14,26,0.40)';
-    ctx.strokeStyle = i === 1 ? 'rgba(79,240,255,0.75)' : 'rgba(150,200,230,0.45)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(cx - bw / 2, cy - bh / 2, bw, bh, 10);
-    else ctx.rect(cx - bw / 2, cy - bh / 2, bw, bh);
-    ctx.fill();
-    ctx.stroke();
-    // Dwell progress fills the lane from the bottom.
+    // Paper card with a wobbled ink border.
+    ctx.fillStyle = 'rgba(24,20,15,0.72)';
+    ctx.strokeStyle = i === 1 ? 'rgba(233,223,201,0.9)' : 'rgba(150,135,115,0.55)';
+    ctx.lineWidth = i === 1 ? 2.5 : 1.5;
+    wobPath(cx - bw / 2, cy - bh / 2, bw, bh, 10, 2.5);
+    ctx.fill(); ctx.stroke();
+    // Dwell progress: sepia wash rising from the bottom.
     if (frac > 0) {
-      ctx.fillStyle = 'rgba(79,240,255,0.25)';
-      const fh = (bh - 4) * frac;
-      ctx.fillRect(cx - bw / 2 + 2, cy + bh / 2 - 2 - fh, bw - 4, fh);
+      ctx.fillStyle = 'rgba(150,110,70,0.35)';
+      const fh = (bh - 8) * frac;
+      ctx.fillRect(cx - bw / 2 + 4, cy + bh / 2 - 4 - fh, bw - 8, fh);
     }
-    ctx.fillStyle = '#eaf6ff';
-    ctx.font = '700 13px system-ui, sans-serif';
+    ctx.fillStyle = '#ece2cc';
+    ctx.font = '700 13px "Shantell Sans", system-ui, sans-serif';
     ctx.fillText(PICK_OPTS[i].name, cx, cy - 8);
-    ctx.fillStyle = 'rgba(170,205,235,0.7)';
-    ctx.font = '400 10px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(190,175,150,0.85)';
+    ctx.font = '400 10px "Shantell Sans", system-ui, sans-serif';
     ctx.fillText(PICK_OPTS[i].sub, cx, cy + 12);
   }
   ctx.textAlign = 'start';
   ctx.textBaseline = 'alphabetic';
 }
-
-// Ghost of your best run: a translucent ring replaying its positions.
-// Positions are absolute and every run starts at the origin, so no
-// simulation is needed -- just an index into the recording.
 function drawGhost() {
+  // Best-run ghost: a chalked dashed ring where your best self was, with a
+  // faint paper-wash disc. Same data contract as the original (ghostData.x/y
+  // sampled at elapsed*10), only the styling changed.
   if (!ghostOn || !ghostData || state !== 'play') return;
-  const sample = elapsed * 10;
+  // Sample 0 was recorded at t0 (first 0.1 s tick), not at t = 0: index from
+  // the recording's own clock so playback lines up with history.
+  const sample = (elapsed - (ghostData.t0 || 0)) * 10;
   const gi = Math.floor(sample);
   if (gi < 0 || gi >= ghostData.x.length) return;
   const next = Math.min(gi + 1, ghostData.x.length - 1);
   const gx = lerp(ghostData.x[gi], ghostData.x[next], sample - gi);
   const gy = lerp(ghostData.y[gi], ghostData.y[next], sample - gi);
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.35;
-  ctx.strokeStyle = 'rgba(79,240,255,0.8)';
+  const r = Math.max(6, p.r * 0.45);
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = 'rgba(150,130,105,1)';
+  ctx.beginPath(); ctx.arc(gx, gy, r, 0, TAU); ctx.fill();
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = 'rgba(90,80,66,0.9)';
   ctx.lineWidth = Math.max(1, p.r * 0.05);
-  ctx.beginPath();
-  ctx.arc(gx, gy, Math.max(6, p.r * 0.45), 0, TAU);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.setLineDash([r * 0.28, r * 0.18]);
+  ctx.lineDashOffset = -elapsed * 24;
+  ctx.beginPath(); ctx.arc(gx, gy, r, 0, TAU); ctx.stroke();
+  ctx.restore();
 }
-
-// Arrows pointing at lethal bodies that are off-screen. Partly juice, partly
-// accessibility: knowing where the danger is should not depend on being able
-// to see its colour.
 function drawDangerArrows() {
-  // Menus and report cards float over the live field; a wall of arrows behind
-  // the COLLAPSE card read as UI noise. Arrows are a play aid, not decoration.
+  // Off-screen lethals get a hand-inked chevron at the screen edge instead of
+  // a neon triangle. Same data flow as the original: iterate ents, skip the
+  // edible ones via edibleAt(e), skip on-screen ones.
   if (state !== 'play') return;
   const cx = W / 2, cy = H / 2;
   const rad = Math.min(W, H) * 0.5 - 26;
-  ctx.globalCompositeOperation = 'lighter';
   for (const e of ents) {
-    if (edibleAt(e)) continue;                       // edible ones are fine
+    if (edibleAt(e)) continue;
+    // Dark matter cannot collide -- it only pulls. Its lensing rings are the
+    // intended tell; flagging it as a THREAT would be misleading.
+    if (e.darkMatter) continue;
     const sx = (e.x - cam.x) * cam.zoom + cx;
     const sy = (e.y - cam.y) * cam.zoom + cy;
-    if (sx >= 0 && sx <= W && sy >= 0 && sy <= H) continue;   // visible already
+    if (sx >= 0 && sx <= W && sy >= 0 && sy <= H) continue;
     const dx = sx - cx, dy = sy - cy;
     const d = Math.hypot(dx, dy) || 1;
+    const px = cx + dx / d * rad, py = cy + dy / d * rad;
+    const ang = Math.atan2(dy, dx);
+    const pulse = 0.55 + 0.25 * Math.sin(elapsed * 5 + e.x * 0.01);
     ctx.save();
-    ctx.translate(cx + dx / d * rad, cy + dy / d * rad);
-    ctx.rotate(Math.atan2(dy, dx));
-    ctx.fillStyle = 'rgba(255,150,110,0.55)';
-    ctx.beginPath();
-    ctx.moveTo(9, 0);
-    ctx.lineTo(-6, -6);
-    ctx.lineTo(-6, 6);
-    ctx.closePath();
-    ctx.fill();
+    ctx.translate(px, py);
+    ctx.rotate(ang);
+    ctx.globalAlpha = pulse;
+    ctx.strokeStyle = 'rgba(150,60,40,0.9)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    // Hand-drawn double chevron, slightly wobbled.
+    for (let k = 0; k < 2; k++) {
+      const ox = k * 9 - 4;
+      ctx.beginPath();
+      ctx.moveTo(ox - 6 + Math.random() * 2, -7);
+      ctx.quadraticCurveTo(ox + 2, 0, ox - 6 + Math.random() * 2, 7);
+      ctx.stroke();
+    }
     ctx.restore();
   }
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
 }
-
 function drawEnts() {
   for (const e of ents) {
     // Dark matter: no body, no glow, no collision. The only visible sign is
@@ -3703,17 +4043,12 @@ function drawEnts() {
     const vis = Math.max(1, viewWorldRadius());
     const depthA = 1 - clamp((dc / vis - 0.5) / 0.8, 0, 1) * 0.55;
 
-    // Threat colour rides on a soft glow instead of a hard stroked ring. The
-    // old uniform circle drawn around every single body read as a UI outline
-    // sitting on top of the art; the hue now bleeds off the limb the way an
-    // atmosphere does, which is both prettier and less like a selection box.
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = (highContrast ? 0.82 : 0.6) * depthA;
+    // Threat colour bleeds off the limb as a watercolor aura instead of a
+    // hard stroked ring — an atmosphere, not a selection box.
+    ctx.globalAlpha = (highContrast ? 0.55 : 0.38) * depthA;
     const gs = e.r * (ratio > lethalAt ? 2.5 : 2.2);
     ctx.drawImage(glowSprite(hue), e.x - gs, e.y - gs, gs * 2, gs * 2);
     ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-
     // Too small on screen to be worth detailing.
     if (scr < 1.6 || !b) {
       ctx.fillStyle = `hsl(${hue}, 92%, 64%)`;
@@ -3824,40 +4159,50 @@ function drawEnts() {
     // anyone who cannot separate the two hues -- colour alone is unusable
     // for them. Drawn as one closed polygon rather than radiating rays,
     // which read as a cartoon sunburst.
-    // Greed pulse: a white ring says "eat me now" in the shape channel,
+    // Greed pulse: a chalk ring says "eat me now" in the shape channel,
     // so the gate reads even for players who cannot separate the hues.
     if (isGreed) {
       const gp = 0.5 + 0.3 * Math.sin(elapsed * 8);
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.strokeStyle = 'rgba(255,255,255,' + gp.toFixed(3) + ')';
-      ctx.lineWidth = Math.max(1, e.r * 0.06);
+      ctx.strokeStyle = 'rgba(233,223,201,' + gp.toFixed(3) + ')';
+      ctx.lineWidth = Math.max(1.5, e.r * 0.05);
+      ctx.setLineDash([e.r * 0.22, e.r * 0.14]);
+      ctx.lineDashOffset = elapsed * 24;
       ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 1.18, 0, TAU); ctx.stroke();
-      ctx.globalCompositeOperation = 'source-over';
+      ctx.setLineDash([]);
     }
     if (ratio > lethalAt && !e.civ && !isGreed) {
       const pulse = 0.35 + 0.35 * Math.sin(elapsed * 5 + e.phase);
       const teeth = 12;
       const rIn = e.r * 1.10;
       const rOut = e.r * (1.26 + pulse * 0.10);
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.lineWidth = Math.max(1, e.r * 0.055);
+      ctx.lineWidth = Math.max(1.2, e.r * 0.05);
       ctx.lineJoin = 'round';
-      ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${(0.45 + pulse * 0.45).toFixed(3)})`;
+      ctx.lineCap = 'round';
+      // Inked spiked ring in the threat hue — the SHAPE channel, muted.
+      ctx.strokeStyle = 'hsla(' + hue + ', 55%, 60%, ' + (0.55 + pulse * 0.35).toFixed(3) + ')';
       ctx.beginPath();
       for (let k = 0; k < teeth * 2; k++) {
         const a = (k / (teeth * 2)) * TAU + e.phase * 0.4;
-        const rr = (k & 1) ? rOut : rIn;
+        // A hand-drawn wobble on every tooth.
+        const rr = ((k & 1) ? rOut : rIn) * (1 + 0.03 * Math.sin(a * 7 + elapsed * 6));
         const px = e.x + Math.cos(a) * rr, py = e.y + Math.sin(a) * rr;
         if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
       }
       ctx.closePath();
       ctx.stroke();
       ctx.lineJoin = 'miter';
-      ctx.globalCompositeOperation = 'source-over';
     }
   }
 }
 
+// A real comet has TWO tails and neither points along its velocity -- both
+// are pushed anti-sunward by radiation pressure and the solar wind.
+//   * Ion (plasma) tail: blue, narrow, nearly straight. The solar wind is
+//     far faster than the comet, so it barely curves.
+//   * Dust tail: pale yellow-white, broader and curved, because the heavier
+//     dust lags behind along the orbit.
+// The nucleus is one of the darkest objects known (albedo ~0.04); the bright
+// blur around it is the coma, not the nucleus itself.
 // A real comet has TWO tails and neither points along its velocity -- both
 // are pushed anti-sunward by radiation pressure and the solar wind.
 //   * Ion (plasma) tail: blue, narrow, nearly straight. The solar wind is
@@ -3873,98 +4218,56 @@ function drawCometTail(e, hue) {
   const d = Math.hypot(e.vx, e.vy) || 1;
   const vx = e.vx / d, vy = e.vy / d;
 
-  ctx.globalCompositeOperation = 'lighter';
-
-  // --- Ion tail: blue and straight ---
+  // --- Ion tail: pale blue wash, straight ---
   const ilen = e.r * (7 + Math.sin(elapsed * 3 + e.phase) * 1.2);
   const tx = e.x + ax * ilen, ty = e.y + ay * ilen;
-  const ig = ctx.createLinearGradient(e.x, e.y, tx, ty);
-  ig.addColorStop(0.00, 'rgba(150,205,255,0.62)');
-  ig.addColorStop(0.45, 'rgba(110,175,255,0.28)');
-  ig.addColorStop(1.00, 'rgba(90,150,255,0)');
-  ctx.fillStyle = ig;
+  ctx.fillStyle = 'rgba(150,190,230,0.20)';
   ctx.beginPath();
   ctx.moveTo(e.x - ay * e.r * 0.28, e.y + ax * e.r * 0.28);
   ctx.lineTo(tx - ay * e.r * 0.85, ty + ax * e.r * 0.85);
   ctx.lineTo(tx + ay * e.r * 0.85, ty - ax * e.r * 0.85);
   ctx.lineTo(e.x + ay * e.r * 0.28, e.y - ax * e.r * 0.28);
   ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(180,210,240,0.4)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(e.x, e.y);
+  ctx.lineTo(tx, ty);
+  ctx.stroke();
 
-  // --- Dust tail: pale, broad, curved by orbital lag ---
+  // --- Dust tail: warm wash, broad, curved by orbital lag ---
   const dlen = e.r * 4.8;
   const tipX = e.x + (ax * 0.72 - vx * 0.45) * dlen;
   const tipY = e.y + (ay * 0.72 - vy * 0.45) * dlen;
   const bulgeX = (e.x + tipX) / 2 + ay * e.r * 0.9;
   const bulgeY = (e.y + tipY) / 2 - ax * e.r * 0.9;
-  const dg = ctx.createLinearGradient(e.x, e.y, tipX, tipY);
-  dg.addColorStop(0.00, 'rgba(255,246,214,0.52)');
-  dg.addColorStop(0.50, 'rgba(255,232,180,0.24)');
-  dg.addColorStop(1.00, 'rgba(255,220,150,0)');
-  ctx.fillStyle = dg;
+  ctx.fillStyle = 'rgba(216,190,140,0.20)';
   ctx.beginPath();
   ctx.moveTo(e.x - ay * e.r * 0.80, e.y + ax * e.r * 0.80);
   ctx.quadraticCurveTo(bulgeX, bulgeY, tipX, tipY);
   ctx.lineTo(e.x + ay * e.r * 0.80, e.y - ax * e.r * 0.80);
   ctx.closePath(); ctx.fill();
 
-  // Coma: the bright gas halo around the (very dark) nucleus.
-  const comaR = e.r * 2.1;
-  const cg = ctx.createRadialGradient(e.x, e.y, e.r * 0.3, e.x, e.y, comaR);
-  cg.addColorStop(0.00, 'rgba(225,245,255,0.55)');
-  cg.addColorStop(1.00, 'rgba(180,220,255,0)');
-  ctx.fillStyle = cg;
-  ctx.beginPath(); ctx.arc(e.x, e.y, comaR, 0, TAU); ctx.fill();
-
-  ctx.globalCompositeOperation = 'source-over';
+  // Coma: a pale wash around the dark nucleus.
+  ctx.fillStyle = 'rgba(220,235,248,0.22)';
+  ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 2.1, 0, TAU); ctx.fill();
 }
-
-// Mass-driver rounds in flight, drawn as short bright tracers.
 function drawSlugs() {
-  if (!slugs.length) return;
-  ctx.globalCompositeOperation = 'lighter';
+  // High-speed motion slugs: short chalk streaks along the velocity.
+  ctx.save();
+  ctx.strokeStyle = 'rgba(233,223,201,0.55)';
+  ctx.lineCap = 'round';
   for (const s of slugs) {
-    const d = Math.hypot(s.vx, s.vy) || 1;
-    const ux = -s.vx / d, uy = -s.vy / d;
-    const len = s.r * 9;
-    const g = ctx.createLinearGradient(s.x, s.y, s.x + ux * len, s.y + uy * len);
-    g.addColorStop(0, 'rgba(255,218,155,0.90)');
-    g.addColorStop(1, 'rgba(255,190,120,0)');
-    ctx.strokeStyle = g;
-    ctx.lineWidth = Math.max(1, s.r * 1.8);
+    const t = s.life / s.max;
+    ctx.globalAlpha = t * 0.6;
+    ctx.lineWidth = s.r * 1.4;
     ctx.beginPath();
     ctx.moveTo(s.x, s.y);
-    ctx.lineTo(s.x + ux * len, s.y + uy * len);
+    ctx.lineTo(s.x - s.vx * 0.09, s.y - s.vy * 0.09);
     ctx.stroke();
   }
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
 }
-
-// ============================================================
-// THE BLACK HOLE
-//
-// Everything below is drawn with continuous gradients. The previous version
-// stroked thirty separate arc segments for the photon ring and another thirty
-// for the lensed disk, which stacked into a ring of hard-edged blocks and
-// read as a brass gear or a clock face rather than as gas falling into a
-// hole -- and its "near side" was a flat metallic-looking bar.
-//
-// The structure now is the one every real image shows (M87*, Sgr A*, and the
-// Gargantua render everyone has seen):
-//   * a perfectly black shadow
-//   * a thin, brilliant photon ring hugging its edge
-//   * a thin accretion disk seen almost edge-on, crossing in FRONT of the
-//     shadow, hottest along its centre line and cooling outward
-//   * the far side of that same disk lensed up over the top and down under
-//     the bottom, because gravity bends its light around the hole
-//   * Doppler beaming, so the limb rotating toward the camera is far
-//     brighter than the one receding -- this is what makes a real
-//     black-hole image lopsided instead of symmetric
-// ============================================================
-const DISK_FLAT = 0.115;   // sin(inclination): how edge-on the disk sits
-const DISK_OUT = 3.1;      // outer disk radius, in shadow radii
-
-// One side of the disk is always brighter. Which one is set by the fixed
-// scene light direction so it stays consistent with every other body.
 function beamSide() {
   return Math.cos(Math.atan2(LIGHT.y, LIGHT.x)) >= 0 ? 1 : -1;
 }
@@ -3980,150 +4283,7 @@ function beamSide() {
 // ellipses of decreasing flatness at partial strength; their union ramps
 // the opacity down through the vertical limb instead of stepping off a
 // cliff, which is what stops the disk reading as a flat metallic bar.
-const DISK_LAYERS = [1.00, 0.72, 0.44];
-function drawDisk(r, beam, cx, cy) {
-  const R = r * DISK_OUT;
-  const ox = cx === undefined ? p.x : cx;
-  const oy = cy === undefined ? p.y : cy;
-  const share = 1 / DISK_LAYERS.length;
-
-  ctx.save();
-  ctx.translate(ox, oy);
-  ctx.globalCompositeOperation = 'lighter';
-
-  const ISCO = r * 1.155;
-  
-  for (const flat of DISK_LAYERS) {
-    ctx.save();
-    ctx.scale(1, DISK_FLAT * flat);
-
-    // Redshifted temperature gradient starting at ISCO
-    const rg = ctx.createRadialGradient(0, 0, ISCO, 0, 0, R);
-    rg.addColorStop(0.00, 'rgba(255,210,180,' + (0.90 * share).toFixed(3) + ')'); // Redshifted inner
-    rg.addColorStop(0.14, 'rgba(255,190,140,' + (0.84 * share).toFixed(3) + ')');
-    rg.addColorStop(0.36, 'rgba(255,160,90,' + (0.56 * share).toFixed(3) + ')');
-    rg.addColorStop(0.62, 'rgba(255,120,50,' + (0.28 * share).toFixed(3) + ')');
-    rg.addColorStop(0.85, 'rgba(255,80,20,' + (0.11 * share).toFixed(3) + ')');
-    rg.addColorStop(1.00, 'rgba(255,50,10,0)');
-    ctx.fillStyle = rg;
-    
-    // Gap inside ISCO
-    ctx.beginPath(); 
-    ctx.arc(0, 0, R, 0, TAU); 
-    ctx.arc(0, 0, ISCO, 0, TAU, true); 
-    ctx.fill();
-    ctx.restore();
-  }
-
-  // Proper Doppler Beaming (δ⁴) using a linear gradient across the disk
-  ctx.save();
-  ctx.scale(1, DISK_FLAT);
-  
-  const lg = ctx.createLinearGradient(-R * beam, 0, R * beam, 0); // beam is 1 or -1
-  // Calculate delta^4 stops from ISCO out
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
-    const rad = ISCO + (R - ISCO) * (1 - Math.abs(2 * t - 1)); // rough approximation of radius across the line
-    const beta = 0.5 / Math.sqrt(Math.max(1, rad / ISCO));
-    const gam = 1 / Math.sqrt(1 - beta * beta);
-    const cosT = 1 - 2 * t; 
-    const delta = 1 / (gam * (1 - Math.abs(beam) * beta * cosT)); // beam is direction
-    const b = Math.pow(delta, 4);
-    
-    // Normalize roughly so peak is around 1 (max delta^4 is ~9.0 at ISCO approaching limb)
-    const normalizedB = Math.min(1, b / 9.0);
-    lg.addColorStop(t, 'rgba(255,255,255,' + (normalizedB * 0.7).toFixed(3) + ')');
-  }
-  
-  ctx.fillStyle = lg;
-  ctx.globalCompositeOperation = 'lighter'; // Only brighten where disk exists
-  ctx.beginPath(); 
-  ctx.arc(0, 0, R, 0, TAU); 
-  ctx.arc(0, 0, ISCO, 0, TAU, true); 
-  ctx.fill();
-  ctx.restore();
-
-  ctx.restore();
-}
-
-// Light from the far side of the disk, bent up over the top of the shadow and
-// down under the bottom. Brightest at the pole and fading out toward the
-// equator, which is where the lensed image piles up in a real photograph.
-function drawLensedArcs(r, beam) {
-  const inner = r * 1.02;
-  const outer = r * 1.62;
-  ctx.globalCompositeOperation = 'lighter';
-  for (const s of [-1, 1]) {
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.globalAlpha = s < 0 ? 1 : 0.38;
-
-    // Half-plane, then annulus: only the arc outside the shadow survives.
-    ctx.beginPath();
-    ctx.rect(-outer, s < 0 ? -outer : 0, outer * 2, outer);
-    ctx.clip();
-    ctx.beginPath();
-    ctx.arc(0, 0, outer, 0, TAU);
-    ctx.arc(0, 0, inner, 0, TAU, true);
-    ctx.clip();
-
-    const g = ctx.createRadialGradient(0, s * r * 1.02, r * 0.02, 0, s * r * 1.02, r * 1.30);
-    g.addColorStop(0.00, 'rgba(255,253,247,0.62)');
-    g.addColorStop(0.30, 'rgba(255,238,208,0.34)');
-    g.addColorStop(0.70, 'rgba(255,190,124,0.12)');
-    g.addColorStop(1.00, 'rgba(255,150,90,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(-outer, -outer, outer * 2, outer * 2);
-
-    // Same Doppler asymmetry as the disk itself.
-    const dg = ctx.createLinearGradient(-outer, 0, outer, 0);
-    if (beam > 0) {
-      dg.addColorStop(0.00, 'rgba(0,0,0,0)');
-      dg.addColorStop(1.00, 'rgba(255,232,196,0.30)');
-    } else {
-      dg.addColorStop(0.00, 'rgba(255,232,196,0.30)');
-      dg.addColorStop(1.00, 'rgba(0,0,0,0)');
-    }
-    ctx.fillStyle = dg;
-    ctx.fillRect(-outer, -outer, outer * 2, outer * 2);
-    ctx.restore();
-  }
-  ctx.globalCompositeOperation = 'source-over';
-}
-
-// Light that has orbited the hole and escaped. Thin, continuous, and carried
-// by a single linear gradient so the beaming runs smoothly around it with no
-// visible segment joins.
-function drawPhotonRing(r, beam) {
-  const rr = r * 1.045;
-  const g = ctx.createLinearGradient(p.x - rr, 0, p.x + rr, 0);
-  const lo = beam > 0 ? 0.20 : 0.95;
-  const hi = beam > 0 ? 0.95 : 0.20;
-  g.addColorStop(0.00, 'rgba(255,216,180,' + lo.toFixed(3) + ')');
-  g.addColorStop(0.50, 'rgba(255,247,234,1)');
-  g.addColorStop(1.00, 'rgba(255,216,180,' + hi.toFixed(3) + ')');
-
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.strokeStyle = g;
-  // A soft wide pass for the glow, then the crisp core on top.
-  ctx.globalAlpha = 0.22;
-  ctx.lineWidth = Math.max(2, r * 0.075);
-  ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.stroke();
-  ctx.globalAlpha = 1;
-  ctx.lineWidth = Math.max(1, r * 0.035);
-  ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.stroke();
-  ctx.globalCompositeOperation = 'source-over';
-}
-
-// ============================================================
-//   Light wrapping around the hole.
-//
-//   Photons from the sky behind the hole are bent around it, so the
-//   background piles up into concentric arcs hugging the shadow. Each
-//   successive band is the same sky bent further round the hole:
-//   fainter, thinner, and closer in. That stack of rings is the thing
-//   that reads as "a black hole" more than the disk does.
-// ============================================================
+// Einstein bands, shared with the dark-matter ring painter in drawEnts.
 const EINSTEIN_BANDS = [
   { k: 1.26, a: 0.165, w: 0.026 },
   { k: 1.44, a: 0.100, w: 0.019 },
@@ -4131,211 +4291,175 @@ const EINSTEIN_BANDS = [
   { k: 1.94, a: 0.032, w: 0.011 }
 ];
 
-function drawEinsteinRings(r, beam, cx, cy) {
-  const ox = cx === undefined ? p.x : cx;
-  const oy = cy === undefined ? p.y : cy;
-  ctx.globalCompositeOperation = 'lighter';
-  for (let i = 0; i < EINSTEIN_BANDS.length; i++) {
-    const b = EINSTEIN_BANDS[i];
-    // A little breathing. Static rings read as a painted archery target;
-    // a slow drift reads as fluid.
-    const rad = r * b.k * (1 + Math.sin(elapsed * 0.6 - i * 0.9) * 0.012);
-    // Each band is a CRESCENT, not a ring: the beamed limb is several times
-    // brighter than the receding one, so the light looks like it is being
-    // dragged around the hole rather than painted on as a circle.
-    const lo = beam > 0 ? b.a * 0.15 : b.a;
-    const hi = beam > 0 ? b.a : b.a * 0.15;
-    const g = ctx.createLinearGradient(ox - rad, 0, ox + rad, 0);
-    g.addColorStop(0.00, 'rgba(255,214,178,' + lo.toFixed(3) + ')');
-    g.addColorStop(0.50, 'rgba(255,240,220,' + (b.a * 0.45).toFixed(3) + ')');
-    g.addColorStop(1.00, 'rgba(255,214,178,' + hi.toFixed(3) + ')');
-    ctx.strokeStyle = g;
-    ctx.lineWidth = Math.max(1, r * b.w);
-    ctx.beginPath(); ctx.arc(ox, oy, rad, 0, TAU); ctx.stroke();
-  }
-  ctx.globalCompositeOperation = 'source-over';
-}
+/* ============================================================
+   THE PLAYER — an ink-wash black hole.
 
-// The far side of the disk, bent right around the shadow until it comes
-// back out as a small bright knot clinging to the limb. In the reference
-// this is the little highlight that drifts around the edge of the shadow.
-function drawSecondaryImage(r, beam, cx, cy) {
-  const ox = cx === undefined ? p.x : cx;
-  const oy = cy === undefined ? p.y : cy;
-  const dir = beam > 0 ? 1 : -1;
-  const ang = (motion ? elapsed * 0.35 : 0) * dir;
-  const ax = ox + Math.cos(ang) * r * 1.02;
-  const ay = oy + Math.sin(ang) * r * 1.02;
-  const rad = r * 0.22;
-  ctx.save();
-  // Higher-order disk light stays outside the apparent capture shadow.
-  ctx.beginPath();
-  ctx.arc(ox, oy, r * 1.30, 0, TAU);
-  ctx.arc(ox, oy, r * 1.015, 0, TAU, true);
-  ctx.clip();
-  ctx.globalCompositeOperation = 'lighter';
-  const g = ctx.createRadialGradient(ax, ay, 0, ax, ay, rad);
-  g.addColorStop(0.00, 'rgba(255,252,242,0.88)');
-  g.addColorStop(0.45, 'rgba(255,226,186,0.34)');
-  g.addColorStop(1.00, 'rgba(255,190,130,0)');
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(ax, ay, rad, 0, TAU); ctx.fill();
-  ctx.restore();
-}
-
+   Same silhouette the camera contract is pinned to (a dark shadow of
+   radius r), but painted like everything else on the page:
+     - a thin watercolor aura wash (muted, in the skin hue),
+     - hand-drawn orbital tracks with ink node dots,
+     - a wobbly-edged black shadow,
+     - a chalk photon ring, brighter on the relativistically
+       beamed limb,
+     - a rust watercolor accretion band, edge-on,
+     - faint chalk Einstein crescents (bent background light).
+   All per-frame wobble is sin-based (stable every frame); nothing here
+   touches the simulation RNG.
+   ============================================================ */
 function drawReferenceBlackHole(r, cx, cy) {
   const ox = cx === undefined ? p.x : cx;
   const oy = cy === undefined ? p.y : cy;
-
-  // Base hue: default is vibrant magenta (312°), or activeSkin hue if equipped
   const skinHue = SKIN_HUES[activeSkin];
   const baseHue = (skinHue !== null && skinHue !== undefined) ? skinHue : 312;
+  const t = elapsed;
 
-  // 1. Soft atmospheric nebula glow behind the hole
-  ctx.globalCompositeOperation = 'lighter';
-  const glow = ctx.createRadialGradient(ox, oy, r * 0.7, ox, oy, r * 3.6);
-  glow.addColorStop(0.0, `hsla(${baseHue}, 90%, 55%, 0.40)`);
-  glow.addColorStop(0.35, `hsla(${baseHue}, 85%, 45%, 0.22)`);
-  glow.addColorStop(0.70, `hsla(${baseHue - 15}, 80%, 35%, 0.08)`);
-  glow.addColorStop(1.0, `hsla(${baseHue}, 80%, 20%, 0.0)`);
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(ox, oy, r * 3.6, 0, TAU);
-  ctx.fill();
+  // 1. Watercolor aura wash behind the hole.
+  const aura = ctx.createRadialGradient(ox, oy, r * 0.7, ox, oy, r * 3.4);
+  aura.addColorStop(0.0, 'hsla(' + baseHue + ', 34%, 38%, 0.20)');
+  aura.addColorStop(1.0, 'hsla(' + baseHue + ', 30%, 24%, 0)');
+  ctx.fillStyle = aura;
+  ctx.beginPath(); ctx.arc(ox, oy, r * 3.4, 0, TAU); ctx.fill();
 
-  // 2. Concentric segmented orbital tracks with orbiting stardust nodes (matching reference image)
-  const tracks = [
-    {
-      rad: 1.20, width: Math.max(1.8, r * 0.035),
-      speed: 0.85,
-      arcs: [[0.2, 2.4], [3.2, 2.1]],
-      nodes: [0.8, 3.8]
-    },
-    {
-      rad: 1.38, width: Math.max(3.6, r * 0.075),
-      speed: -0.65,
-      arcs: [[0.5, 2.8], [3.8, 2.0]],
-      nodes: [1.6, 4.5]
-    },
-    {
-      rad: 1.62, width: Math.max(4.8, r * 0.095),
-      speed: 0.50,
-      arcs: [[0.1, 1.8], [2.3, 1.6], [4.4, 1.7]],
-      nodes: [0.9, 3.1, 5.2]
-    },
-    {
-      rad: 1.88, width: Math.max(2.4, r * 0.045),
-      speed: -0.38,
-      arcs: [[0.8, 2.6], [4.0, 2.2]],
-      nodes: [1.9, 4.8]
-    },
-    {
-      rad: 2.16, width: Math.max(3.8, r * 0.07),
-      speed: 0.30,
-      arcs: [[0.3, 2.3], [3.2, 2.4]],
-      nodes: [2.0, 5.0]
-    }
-  ];
-
+  // 2. Hand-drawn orbital tracks with ink node dots.
+  const tracks = [1.20, 1.38, 1.62, 1.88, 2.16];
   ctx.lineCap = 'round';
   for (let i = 0; i < tracks.length; i++) {
-    const tr = tracks[i];
-    const trR = r * tr.rad;
-    const rot = elapsed * tr.speed;
-    const trackHue = (baseHue + (i % 2 === 0 ? 6 : -8) + 360) % 360;
-
-    // Draw orbital arc track segments
-    ctx.strokeStyle = `hsla(${trackHue}, 88%, ${60 - i * 3}%, 0.85)`;
-    ctx.lineWidth = tr.width;
-    for (let j = 0; j < tr.arcs.length; j++) {
-      const aStart = tr.arcs[j][0] + rot;
-      const aLen = tr.arcs[j][1];
+    const trR = r * tracks[i];
+    const rot = t * (0.85 - i * 0.14) * (i % 2 ? -1 : 1) + i * 1.7;
+    const trackCol = 'hsla(' + baseHue + ', 28%, ' + (62 - i * 3) + '%, 0.50)';
+    ctx.strokeStyle = trackCol;
+    ctx.lineWidth = Math.max(1.2, r * (0.035 + (i % 2) * 0.03));
+    for (let j = 0; j < 2; j++) {
+      const a0 = rot + j * Math.PI;
+      const len = Math.PI * (0.7 + ((i + j) % 2) * 0.3);
       ctx.beginPath();
-      ctx.arc(ox, oy, trR, aStart, aStart + aLen);
+      const segs = 22;
+      for (let s = 0; s <= segs; s++) {
+        const a = a0 + (s / segs) * len;
+        const wrr = trR * (1 + Math.sin(a * 3 + i * 2 + t * 0.5) * 0.012);
+        const x = ox + Math.cos(a) * wrr, y = oy + Math.sin(a) * wrr;
+        if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
       ctx.stroke();
     }
-
-    // Draw orbiting light node particles along the track
-    for (let k = 0; k < tr.nodes.length; k++) {
-      const nodeAng = tr.nodes[k] + rot;
-      const nx = ox + Math.cos(nodeAng) * trR;
-      const ny = oy + Math.sin(nodeAng) * trR;
-      const nodeR = Math.max(2.2, r * 0.042);
-
-      // Glowing aura
-      const nodeHalo = ctx.createRadialGradient(nx, ny, 0, nx, ny, nodeR * 2.8);
-      nodeHalo.addColorStop(0.0, `hsla(${trackHue}, 100%, 75%, 0.9)`);
-      nodeHalo.addColorStop(1.0, `hsla(${trackHue}, 100%, 60%, 0.0)`);
-      ctx.fillStyle = nodeHalo;
-      ctx.beginPath();
-      ctx.arc(nx, ny, nodeR * 2.8, 0, TAU);
-      ctx.fill();
-
-      // Bright white core
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(nx, ny, nodeR * 0.8, 0, TAU);
-      ctx.fill();
+    // Ink nodes riding the track.
+    for (let k = 0; k < 2; k++) {
+      const na = rot + k * Math.PI + i * 1.3;
+      const nx = ox + Math.cos(na) * trR, ny = oy + Math.sin(na) * trR;
+      ctx.fillStyle = 'hsla(' + baseHue + ', 35%, 78%, 0.9)';
+      ctx.beginPath(); ctx.arc(nx, ny, Math.max(1.6, r * 0.035), 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath(); ctx.arc(nx, ny, Math.max(0.8, r * 0.016), 0, TAU); ctx.fill();
     }
   }
 
-  // 3. Shadow core -- pure black disc
-  ctx.globalCompositeOperation = 'source-over';
+  // 3. Accretion band: a rust watercolor wash, edge-on, lensed over the top.
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.scale(1, 0.17);
+  ctx.fillStyle = 'hsla(' + ((baseHue + 30) % 360) + ', 40%, 42%, 0.42)';
+  ctx.beginPath(); ctx.arc(0, 0, r * 1.85, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'hsla(' + ((baseHue + 50) % 360) + ', 45%, 55%, 0.35)';
+  ctx.beginPath(); ctx.arc(0, 0, r * 1.45, 0, TAU); ctx.fill();
+  ctx.restore();
+  // Hand-drawn wash lines along the band.
+  ctx.strokeStyle = 'hsla(' + ((baseHue + 45) % 360) + ', 40%, 62%, 0.5)';
+  ctx.lineWidth = Math.max(1, r * 0.03);
+  ctx.lineCap = 'round';
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    const segs = 24, yy = oy + i * r * 0.13;
+    for (let s = 0; s <= segs; s++) {
+      const x = ox - r * 1.8 + (s / segs) * r * 3.6;
+      const y = yy + Math.sin(x * 0.05 + t * 0.8 + i * 2) * r * 0.05;
+      if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // 4. Shadow: black disc with a wobbly ink edge (sin-based, stable).
   ctx.fillStyle = '#000000';
   ctx.beginPath();
-  ctx.arc(ox, oy, r, 0, TAU);
-  ctx.fill();
+  const shN = 44;
+  for (let i = 0; i <= shN; i++) {
+    const a = (i / shN) * TAU;
+    const wrr = r * (1 + Math.sin(a * 5 + 1.7) * 0.012 + Math.sin(a * 9 + t * 0.4) * 0.008);
+    const x = ox + Math.cos(a) * wrr, y = oy + Math.sin(a) * wrr;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath(); ctx.fill();
 
-  // 4. Intensely bright event horizon inner boundary ring
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.strokeStyle = `hsla(${baseHue}, 100%, 82%, 0.95)`;
-  ctx.lineWidth = Math.max(2.0, r * 0.045);
+  // 5. Chalk photon ring, brighter on the relativistically beamed limb.
+  const beam = beamSide();
+  const rr = r * 1.045;
+  ctx.globalAlpha = 0.22;
+  ctx.strokeStyle = 'hsla(' + baseHue + ', 40%, 80%, 1)';
+  ctx.lineWidth = Math.max(2, r * 0.07);
+  ctx.beginPath(); ctx.arc(ox, oy, rr, 0, TAU); ctx.stroke();
+  ctx.globalAlpha = 1;
+  const loA = beam > 0 ? 0.35 : 0.9, hiA = beam > 0 ? 0.9 : 0.35;
+  const rg = ctx.createLinearGradient(ox - rr, 0, ox + rr, 0);
+  rg.addColorStop(0, 'hsla(' + baseHue + ', 45%, 82%, ' + loA + ')');
+  rg.addColorStop(0.5, 'hsla(' + baseHue + ', 30%, 94%, 1)');
+  rg.addColorStop(1, 'hsla(' + baseHue + ', 45%, 82%, ' + hiA + ')');
+  ctx.strokeStyle = rg;
+  ctx.lineWidth = Math.max(1.2, r * 0.032);
   ctx.beginPath();
-  ctx.arc(ox, oy, r * 1.035, 0, TAU);
-  ctx.stroke();
+  for (let i = 0; i <= 48; i++) {
+    const a = (i / 48) * TAU;
+    const wrr = rr * (1 + Math.sin(a * 7 + 0.6) * 0.008);
+    const x = ox + Math.cos(a) * wrr, y = oy + Math.sin(a) * wrr;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath(); ctx.stroke();
 
-  // Faint secondary inner rim
-  ctx.strokeStyle = `hsla(${baseHue}, 80%, 65%, 0.45)`;
-  ctx.lineWidth = Math.max(1.0, r * 0.02);
-  ctx.beginPath();
-  ctx.arc(ox, oy, r * 1.09, 0, TAU);
-  ctx.stroke();
-
-  ctx.globalCompositeOperation = 'source-over';
+  // 6. Einstein crescents: faint chalk arcs of bent background light.
+  ctx.strokeStyle = 'rgba(233,223,201,0.45)';
+  ctx.lineCap = 'round';
+  const bands = [1.24, 1.48, 1.78];
+  for (let i = 0; i < bands.length; i++) {
+    ctx.lineWidth = Math.max(1, r * (0.05 - i * 0.011));
+    ctx.globalAlpha = 0.5 - i * 0.13;
+    const a0 = 0.6 + i * 2.1 + Math.sin(t * 0.3 + i) * 0.06;
+    ctx.beginPath();
+    ctx.arc(ox, oy, r * bands[i], a0, a0 + Math.PI * 1.15);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 }
-
 function drawPlayer() {
   const r = p.r;
   const beam = beamSide();
 
-  // Relativistic polar jets once the hole is accreting hard enough to power
-  // an active galactic nucleus. Real supermassive black holes do exactly
-  // this, and it is the same structure as the quasar entity.
   if (era >= 5) {
-    ctx.globalCompositeOperation = 'lighter';
     const jl = r * 7;
     ctx.save();
     ctx.translate(p.x, p.y);
     ctx.rotate(Math.sin(elapsed * 0.25) * 0.12);
     for (let s = -1; s <= 1; s += 2) {
-      const jg = ctx.createLinearGradient(0, 0, 0, s * jl);
-      jg.addColorStop(0.00, 'rgba(215,238,255,0.52)');
-      jg.addColorStop(0.40, 'rgba(150,200,255,0.24)');
-      jg.addColorStop(1.00, 'rgba(120,180,255,0)');
-      ctx.fillStyle = jg;
+      // Pale wash jet with hand-drawn ink edges — the AGN in sketchbook form.
+      ctx.fillStyle = 'rgba(215,232,248,0.28)';
       ctx.beginPath();
       ctx.moveTo(-r * 0.14, 0);
       ctx.lineTo(r * 0.14, 0);
       ctx.lineTo(r * 0.42, s * jl);
       ctx.lineTo(-r * 0.42, s * jl);
       ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(220,236,250,0.55)';
+      ctx.lineWidth = Math.max(1, r * 0.03);
+      ctx.lineCap = 'round';
+      const wob = r * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.14, 0);
+      ctx.quadraticCurveTo(-r * 0.30 + wob, s * jl * 0.5, -r * 0.42, s * jl);
+      ctx.moveTo(r * 0.14, 0);
+      ctx.quadraticCurveTo(r * 0.30 - wob, s * jl * 0.5, r * 0.42, s * jl);
+      ctx.stroke();
     }
     ctx.restore();
-    ctx.globalCompositeOperation = 'source-over';
   }
 
-  // Bow shock. Light piles up in the direction you are travelling,
-  // so a hole at speed wears a brighter cap on its leading edge.
+  // Bow shock: a pale wash piled up on the leading edge.
   const spd = Math.hypot(p.vx, p.vy);
   if (spd > 1) {
     const sf = clamp(spd / (SPEED_REF * P0 * 2.2), 0, 1);
@@ -4343,67 +4467,96 @@ function drawPlayer() {
       const ux = p.vx / spd, uy = p.vy / spd;
       const gx = p.x + ux * r * 0.85;
       const gy = p.y + uy * r * 0.85;
-      ctx.globalCompositeOperation = 'lighter';
-      const bg = ctx.createRadialGradient(gx, gy, 0, gx, gy, r * 2.1);
-      bg.addColorStop(0.00, 'rgba(190,235,255,' + (0.20 * sf).toFixed(3) + ')');
-      bg.addColorStop(0.50, 'rgba(150,205,255,' + (0.07 * sf).toFixed(3) + ')');
-      bg.addColorStop(1.00, 'rgba(120,180,255,0)');
-      ctx.fillStyle = bg;
-      ctx.beginPath(); ctx.arc(gx, gy, r * 2.1, 0, TAU); ctx.fill();
-      ctx.globalCompositeOperation = 'source-over';
+      ctx.save();
+      ctx.globalAlpha = 0.5 * sf + 0.1;
+      ctx.fillStyle = 'rgba(220,232,244,0.30)';
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, r * 1.6, r * 1.1, Math.atan2(uy, ux), 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(225,236,248,0.5)';
+      ctx.lineWidth = Math.max(1, r * 0.04);
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, r * 1.6, r * 1.1, Math.atan2(uy, ux), -1.2, 1.2);
+      ctx.stroke();
+      ctx.restore();
     }
   }
-
-  // Pulsar-shield ring, when active.
+  // Pulsar-shield ring, when active: a dashed chalk ring.
   if (shield > 0) {
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.strokeStyle = `rgba(255,236,205,${(0.45 + 0.35 * Math.sin(elapsed * 14)).toFixed(3)})`;
-    ctx.lineWidth = Math.max(1, r * 0.16);
+    ctx.save();
+    ctx.globalAlpha = 0.55 + 0.30 * Math.sin(elapsed * 14);
+    ctx.strokeStyle = 'rgba(233,223,201,0.9)';
+    ctx.lineWidth = Math.max(1.5, r * 0.05);
+    ctx.setLineDash([r * 0.28, r * 0.18]);
+    ctx.lineDashOffset = elapsed * 40;
     ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.55, 0, TAU); ctx.stroke();
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
   }
-
   // Draw the reference black hole (concentric magenta/purple orbital rings with orbiting stardust nodes)
   drawReferenceBlackHole(r);
 
   // Invulnerability flash overrides the whole assembly.
   if (invuln > 0 && Math.floor(invuln * 18) % 2 === 0) {
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = Math.max(1, r * 0.06);
-    ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.045, 0, TAU); ctx.stroke();
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = 'rgba(233,223,201,0.95)';
+    ctx.lineWidth = Math.max(1.5, r * 0.06);
+    ctx.setLineDash([r * 0.20, r * 0.12]);
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.10, 0, TAU); ctx.stroke();
+    ctx.restore();
   }
 }
 
 function drawParts() {
-  ctx.globalCompositeOperation = 'lighter';
+  // Debris particles: small ink dots in warm hues, fading as they drift.
+  ctx.save();
   for (const q of parts) {
-    const k = 1 - q.life / q.max;
-    ctx.globalAlpha = k;
-    ctx.fillStyle = `hsl(${q.hue}, 100%, ${62 + k * 22}%)`;
-    ctx.beginPath(); ctx.arc(q.x, q.y, q.r * (0.4 + k * 0.8), 0, TAU); ctx.fill();
+    const t = q.life / q.max;
+    ctx.globalAlpha = t * 0.9;
+    ctx.fillStyle = q.col;
+    const r = q.r * (0.5 + t * 0.5);
+    ctx.beginPath();
+    // Slightly irregular dot, like flicked ink.
+    const segs = 8;
+    for (let i = 0; i <= segs; i++) {
+      const a = (i / segs) * TAU;
+      const wrr = r * (1 + 0.25 * Math.sin(a * 3 + q.life * 10));
+      const x = q.x + Math.cos(a) * wrr, y = q.y + Math.sin(a) * wrr;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
   }
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
 }
-
 function drawWaves() {
-  ctx.globalCompositeOperation = 'lighter';
+  // Consumption ripples: expanding ink rings, hand-drawn.
+  ctx.save();
+  ctx.lineCap = 'round';
   for (const w of waves) {
-    const k = 1 - w.t / 0.85;
-    const hue = w.hue == null ? 190 : w.hue;
-    ctx.strokeStyle = `hsla(${hue}, 100%, 74%, ${k * 0.7})`;
-    ctx.lineWidth = Math.max(1.5, w.max * 0.03 * k);
-    ctx.beginPath(); ctx.arc(w.x, w.y, w.r, 0, TAU); ctx.stroke();
+    const t = w.life / w.max;
+    const a = 1 - t;
+    const rr = w.r0 + (w.r1 - w.r0) * (1 - (1 - t) * (1 - t));
+    ctx.globalAlpha = a * 0.7;
+    ctx.strokeStyle = w.col;
+    ctx.lineWidth = 2.5 * (1 - t) + 1;
+    ctx.beginPath();
+    const segs = 30;
+    for (let i = 0; i <= segs; i++) {
+      const ang = (i / segs) * TAU;
+      const wrr = rr * (1 + Math.sin(ang * 5 + w.life * 6) * 0.03);
+      const x = w.x + Math.cos(ang) * wrr, y = w.y + Math.sin(ang) * wrr;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.stroke();
+    // A second fainter ring trailing it.
+    ctx.globalAlpha = a * 0.3;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, rr * 0.88, 0, TAU);
+    ctx.stroke();
   }
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
 }
-
-/* ============================================================
-   HUD + LOOP
-   ============================================================ */
-const COMPASS = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'];
 const PIP_COUNT = 20;
 
 function buildPips() {
@@ -4420,6 +4573,9 @@ function threatLine() {
   const reach2 = reach * reach;
   for (const e of ents) {
     if (edibleAt(e)) continue;
+    // Dark matter cannot collide, so it is never a THREAT (see danger
+    // arrows): the lensing rings are its tell.
+    if (e.darkMatter) continue;
     const dx = e.x - p.x, dy = e.y - p.y;
     const d2 = dx * dx + dy * dy;
     if (d2 > reach2 || d2 >= bestD2) continue;
@@ -5076,6 +5232,10 @@ function startDaily() {
     return;
   }
   seedOverride = dailySeedInt();
+  // The attempt is consumed at launch, not at death: any exit that is not
+  // death (HOME, pause menu, panel) would otherwise leave save.daily unset
+  // and hand out unlimited retries on the same daily seed.
+  saveSet('daily', todayStr());
   start();
   dailyRun = true;
   toast('DAILY RUN — one attempt', 2.2);
@@ -5121,12 +5281,14 @@ function pickAbsorb() {
     const dx = o.x - p.x, dy = o.y - p.y;
     if (dx * dx + dy * dy > R2) continue;
     if (o.darkMatter || (o.civ && o.civ !== 'ark') || !edibleAt(o)) continue;
-    const gain = Math.max(1, Math.round(o.r * 0.42 * comboMult()));
-    p.mass += bodyMass(o) * CONSUME_YIELD;
-    score += gain;
-    total += gain;
-    burstFx(o.x, o.y, 6, o.r, 0.9, entHue(o.r / p.r));
-    ents.splice(i, 1);
+    // Full ingestion accounting (mass, score, combo, stardust, field guide,
+    // achievements, counters, skins, lastMealT) via consume(); quiet mode
+    // suppresses the per-body fanfare and special effects, per the pick's
+    // "no special effects" promise. One combined toast + blip below covers
+    // the feedback for the whole absorption.
+    const before = score;
+    consume(o, i, { quiet: true });
+    total += score - before;
     n++;
   }
   if (!Number.isFinite(p.mass) || p.mass <= 0) p.mass = M0;
@@ -6085,7 +6247,16 @@ document.addEventListener('click', (e) => {
   if (!offer || !btn) return;
   const ads = window.RewardedAds;
   if (!ads || !ads.available()) { offer.classList.add('hidden'); }
-  if (privacyBtn) privacyBtn.classList.toggle('hidden', !(ads && ads.privacy));
+  if (privacyBtn) {
+    // Shown only where the form can actually open (native Android + AdMob +
+    // consent backend requires it) -- never a dead control on web.
+    privacyBtn.classList.add('hidden');
+    if (ads && ads.privacyAvailable) {
+      ads.privacyAvailable().then((ok) => {
+        privacyBtn.classList.toggle('hidden', !ok);
+      }).catch(() => {});
+    }
+  }
   function refresh() {
     const reward = (ads && ads.config.rewardAmount) || 25;
     const daily = (ads && ads.config.dailyLimit) || 3;
@@ -6103,9 +6274,30 @@ document.addEventListener('click', (e) => {
     if (!pendingId) return false;
     const applied = save.rewardId;
     if (pendingId !== applied) {
-      earnStardust((ads.config.rewardAmount) || 25);
+      // Atomic: stage the stardust grant AND the processed-reward marker in
+      // memory, then persist once. Two separate writes used to let a kill
+      // between them re-grant the same reward on the next boot.
+      const amount = (ads.config.rewardAmount) || 25;
+      const prevStardust = stardust;
+      const prevRewardId = save.rewardId;
+      if (Number.isFinite(amount) && amount > 0) {
+        stardust = Math.min(Number.MAX_SAFE_INTEGER, stardust + Math.floor(amount));
+        save.stardust = stardust;
+      }
       save.rewardId = pendingId;
-      try { saveSet('rewardId', pendingId); } catch (_) {}
+      save.v = SAVE_VER;
+      try {
+        localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+      } catch (_) {
+        // Persistence failed: revert the in-memory grant and keep the pending
+        // reward ID so the grant is retried on the next boot. Clearing the
+        // pending ID here would lose the reward permanently (finding #7).
+        stardust = prevStardust;
+        save.stardust = prevStardust;
+        if (prevRewardId === undefined) delete save.rewardId;
+        else save.rewardId = prevRewardId;
+        return false;
+      }
       ads.clearPendingReward();
       return true;
     }
@@ -6131,8 +6323,11 @@ document.addEventListener('click', (e) => {
     earned = earned || recovered;
 
     if (previousState === 'play' && (panel === null || panel === 'pause')) {
-      resumeGame();
-    } else if (state !== 'dead') {
+      resumeGame();   // restarts the drone itself
+    } else if (state === 'play') {
+      // Back in gameplay without a panel transition: re-enable audio.
+      // Otherwise a panel (Observatory, settings, ...) is still open, so
+      // leave audio stopped until the player actually returns to the game.
       Snd.setDrone(true, combo);
     }
 

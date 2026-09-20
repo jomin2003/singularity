@@ -12,7 +12,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="style.css?v=b23">
+<link rel="preload" href="fonts/shantell-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css?v=b24">
 </head>
 <body>
 <canvas id="game" aria-label="Singularity game field. Consume smaller bodies and avoid spiked hazards. Move with the selected touch controls or WASD and arrow keys.">Your browser needs canvas support to display the Singularity game field.</canvas>
@@ -42,6 +43,9 @@
     <div id="comboValue"></div>
     <div id="comboBar"></div>
   </div>
+  <div id="chips"></div>
+  <div id="threatOut" role="status" aria-live="polite"></div>
+  <div id="scaleOut"></div>
   <div class="run-goal" id="runGoal" aria-label="Era progress">
     <div class="run-goal-top">
       <span id="runGoalLabel"></span>
@@ -347,16 +351,8 @@
 <div id="toasts"></div>
 <div id="fatal" class="fatal hidden"></div>
 
-<div id="graveyard" style="display:none">
-  <div id="chips"></div>
-  <div id="threatOut"></div>
-  <div id="scaleOut"></div>
-  <button id="menuSettingsBtn"></button>
-  <div id="ctrlPick"><button data-ctrl="joystick"></button><button data-ctrl="follow"></button><button data-ctrl="relative"></button></div>
-  <div id="ctrlHint"></div>
-</div>
-<script src="ads-config.js?v=b23"></script>
-<script src="rewarded-ads.js?v=b23"></script>
-<script src="game.js?v=b23"></script>
+<script src="ads-config.js?v=b24"></script>
+<script src="rewarded-ads.js?v=b24"></script>
+<script src="game.js?v=b24"></script>
 </body>
 </html>

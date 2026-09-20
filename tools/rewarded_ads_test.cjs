@@ -179,8 +179,12 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     const result = b.api.watch(); await tick();
     b.fireTimers();
     assert.equal(await result, false);
-    assert.equal(b.api.available(), false);
-    assert.equal(await b.api.watch(), false);
+    // Soft timeout: the service stays available for a retry (finding #16).
+    // A hard timeout would set blocked and make available() false.
+    assert.equal(b.api.available(), true);
+    const result2 = b.api.watch(); await tick();
+    b.fireTimers();
+    assert.equal(await result2, false);
     complete(); await tick();
     assert.ok(!b.calls.includes('show'));
   });

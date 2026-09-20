@@ -1,44 +1,48 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-/* ---------- Display face ----------
-   Orbitron Black, SIL OFL 1.1 -- licence at www/fonts/OFL.txt.
+/* ---------- Hand face ----------
+   Shantell Sans, SIL OFL 1.1 -- licences at www/fonts/OFL.txt and
+   www/fonts/OFL-shantell.txt.
    Bundled rather than linked from a CDN on purpose: the game is offline-first,
    and inside the Android wrapper there is no network at all, so a Google Fonts
-   <link> would just fail and silently fall back. 6.4 kB, latin subset. */
+   <link> would just fail and silently fall back. 78 kB, latin subset.
+   Shantell Sans is a hand-drawn marker face -- it carries the whole UI now,
+   HUD numerals included. It was picked for legibility at small sizes: open
+   apertures, generous x-height, no ambiguous glyphs. */
 @font-face {
-  font-family: 'Orbitron';
+  font-family: 'Shantell Sans';
   font-style: normal;
-  font-weight: 900;
+  font-weight: 400 700;
   font-display: swap;
-  src: url('fonts/orbitron-900.woff2') format('woff2');
+  src: url('fonts/shantell-latin.woff2') format('woff2');
 }
 
 :root {
-  /* Colour. One accent, plus semantic states that mean something. Colour is
-     never decorative here -- if something is coloured, it is telling you
+  /* Colour. Warm dark paper, ink, and watercolor washes. The canvas already
+     paints a dark-paper cosmos -- ink-wash black holes, watercolor nebulae --
+     so the UI is drawn from the same pot: no neon, no sci-fi chrome. Colour
+     is never decorative here -- if something is coloured, it is telling you
      something. */
-  --cyan: #4ff0ff;
-  --violet: #9b6bff;
-  --amber: #ffb057;
-  --danger: #ff6a5a;
-  --bg: #05060f;
+  --teal: #8fb8a8;    /* muted watercolor teal -- info, links, calm states */
+  --gold: #d4a574;    /* warm washed gold -- era highlights, the special one */
+  --amber: #e8a84c;   /* amber -- warnings, the era-celebration tint */
+  --danger: #d9705f;  /* soft brick red -- danger, never alarm-neon */
+  --paper: #1a1512;   /* warm dark paper -- the page everything is drawn on */
 
-  /* Faces. Two, and never three:
-       display -- the wordmark. Nothing else, ever.
-       ui      -- everything else, numerals included.
-     Numerals use the UI face with tabular figures rather than a mono face.
-     Mono was tried and rejected: its slashed zero renders a score of zero as
-     "Ø", which reads as a null/empty marker rather than a number. Tabular
-     figures give the alignment mono was there for, without the code-editor
-     look -- and mono was previously used for whole sentences, which is what
-     made the entire UI feel like a terminal. */
-  --font-display: 'Orbitron', 'Arial Black', 'Segoe UI', sans-serif;
-  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* Aliases kept so every historic var() reference keeps working. */
+  --cyan: var(--teal);
+  --violet: var(--gold);
+  --bg: var(--paper);
 
-  /* Type scale. Six steps, and nothing outside this list.
-     The display cap of 40px is not aesthetic: the wordmark is eleven
-     characters inside a 400px card and Orbitron Black overflows the 368px
-     inner width beyond roughly 40px. */
+  /* Faces. One, and only one:
+       hand -- Shantell Sans, a hand-drawn marker face, for everything:
+       wordmark, HUD numerals, body copy. A single hand lettering the whole
+       page is what makes it feel like one person's sketchbook.
+     Numerals use tabular figures so scores align in columns. */
+  --font-display: 'Shantell Sans', 'Segoe Print', 'Comic Sans MS', cursive;
+  --font-ui: 'Shantell Sans', 'Segoe Print', system-ui, sans-serif;
+
+  /* Type scale. Six steps, and nothing outside this list. */
   --t-display: clamp(24px, 8.2vw, 40px);
   --t-hero: clamp(44px, 15vw, 64px);
   --t-readout: 28px;
@@ -47,18 +51,17 @@
   --t-label: 11px;
   --t-micro: 10px;
 
-  /* Tracking. Three values. Over-tracked uppercase at .2em+ is the single
-     most recognisable tell of a sci-fi UI built by feel rather than system;
-     .16em is now reserved for the wordmark alone. */
-  --ls-display: .16em;
-  --ls-label: .08em;
+  /* Tracking. Hand lettering needs almost none -- wide tracking on a marker
+     face reads as a ransom note, not a sketchbook. */
+  --ls-display: .02em;
+  --ls-label: .04em;
   --ls-tight: .01em;
 
   /* Weight carries emphasis. Glow does not. */
   --w-body: 400;
-  --w-label: 600;
+  --w-label: 500;
   --w-strong: 700;
-  --w-display: 900;
+  --w-display: 700;
 
   /* 8px grid. Every margin, padding and gap is a multiple of these. */
   --s-1: 8px;
@@ -66,31 +69,43 @@
   --s-3: 24px;
   --s-4: 32px;
 
-  /* Radius scale, so shape itself carries hierarchy. Exactly one thing in
-     the whole UI is a pill (the segmented track); everything else picks a
-     step. Previously nearly every surface was a 100px pill, which meant
-     shape communicated nothing. */
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 16px;
+  /* Radius scale. Hand-drawn corners: each step is an irregular sketchy
+     radius in the classic 255px/15px idiom, clamped by element size. No two
+     corners match, the way no two hand-drawn corners match. Exactly one thing
+     in the whole UI is a pill (the segmented track); everything else picks a
+     step, so shape still carries hierarchy. */
+  --r-sm: 60px 14px 55px 16px/16px 55px 14px 60px;
+  --r-md: 120px 18px 110px 22px/22px 110px 18px 120px;
+  --r-lg: 220px 28px 200px 32px/32px 200px 28px 220px;
   --r-pill: 999px;
 
-  /* Surfaces. */
-  --c-panel: rgba(255, 255, 255, .05);
-  --c-panel-line: rgba(255, 255, 255, .09);
-  --c-scrim: rgba(6, 9, 18, .78);
-  --c-text-secondary: #b8ccdf;
-  --c-text-muted: #9fb4c9;
-  --c-glass: linear-gradient(160deg, rgba(24, 34, 54, .88), rgba(9, 14, 26, .84));
+  /* Surfaces. Warm paper tones -- panels are washes of pale ink on the dark
+     page, not glass. */
+  --c-panel: rgba(232, 200, 150, .055);
+  --c-panel-line: rgba(232, 200, 150, .16);
+  --c-scrim: rgba(20, 15, 11, .8);
+  --c-text: #f2e9d5;
+  --c-text-secondary: #cdbfa4;
+  --c-text-muted: #a2937a;
+  --c-glass: linear-gradient(160deg, rgba(52, 40, 30, .9), rgba(26, 21, 17, .86));
 
-  /* The one glow budget. Reserved for the primary action of a screen. */
-  --glow-accent: 0 0 24px rgba(79, 240, 255, .28);
+  /* Ink lines. Borders are drawn ink, not hairline chrome. */
+  --ink-soft: rgba(242, 233, 213, .55);
+  --c-ink-line: rgba(242, 233, 213, .22);
+  --c-ink-soft: rgba(242, 233, 213, .12);
+
+  /* The one glow budget. Reserved for the primary action of a screen --
+     a warm candle-glow, not a marker stroke. */
+  --glow-accent: 0 0 24px rgba(232, 168, 76, .22);
+
+  /* Paper grain. A faint repeating wash laid over the page so flat fills
+     read as paper, not plastic. Pure CSS, no image asset. */
+  --grain: repeating-linear-gradient(0deg, rgba(242,233,213,.014) 0 1px, transparent 1px 3px),
+           repeating-linear-gradient(90deg, rgba(242,233,213,.01) 0 1px, transparent 1px 4px);
 
   /* Motion scale. Three durations and one easing curve, reused everywhere.
      Durations are short on purpose: this is a game, so every millisecond of
-     UI animation is a millisecond the player is not reading state. The
-     easing is decelerating (fast out, gentle settle), which is what makes a
-     panel feel placed rather than thrown. */
+     UI animation is a millisecond the player is not reading state. */
   --dur-fast: 120ms;
   --dur-med: 200ms;
   --dur-slow: 320ms;
@@ -103,7 +118,8 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: var(--bg);
-  color: #eaf6ff;
+  background-image: var(--grain);
+  color: #f2e9d5;
   font-family: var(--font-ui);
   font-weight: var(--w-body);
   -webkit-user-select: none;
@@ -193,7 +209,7 @@ html, body {
   font-size: var(--t-micro);
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
-  color: rgba(180, 215, 245, .62);
+  color: rgba(224, 208, 174, .62);
   margin-bottom: 2px;
 }
 
@@ -217,7 +233,7 @@ html, body {
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
-  color: #eaf6ff;
+  color: #f2e9d5;
   line-height: 1.05;
   transform-origin: left center;
   display: inline-block;
@@ -227,7 +243,7 @@ html, body {
    the eye lands on MASS first. */
 .hud-block.right .hud-value {
   font-size: var(--t-body);
-  color: rgba(180, 215, 245, .62);
+  color: rgba(224, 208, 174, .62);
   margin-top: 4px;
 }
 
@@ -261,6 +277,19 @@ html, body {
   flex-wrap: wrap;
 }
 
+/* Threat + physical-scale readouts: quiet mono lines under the chips. */
+#threatOut,
+#scaleOut {
+  font-family: var(--font-ui);
+  font-size: var(--t-micro);
+  letter-spacing: var(--ls-label);
+  color: var(--ink-soft);
+  margin-top: var(--s-1);
+  min-height: 1em;
+}
+#threatOut:empty,
+#scaleOut:empty { display: none; }
+
 .chip {
   font-family: var(--font-ui);
   font-size: var(--t-micro);
@@ -269,15 +298,15 @@ html, body {
   padding: 2px var(--s-1);
   border-radius: var(--r-sm);
   border: 1px solid var(--c-panel-line);
-  color: rgba(190, 220, 245, .8);
-  background: rgba(8, 14, 26, .55);
+  color: rgba(234, 217, 184, .8);
+  background: rgba(26, 21, 18, .55);
   white-space: nowrap;
 }
 
 .chip.shield { border-color: rgba(255, 236, 205, .65); color: #ffecce; }
-.chip.era { border-color: rgba(155, 107, 255, .55); color: #d6c4ff; }
+.chip.era { border-color: rgba(212, 165, 116, .55); color: #e8cfa8; }
 
-.hud-label.dim { color: rgba(150, 185, 215, .45); margin-top: 6px; }
+.hud-label.dim { color: rgba(205, 191, 164, .45); margin-top: 6px; }
 
 /* ---------- Combo ---------- */
 /* Normal flow follows the tallest readout, including wrapped chips and large
@@ -302,7 +331,7 @@ html, body {
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
-  color: #dff6ff;
+  color: #f2e9d5;
   margin-bottom: var(--s-1);
   transform-origin: center;
   display: inline-block;
@@ -318,13 +347,13 @@ html, body {
 #comboBar i {
   flex: 1 1 0;
   border-radius: 2px;
-  background: rgba(120, 170, 200, .22);
+  background: rgba(205, 191, 164, .22);
   transition: background .09s linear, box-shadow .09s linear;
 }
 
 #comboBar i.on {
   background: var(--cyan);
-  box-shadow: 0 0 6px rgba(79, 240, 255, .45);
+  box-shadow: 0 0 6px rgba(143, 184, 168, .45);
 }
 
 #hud { display: flex; flex-direction: column; align-items: center; }
@@ -335,8 +364,8 @@ html, body {
   height: 44px;
   border-radius: 50%;
   border: 1px solid var(--c-panel-line);
-  background: rgba(10, 18, 32, .6);
-  color: rgba(190, 220, 245, .82);
+  background: rgba(26, 21, 18, .6);
+  color: rgba(234, 217, 184, .82);
   font-size: 16px;
   pointer-events: auto;
   cursor: pointer;
@@ -365,8 +394,8 @@ html, body {
 .title {
   font-family: var(--font-display);
   font-size: clamp(18px, 6vw, 32px);
-  font-weight: 900;
-  /* Orbitron Black paints well outside a 1em line box: its own ascent/descent
+  font-weight: 700;
+  /* Shantell Sans paints a loose hand-drawn line box: its own ascent/descent
      are larger than the em, so at line-height: 1 the glyphs overlapped the
      subtitle underneath ("Consume. Grow. Survive." was drawn across the bottom
      of the wordmark). 1.2 gives the face the room it actually needs, and the
@@ -378,13 +407,13 @@ html, body {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 0 30px rgba(79, 240, 255, .4));
+  filter: drop-shadow(0 0 30px rgba(143, 184, 168, .4));
 }
 
 .subtitle {
   font-size: var(--t-label);
   letter-spacing: var(--ls-label);
-  color: rgba(170, 205, 235, .62);
+  color: rgba(224, 208, 174, .62);
   margin-top: 2px;
 }
 
@@ -452,9 +481,9 @@ html, body {
   pointer-events: none;
   opacity: .55;
   background:
-    radial-gradient(38% 30% at 22% 26%, rgba(79, 240, 255, .18), transparent 70%),
-    radial-gradient(34% 28% at 78% 20%, rgba(155, 107, 255, .17), transparent 70%),
-    radial-gradient(46% 34% at 52% 84%, rgba(79, 240, 255, .11), transparent 72%);
+    radial-gradient(38% 30% at 22% 26%, rgba(143, 184, 168, .18), transparent 70%),
+    radial-gradient(34% 28% at 78% 20%, rgba(212, 165, 116, .17), transparent 70%),
+    radial-gradient(46% 34% at 52% 84%, rgba(143, 184, 168, .11), transparent 72%);
   filter: blur(24px);
   animation: auroraDrift 28s ease-in-out infinite alternate;
 }
@@ -477,10 +506,10 @@ html, body {
   gap: 6px;
   padding: 14px var(--s-2);
   border-radius: var(--r-lg);
-  background: linear-gradient(160deg, rgba(24, 34, 54, .74), rgba(9, 14, 26, .68));
+  background: linear-gradient(160deg, rgba(52, 40, 30, .74), rgba(26, 21, 18, .68));
   -webkit-backdrop-filter: blur(16px) saturate(120%);
   backdrop-filter: blur(16px) saturate(120%);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .07) inset;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 1px 0 rgba(242, 233, 213, .07) inset;
   scrollbar-width: none;
 }
 
@@ -495,7 +524,7 @@ html, body {
   border-radius: inherit;
   padding: 1px;
   background: linear-gradient(160deg,
-    rgba(79, 240, 255, .50), rgba(155, 107, 255, .22) 45%, rgba(255, 255, 255, .05));
+    rgba(143, 184, 168, .50), rgba(212, 165, 116, .22) 45%, rgba(242, 233, 213, .05));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
@@ -526,13 +555,13 @@ html, body {
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: rgba(170, 205, 235, .52);
+  color: rgba(224, 208, 174, .52);
   cursor: pointer;
   transition: color .16s ease-out, background .16s ease-out;
 }
 .gear-btn svg { width: 16px; height: 16px; display: block; }
-.gear-btn:hover { color: rgba(220, 240, 255, .92); }
-.gear-btn:active { background: rgba(255, 255, 255, .07); }
+.gear-btn:hover { color: rgba(242, 233, 213, .92); }
+.gear-btn:active { background: rgba(242, 233, 213, .07); }
 
 /* Primary action: the strongest treatment on the screen. Three layers --
    gradient fill, outer glow, inner highlight -- plus a noise overlay so the
@@ -546,18 +575,18 @@ html, body {
   margin-top: 0;
   padding: 18px 32px;
   font-family: var(--font-display);
-  font-weight: 900;
+  font-weight: 700;
   font-size: var(--t-body);
   letter-spacing: var(--ls-label);
-  color: #04141c;
-  border-radius: 16px;
-  background: linear-gradient(180deg, #7ceaff 0%, #35b6e4 52%, #1a7fae 100%);
-  text-shadow: 0 1px 0 rgba(255, 255, 255, .35);
+  color: #241a10;
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, #f0c46c 0%, #df9f45 55%, #c07f2e 100%);
+  text-shadow: 0 1px 0 rgba(247, 239, 220, .4);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, .45) inset,
-    0 -2px 0 rgba(0, 0, 0, .16) inset,
-    0 8px 22px rgba(34, 167, 216, .34),
-    0 0 30px rgba(79, 240, 255, .22);
+    0 1px 0 rgba(247, 239, 220, .5) inset,
+    0 -2px 0 rgba(60, 35, 10, .22) inset,
+    0 8px 22px rgba(192, 127, 46, .3),
+    0 0 30px rgba(232, 168, 76, .18);
   transition: transform var(--dur-fast) var(--ease-out),
               box-shadow var(--dur-fast) var(--ease-out),
               filter var(--dur-fast) var(--ease-out);
@@ -609,7 +638,7 @@ html, body {
   display: grid;
   place-items: center;
   color: var(--cyan);
-  filter: drop-shadow(0 0 8px rgba(79, 240, 255, .6));
+  filter: drop-shadow(0 0 8px rgba(143, 184, 168, .6));
 }
 .foot-ico svg { width: 15px; height: 15px; display: block; }
 
@@ -702,14 +731,14 @@ body.no-motion #comboBar i { transition: none !important; }
   padding: 6px 8px;
   font-size: 11px;
   line-height: 1.3;
-  color: rgba(190, 215, 240, .78);
+  color: rgba(234, 217, 184, .78);
   background: var(--c-panel);
   border-left: 2px solid currentColor;
   border-radius: 0 8px 8px 0;
   overflow: hidden;
 }
 
-.how-row b { color: #eaf6ff; letter-spacing: var(--ls-label); font-size: 10px; flex-shrink: 0; }
+.how-row b { color: #f2e9d5; letter-spacing: var(--ls-label); font-size: 10px; flex-shrink: 0; }
 
 .how-row span { word-break: break-word; overflow-wrap: break-word; }
 
@@ -721,15 +750,15 @@ body.no-motion #comboBar i { transition: none !important; }
   place-items: center;
 }
 .how-ico svg { width: 18px; height: 18px; display: block; }
-.how-ico.eat  { color: var(--cyan);   filter: drop-shadow(0 0 8px rgba(79, 240, 255, .7)); }
-.how-ico.grow { color: var(--violet); filter: drop-shadow(0 0 8px rgba(155, 107, 255, .7)); }
+.how-ico.eat  { color: var(--cyan);   filter: drop-shadow(0 0 8px rgba(143, 184, 168, .7)); }
+.how-ico.grow { color: var(--violet); filter: drop-shadow(0 0 8px rgba(212, 165, 116, .7)); }
 .how-ico.flee { color: var(--amber);  filter: drop-shadow(0 0 8px rgba(255, 176, 87, .7)); }
 
 /* The accent border takes the row's own colour, so the icon and the edge agree. */
-.how-row:nth-child(1) { color: rgba(79, 240, 255, .55); }
-.how-row:nth-child(2) { color: rgba(155, 107, 255, .55); }
+.how-row:nth-child(1) { color: rgba(143, 184, 168, .55); }
+.how-row:nth-child(2) { color: rgba(212, 165, 116, .55); }
 .how-row:nth-child(3) { color: rgba(255, 176, 87, .55); }
-.how-row > span:last-child { color: rgba(190, 215, 240, .78); }
+.how-row > span:last-child { color: rgba(234, 217, 184, .78); }
 
 /* ---------- Segmented control ---------- */
 /* Filled track with a sliding pill indicator, rather than a thin outline with
@@ -755,8 +784,8 @@ body.no-motion #comboBar i { transition: none !important; }
   left: 4px;
   width: calc((100% - 8px) / 3);
   border-radius: var(--r-pill);
-  background: linear-gradient(180deg, rgba(79, 240, 255, .30), rgba(79, 240, 255, .13));
-  box-shadow: 0 0 16px rgba(79, 240, 255, .28), 0 1px 0 rgba(255, 255, 255, .18) inset;
+  background: linear-gradient(180deg, rgba(143, 184, 168, .30), rgba(143, 184, 168, .13));
+  box-shadow: 0 2px 6px rgba(20, 15, 11, .45), 0 1px 0 rgba(242, 233, 213, .18) inset;
   transition: transform .24s cubic-bezier(.4, 0, .2, 1);
   pointer-events: none;
 }
@@ -778,12 +807,12 @@ body.no-motion #comboBar i { transition: none !important; }
   min-height: 44px;
   background: transparent;
   border: 0;
-  color: rgba(190, 220, 245, .6);
+  color: rgba(234, 217, 184, .6);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
 }
 
-.segmented button.on { color: #eaf6ff; }
+.segmented button.on { color: #f2e9d5; }
 
 /* Four short labels in equal columns. "STANDARD" is the longest word in the
    whole UI and it broke mid-word into "STANDAR / D" inside the pill at phone
@@ -821,10 +850,10 @@ body.no-motion #comboBar i { transition: none !important; }
 .hist .bar {
   width: 20px;
   border-radius: 3px 3px 0 0;
-  background: linear-gradient(180deg, rgba(79, 240, 255, .48), rgba(155, 107, 255, .16));
+  background: linear-gradient(180deg, rgba(143, 184, 168, .48), rgba(212, 165, 116, .16));
 }
-.hist .n { font-size: var(--t-label); color: rgba(180, 215, 245, .72); font-variant-numeric: tabular-nums; }
-.hist .d { font-size: var(--t-label); color: rgba(150, 185, 215, .4); }
+.hist .n { font-size: var(--t-label); color: rgba(224, 208, 174, .72); font-variant-numeric: tabular-nums; }
+.hist .d { font-size: var(--t-label); color: rgba(205, 191, 164, .4); }
 
 /* renderHistory() empties the strip on a first run. Without this, its
    min-height reserves a blank 48px band in the middle of the footer. */
@@ -847,8 +876,8 @@ body.no-motion #comboBar i { transition: none !important; }
   padding: 0;
   border: 1px solid var(--c-panel-line);
   border-radius: 50%;
-  background: rgba(255, 255, 255, .04);
-  color: rgba(170, 205, 235, .6);
+  background: rgba(242, 233, 213, .04);
+  color: rgba(224, 208, 174, .6);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out),
               background var(--dur-fast) var(--ease-out),
@@ -856,8 +885,8 @@ body.no-motion #comboBar i { transition: none !important; }
 }
 
 .meta-btn svg { width: 16px; height: 16px; display: block; }
-.meta-btn:hover { color: rgba(220, 240, 255, .92); border-color: rgba(79, 240, 255, .35); }
-.meta-btn:active { background: rgba(79, 240, 255, .1); }
+.meta-btn:hover { color: rgba(242, 233, 213, .92); border-color: rgba(143, 184, 168, .35); }
+.meta-btn:active { background: rgba(143, 184, 168, .1); }
 
 /* ---------- Run report ---------- */
 .report {
@@ -867,7 +896,7 @@ body.no-motion #comboBar i { transition: none !important; }
   font-family: var(--font-ui);
   font-size: var(--t-label);
   letter-spacing: var(--ls-label);
-  color: rgba(180, 215, 245, .74);
+  color: rgba(224, 208, 174, .74);
   margin-top: var(--s-1);
   max-width: 336px;
 }
@@ -875,7 +904,7 @@ body.no-motion #comboBar i { transition: none !important; }
 .report b {
   font-family: var(--font-ui);
   font-weight: var(--w-strong);
-  color: #eaf6ff;
+  color: #f2e9d5;
   font-variant-numeric: tabular-nums;
   letter-spacing: var(--ls-tight);
 }
@@ -894,7 +923,7 @@ body.no-motion #comboBar i { transition: none !important; }
   font-size: var(--t-body);
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
-  color: #cfe6ff;
+  color: #ead9b8;
   max-width: 336px;
   margin-top: 2px;
 }
@@ -915,18 +944,18 @@ body.no-motion #comboBar i { transition: none !important; }
   font-size: var(--t-body);
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-label);
-  color: #041016;
+  color: #241a10;
   background: linear-gradient(135deg, var(--cyan), var(--violet));
   border: 0;
   border-radius: var(--r-md);
   cursor: pointer;
-  box-shadow: 0 6px 24px rgba(79, 240, 255, .26);
+  box-shadow: 0 6px 24px rgba(60, 40, 20, .35);
   transition: transform .12s ease-out, box-shadow .12s ease-out;
 }
 
 .btn:active {
   transform: scale(.96);
-  box-shadow: 0 3px 12px rgba(79, 240, 255, .2);
+  box-shadow: 0 3px 12px rgba(143, 184, 168, .2);
 }
 
 .btn.small { padding: 8px 24px; font-size: var(--t-label); }
@@ -935,12 +964,12 @@ body.no-motion #comboBar i { transition: none !important; }
   font-family: var(--font-ui);
   font-size: var(--t-label);
   letter-spacing: var(--ls-label);
-  color: rgba(170, 205, 235, .6);
+  color: rgba(224, 208, 174, .6);
   line-height: 1.55;
   max-width: 320px;
 }
 
-.hint.dim { color: rgba(150, 185, 215, .42); }
+.hint.dim { color: rgba(205, 191, 164, .42); }
 
 /* ---------- Toasts: a stack, not a single overwritten slot ---------- */
 #toasts {
@@ -973,10 +1002,10 @@ body.no-motion #comboBar i { transition: none !important; }
   text-align: center;
   line-height: 1.45;
   max-width: min(340px, calc(100vw - 2 * var(--s-2)));
-  color: #eaf6ff;
+  color: #f2e9d5;
   padding: 6px var(--s-2);
   border-radius: var(--r-sm);
-  background: rgba(8, 14, 26, .74);
+  background: rgba(26, 21, 18, .74);
   border: 1px solid var(--c-panel-line);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
@@ -1059,13 +1088,13 @@ body.no-motion #comboBar i { transition: none !important; }
   transition: background var(--dur-fast) var(--ease-out);
 }
 
-.setting:active { background: rgba(255, 255, 255, .09); }
+.setting:active { background: rgba(242, 233, 213, .09); }
 
 .setting-name {
   font-size: var(--t-label);
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
-  color: rgba(190, 215, 240, .78);
+  color: rgba(234, 217, 184, .78);
 }
 
 .setting-val {
@@ -1073,7 +1102,7 @@ body.no-motion #comboBar i { transition: none !important; }
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
-  color: #cfe6f7;
+  color: #ead9b8;
   white-space: nowrap;
 }
 
@@ -1081,7 +1110,7 @@ body.no-motion #comboBar i { transition: none !important; }
    to assistive tech through aria-pressed. Non-boolean rows keep the neutral
    value colour because their value is a choice, not a state. */
 .setting[aria-pressed="true"] .setting-val { color: var(--cyan); }
-.setting[aria-pressed="false"] .setting-val { color: rgba(150, 185, 215, .45); }
+.setting[aria-pressed="false"] .setting-val { color: rgba(205, 191, 164, .45); }
 
 .btn.wide { width: 100%; }
 
@@ -1091,13 +1120,13 @@ body.no-motion #comboBar i { transition: none !important; }
   letter-spacing: var(--ls-label);
   margin-right: -.3em;
   color: var(--cyan);
-  text-shadow: 0 0 24px rgba(79, 240, 255, .55);
+  text-shadow: 0 1px 0 rgba(20, 15, 11, .6), 0 0 14px rgba(143, 184, 168, .25);
 }
 
 .btn.ghost {
   background: transparent;
-  border: 1px solid rgba(150, 200, 230, .26);
-  color: #cfe6f7;
+  border: 1px solid rgba(205, 191, 164, .26);
+  color: #ead9b8;
   box-shadow: none;
   padding: 13px 34px;
   margin-top: 0;
@@ -1113,7 +1142,7 @@ body.no-motion #comboBar i { transition: none !important; }
   width: 100%;
   font-size: var(--t-micro);
   letter-spacing: var(--ls-label);
-  color: rgba(180, 215, 245, .7);
+  color: rgba(224, 208, 174, .7);
 }
 
 .slider-row input[type=range] {
@@ -1139,14 +1168,14 @@ body.no-motion #comboBar i { transition: none !important; }
 }
 
 /* ---------- Readability and keyboard navigation ---------- */
-.hint { color: rgba(190, 215, 240, .82); }
-.hint.dim { color: rgba(170, 205, 235, .78); }
-.segmented button { color: rgba(190, 220, 245, .82); min-width: 0; overflow-wrap: anywhere; }
-.segmented button.on { color: #eaf6ff; }
-.gear-btn, .meta-btn { color: rgba(190, 220, 245, .82); }
+.hint { color: rgba(234, 217, 184, .82); }
+.hint.dim { color: rgba(224, 208, 174, .78); }
+.segmented button { color: rgba(234, 217, 184, .82); min-width: 0; overflow-wrap: anywhere; }
+.segmented button.on { color: #f2e9d5; }
+.gear-btn, .meta-btn { color: rgba(234, 217, 184, .82); }
 .icon-btn.off { color: rgba(150, 175, 195, .75); }
-.setting[aria-pressed="false"] .setting-val { color: rgba(170, 205, 235, .78); }
-#keysLegend { color: rgba(190, 215, 240, .78); text-shadow: 0 1px 4px #000; }
+.setting[aria-pressed="false"] .setting-val { color: rgba(224, 208, 174, .78); }
+#keysLegend { color: rgba(234, 217, 184, .78); text-shadow: 0 1px 4px #000; }
 
 /* :focus also provides a fallback for older WebViews without :focus-visible. */
 button:focus, input[type=range]:focus {
@@ -1197,7 +1226,7 @@ body.hc .btn.ghost { border-color: #fff; color: #fff; }
 body.hc .toast-item { text-shadow: none; }
 body.hc .chip { border-color: #fff; color: #fff; background: #000; }
 body.hc #comboValue { color: #fff; text-shadow: none; }
-body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
+body.hc .hud-value.warn, body.hc .hud-value.crit { color: #f0c040; }
 
 /* ---------- Missions (three at a time) ----------
    Same inset-panel language as the how-to rows, with the accent border
@@ -1219,21 +1248,21 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-size: var(--t-body);
   line-height: 1.45;
   text-align: left;
-  color: rgba(190, 215, 240, .78);
+  color: rgba(234, 217, 184, .78);
   background: var(--c-panel);
-  border-left: 2px solid rgba(150, 185, 215, .4);
+  border-left: 2px solid rgba(205, 191, 164, .4);
   border-radius: 0 10px 10px 0;
 }
 
 .mrow .tick {
   flex: 0 0 18px;
   text-align: center;
-  color: rgba(150, 185, 215, .55);
+  color: rgba(205, 191, 164, .55);
 }
 
 .mrow.done { border-left-color: var(--cyan); }
 .mrow.done .tick { color: var(--cyan); }
-.mrow.done { color: rgba(190, 215, 240, .55); }
+.mrow.done { color: rgba(234, 217, 184, .55); }
 
 /* ---------- Four-column segmented (variant picker) ----------
    Same sliding pill as the three-column control picker, one extra stop. */
@@ -1252,14 +1281,14 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   gap: 16px;
   width: 100%;
   padding: 6px 2px;
-  border-bottom: 1px solid rgba(255, 255, 255, .06);
+  border-bottom: 1px solid rgba(242, 233, 213, .06);
 }
 
 .obs-key {
   font-size: var(--t-label);
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
-  color: rgba(150, 185, 215, .55);
+  color: rgba(205, 191, 164, .55);
 }
 
 .obs-val {
@@ -1267,7 +1296,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
-  color: #eaf6ff;
+  color: #f2e9d5;
   text-align: right;
 }
 
@@ -1293,10 +1322,10 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   gap: var(--s-2);
   padding: var(--s-3) var(--s-2);
   border-radius: var(--r-lg);
-  background: linear-gradient(160deg, rgba(24, 34, 54, .74), rgba(9, 14, 26, .68));
+  background: linear-gradient(160deg, rgba(52, 40, 30, .74), rgba(26, 21, 18, .68));
   -webkit-backdrop-filter: blur(16px) saturate(120%);
   backdrop-filter: blur(16px) saturate(120%);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .07) inset;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .6), 0 1px 0 rgba(242, 233, 213, .07) inset;
   animation: cardReveal var(--dur-med) var(--ease-out) both;
 }
 
@@ -1308,7 +1337,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   border-radius: inherit;
   padding: 1px;
   background: linear-gradient(160deg,
-    rgba(79, 240, 255, .50), rgba(155, 107, 255, .22) 45%, rgba(255, 255, 255, .05));
+    rgba(143, 184, 168, .50), rgba(212, 165, 116, .22) 45%, rgba(242, 233, 213, .05));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
@@ -1335,7 +1364,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   letter-spacing: var(--ls-label);
   margin-right: -.3em;
   color: var(--cyan);
-  text-shadow: 0 0 24px rgba(79, 240, 255, .55);
+  text-shadow: 0 1px 0 rgba(20, 15, 11, .6), 0 0 14px rgba(143, 184, 168, .25);
 }
 
 /* Glass card body */
@@ -1343,7 +1372,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-family: var(--font-ui);
   font-size: var(--t-body);
   line-height: 1.55;
-  color: rgba(190, 215, 240, .78);
+  color: rgba(234, 217, 184, .78);
   max-width: 320px;
 }
 
@@ -1365,14 +1394,14 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   gap: 16px;
   width: 100%;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, .06);
+  border-bottom: 1px solid rgba(242, 233, 213, .06);
 }
 
 .glass-row-key {
   font-size: var(--t-label);
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
-  color: rgba(150, 185, 215, .55);
+  color: rgba(205, 191, 164, .55);
 }
 
 .glass-row-val {
@@ -1380,7 +1409,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
-  color: #eaf6ff;
+  color: #f2e9d5;
   text-align: right;
 }
 
@@ -1399,21 +1428,21 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
    surface so they read as pressable, not as labels.
    ============================================================ */
 .btn.ghost {
-  background: rgba(255, 255, 255, .04);
-  border: 1px solid rgba(150, 200, 230, .26);
-  color: #cfe6f7;
+  background: rgba(242, 233, 213, .04);
+  border: 1px solid rgba(205, 191, 164, .26);
+  color: #ead9b8;
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, .06) inset,
+    0 1px 0 rgba(242, 233, 213, .06) inset,
     0 4px 16px rgba(0, 0, 0, .2);
   padding: 13px 34px;
   margin-top: 0;
   transition: background .12s ease-out, transform .12s ease-out, box-shadow .12s ease-out;
 }
 
-.btn.ghost:hover { background: rgba(255, 255, 255, .08); }
+.btn.ghost:hover { background: rgba(242, 233, 213, .08); }
 .btn.ghost:active {
   transform: scale(.96);
-  background: rgba(255, 255, 255, .02);
+  background: rgba(242, 233, 213, .02);
   box-shadow: 0 2px 8px rgba(0, 0, 0, .15);
 }
 
@@ -1437,8 +1466,8 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
    When one away from a shockwave, the combo bar pulses.
    ============================================================ */
 @keyframes comboReady {
-  0%, 100% { box-shadow: 0 0 6px rgba(79, 240, 255, .45); }
-  50% { box-shadow: 0 0 18px rgba(79, 240, 255, .9); }
+  0%, 100% { box-shadow: 0 0 6px rgba(143, 184, 168, .45); }
+  50% { box-shadow: 0 0 18px rgba(143, 184, 168, .9); }
 }
 
 #comboBar.ready i.on {
@@ -1463,11 +1492,11 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 
 .setting[aria-pressed="true"] .setting-val::before {
   background: var(--cyan);
-  box-shadow: 0 0 8px rgba(79, 240, 255, .6);
+  box-shadow: 0 0 8px rgba(143, 184, 168, .6);
 }
 
 .setting[aria-pressed="false"] .setting-val::before {
-  background: rgba(150, 185, 215, .35);
+  background: rgba(205, 191, 164, .35);
 }
 
 /* ============================================================
@@ -1480,7 +1509,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   appearance: none;
   height: 4px;
   border-radius: var(--r-pill);
-  background: rgba(255, 255, 255, .1);
+  background: rgba(242, 233, 213, .1);
   cursor: pointer;
 }
 
@@ -1491,7 +1520,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   height: 18px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 0 10px rgba(79, 240, 255, .4), 0 2px 6px rgba(0, 0, 0, .4);
+  box-shadow: 0 0 10px rgba(143, 184, 168, .4), 0 2px 6px rgba(0, 0, 0, .4);
   cursor: pointer;
 }
 
@@ -1501,7 +1530,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   border: 0;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 0 10px rgba(79, 240, 255, .4), 0 2px 6px rgba(0, 0, 0, .4);
+  box-shadow: 0 0 10px rgba(143, 184, 168, .4), 0 2px 6px rgba(0, 0, 0, .4);
   cursor: pointer;
 }
 
@@ -1542,36 +1571,36 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 }
 
 .fg-cell.discovered {
-  border-color: rgba(79, 240, 255, .35);
+  border-color: rgba(143, 184, 168, .35);
 }
 
 .fg-cell .fg-swatch {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, .06);
-  border: 1px solid rgba(255, 255, 255, .1);
+  background: rgba(242, 233, 213, .06);
+  border: 1px solid rgba(242, 233, 213, .1);
 }
 
 .fg-cell.discovered .fg-swatch {
   background: var(--cyan);
-  box-shadow: 0 0 8px rgba(79, 240, 255, .4);
+  box-shadow: 0 0 8px rgba(143, 184, 168, .4);
 }
 
 .fg-cell .fg-name {
   font-size: var(--t-micro);
   letter-spacing: var(--ls-tight);
-  color: rgba(190, 215, 240, .7);
+  color: rgba(234, 217, 184, .7);
 }
 
 .fg-cell.locked .fg-name {
-  color: rgba(150, 185, 215, .35);
+  color: rgba(205, 191, 164, .35);
 }
 
 .fg-progress {
   font-size: var(--t-label);
   letter-spacing: var(--ls-label);
-  color: rgba(190, 215, 240, .6);
+  color: rgba(234, 217, 184, .6);
   text-align: center;
   width: 100%;
 }
@@ -1601,18 +1630,18 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   background: var(--c-panel);
   border: 1px solid var(--c-panel-line);
   font-size: var(--t-micro);
-  color: rgba(190, 215, 240, .6);
+  color: rgba(234, 217, 184, .6);
   text-align: center;
 }
 
 .dr-day.claimed {
-  border-color: rgba(79, 240, 255, .35);
+  border-color: rgba(143, 184, 168, .35);
   color: var(--cyan);
 }
 
 .dr-day.today {
   border-color: var(--violet);
-  box-shadow: 0 0 8px rgba(155, 107, 255, .3);
+  box-shadow: 0 0 8px rgba(212, 165, 116, .3);
 }
 
 .dr-day.future {
@@ -1631,7 +1660,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 .dr-info {
   font-size: var(--t-label);
   letter-spacing: var(--ls-label);
-  color: rgba(190, 215, 240, .6);
+  color: rgba(234, 217, 184, .6);
   text-align: center;
   width: 100%;
 }
@@ -1641,9 +1670,9 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
    A special toast for unlocking achievements.
    ============================================================ */
 .toast-item.achievement {
-  background: linear-gradient(135deg, rgba(79, 240, 255, .18), rgba(155, 107, 255, .12));
-  border-color: rgba(79, 240, 255, .35);
-  color: #eaf6ff;
+  background: linear-gradient(135deg, rgba(143, 184, 168, .18), rgba(212, 165, 116, .12));
+  border-color: rgba(143, 184, 168, .35);
+  color: #f2e9d5;
 }
 
 /* ============================================================
@@ -1675,8 +1704,8 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 }
 
 .lb-row.me {
-  border-color: rgba(79, 240, 255, .35);
-  background: rgba(79, 240, 255, .06);
+  border-color: rgba(143, 184, 168, .35);
+  background: rgba(143, 184, 168, .06);
 }
 
 .lb-rank {
@@ -1689,7 +1718,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 .lb-name {
   flex: 1;
   font-size: var(--t-body);
-  color: rgba(190, 215, 240, .78);
+  color: rgba(234, 217, 184, .78);
   text-align: left;
 }
 
@@ -1697,7 +1726,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-weight: var(--w-strong);
   font-size: var(--t-body);
   font-variant-numeric: tabular-nums;
-  color: #eaf6ff;
+  color: #f2e9d5;
 }
 
 /* ============================================================
@@ -1710,14 +1739,14 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   gap: 16px;
   width: 100%;
   padding: 6px 2px;
-  border-bottom: 1px solid rgba(255, 255, 255, .06);
+  border-bottom: 1px solid rgba(242, 233, 213, .06);
 }
 
 .obs-key {
   font-size: var(--t-label);
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
-  color: rgba(150, 185, 215, .55);
+  color: rgba(205, 191, 164, .55);
 }
 
 .obs-val {
@@ -1725,7 +1754,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-tight);
   font-variant-numeric: tabular-nums;
-  color: #eaf6ff;
+  color: #f2e9d5;
   text-align: right;
 }
 
@@ -1752,18 +1781,27 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 .obs-upgrade-name {
   font-size: var(--t-label);
   font-weight: var(--w-strong);
-  color: #eaf6ff;
+  color: #f2e9d5;
 }
 
 .obs-upgrade-desc {
   font-size: var(--t-micro);
-  color: rgba(150, 185, 215, .55);
+  color: rgba(205, 191, 164, .55);
 }
 
 .obs-upgrade-level {
   font-size: var(--t-micro);
   color: var(--cyan);
   margin-right: 8px;
+}
+
+/* The "upgrades apply to ordinary runs only" paragraph above the list. */
+.obs-upgrade-rules {
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: rgba(205, 191, 164, .65);
+  margin: 0 0 10px;
+  text-align: left;
 }
 
 .obs-upgrade-btn {
@@ -1774,14 +1812,14 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-weight: var(--w-strong);
   border-radius: var(--r-sm);
   border: 1px solid var(--c-panel-line);
-  background: rgba(79, 240, 255, .1);
+  background: rgba(143, 184, 168, .1);
   color: var(--cyan);
   cursor: pointer;
   white-space: nowrap;
   transition: background var(--dur-fast) var(--ease-out);
 }
 
-.obs-upgrade-btn:hover { background: rgba(79, 240, 255, .2); }
+.obs-upgrade-btn:hover { background: rgba(143, 184, 168, .2); }
 .obs-upgrade-btn:disabled {
   opacity: .4;
   cursor: not-allowed;
@@ -1807,7 +1845,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-size: var(--t-micro);
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
-  color: rgba(150, 185, 215, .65);
+  color: rgba(205, 191, 164, .65);
   text-align: left;
 }
 
@@ -1820,8 +1858,8 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-family: var(--font-ui);
   font-size: var(--t-micro);
   font-weight: var(--w-strong);
-  color: #eaf6ff;
-  background: rgba(10, 18, 32, .85);
+  color: #f2e9d5;
+  background: rgba(26, 21, 18, .85);
   border: 1px solid var(--c-panel-line);
   border-radius: var(--r-sm);
   cursor: pointer;
@@ -1831,8 +1869,8 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 
 /* The popup list is drawn by the OS, so it needs explicit colours or it opens
    as a white sheet on a dark screen in some WebViews. */
-#skinPicker option { background: #0a1220; color: #eaf6ff; }
-#skinPicker option:disabled { color: rgba(150, 185, 215, .45); }
+#skinPicker option { background: #1a1512; color: #f2e9d5; }
+#skinPicker option:disabled { color: rgba(205, 191, 164, .45); }
 
 #dailyRewardBtn {
   width: 100%;
@@ -1842,16 +1880,16 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-size: var(--t-label);
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-label);
-  color: #cfe6f7;
-  background: rgba(255, 255, 255, .04);
-  border: 1px solid rgba(150, 200, 230, .26);
+  color: #ead9b8;
+  background: rgba(242, 233, 213, .04);
+  border: 1px solid rgba(205, 191, 164, .26);
   border-radius: var(--r-md);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-out);
 }
 
-#dailyRewardBtn:hover { background: rgba(255, 255, 255, .08); }
-#dailyRewardBtn:active { background: rgba(255, 255, 255, .02); }
+#dailyRewardBtn:hover { background: rgba(242, 233, 213, .08); }
+#dailyRewardBtn:active { background: rgba(242, 233, 213, .02); }
 
 /* ---------- Long-string safety ----------
    Panels show player-adjacent text of unpredictable length: era names, body
@@ -1892,7 +1930,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   z-index: 200;
   padding: 24px;
   background: #14080a;
-  color: #ffb4b4;
+  color: #e8a090;
   font: 12px/1.6 ui-monospace, monospace;
   white-space: pre-wrap;
   overflow: auto;
@@ -1950,14 +1988,14 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 #menuCard .title {
   font-family: var(--font-display);
   font-size: clamp(26px, 8.5vw, 42px);
-  font-weight: 900;
-  letter-spacing: 0.22em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   line-height: 1.15;
-  background: linear-gradient(180deg, #c4f7ff 0%, #52d6ff 55%, #29beea 100%);
+  background: linear-gradient(180deg, #f7efdc 0%, #e8cfa8 55%, #c99a5e 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 0 24px rgba(82, 214, 255, 0.45));
+  filter: drop-shadow(0 2px 0 rgba(20, 15, 11, .55)) drop-shadow(0 0 18px rgba(232, 168, 76, .18));
 }
 
 #menuCard .subtitle {
@@ -1974,14 +2012,14 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   max-width: 85%;
   height: 48px;
   border-radius: 999px !important;
-  background: linear-gradient(90deg, #60e6ff 0%, #b288ff 100%) !important;
-  color: #060814 !important;
+  background: linear-gradient(90deg, #60e6ff 0%, #d4a574 100%) !important;
+  color: #14100c !important;
   font-family: var(--font-ui);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.18em;
   border: none !important;
-  box-shadow: 0 4px 26px rgba(96, 230, 255, 0.45), 0 0 14px rgba(178, 136, 255, 0.35);
+  box-shadow: 0 4px 26px rgba(96, 230, 255, 0.45), 0 0 14px rgba(212, 165, 116, 0.35);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1999,7 +2037,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 }
 
 #menuCard .home-guide {
-  color: #5d7388;
+  color: #8a7a64;
   font-family: var(--font-ui);
   font-size: 12px;
   letter-spacing: 0.08em;
@@ -2017,7 +2055,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 }
 
 #menuCard .menu-foot .hint {
-  color: #5d7388;
+  color: #8a7a64;
   font-family: var(--font-ui);
   font-size: 12px;
   letter-spacing: 0.14em;
@@ -2056,12 +2094,12 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 }
 
 #pause .glass-title {
-  color: #4ff0ff !important;
+  color: #8fb8a8 !important;
   font-family: var(--font-ui) !important;
   font-size: 20px !important;
   font-weight: 700 !important;
   letter-spacing: 0.35em !important;
-  text-shadow: 0 0 16px rgba(79, 240, 255, 0.55);
+  text-shadow: 0 1px 0 rgba(20, 15, 11, .6), 0 0 10px rgba(143, 184, 168, .25);
   margin-bottom: 2px;
 }
 
@@ -2091,8 +2129,8 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
 #pause #resumeBtn {
   height: 48px;
   font-size: 13px;
-  background: linear-gradient(90deg, #5de6ff 0%, #b288ff 100%) !important;
-  color: #060814 !important;
+  background: linear-gradient(90deg, #5de6ff 0%, #d4a574 100%) !important;
+  color: #14100c !important;
   border: none !important;
   box-shadow: 0 0 20px rgba(93, 230, 255, 0.45);
 }
@@ -2101,7 +2139,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   height: 44px;
   font-size: 12px;
   background: rgba(10, 12, 22, 0.5) !important;
-  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border: 1px solid rgba(242, 233, 213, 0.18) !important;
   color: #ffffff !important;
 }
 
@@ -2166,8 +2204,8 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   width: 36px !important;
   height: 36px !important;
   border-radius: 50% !important;
-  background: rgba(255, 255, 255, 0.08) !important;
-  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  background: rgba(242, 233, 213, 0.08) !important;
+  border: 1px solid rgba(242, 233, 213, 0.18) !important;
   color: #ffffff !important;
   display: flex !important;
   align-items: center !important;
@@ -2192,7 +2230,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   border-radius: 50% !important;
   background: rgba(18, 22, 38, 0.65) !important;
   border: 1px solid rgba(135, 155, 195, 0.3) !important;
-  color: #ccdcf0 !important;
+  color: #e0d0ae !important;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45) !important;
   display: flex !important;
   align-items: center !important;
@@ -2218,7 +2256,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-weight: var(--w-strong);
   letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: rgba(150, 185, 215, .55);
+  color: rgba(205, 191, 164, .55);
   margin: 10px 2px 4px;
   text-align: left;
 }
@@ -2241,7 +2279,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: rgba(190, 220, 245, .8);
+  color: rgba(234, 217, 184, .8);
   text-align: center;
   transition: color var(--dur-fast) var(--ease-out);
 }
@@ -2250,11 +2288,11 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   content: '+';
   float: right;
   font-weight: var(--w-strong);
-  color: rgba(150, 185, 215, .6);
+  color: rgba(205, 191, 164, .6);
 }
 .home-details[open] summary::after { content: '\2013'; }
-.home-details[open] summary { color: #eaf6ff; }
-.home-details summary:hover { color: #eaf6ff; }
+.home-details[open] summary { color: #f2e9d5; }
+.home-details summary:hover { color: #f2e9d5; }
 .home-details-body {
   padding: 4px 12px 12px;
   display: flex;
@@ -2283,23 +2321,23 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   gap: 12px;
   font-size: var(--t-micro);
   letter-spacing: var(--ls-tight);
-  color: rgba(170, 205, 235, .8);
+  color: rgba(224, 208, 174, .8);
 }
 #runGoalLabel { font-weight: var(--w-label); }
-#runMission { color: rgba(150, 185, 215, .6); white-space: nowrap; }
+#runMission { color: rgba(205, 191, 164, .6); white-space: nowrap; }
 .run-goal-track {
   height: 3px;
   margin-top: 4px;
   border-radius: 2px;
-  background: rgba(120, 170, 200, .18);
+  background: rgba(205, 191, 164, .18);
   overflow: hidden;
 }
 #runGoalFill {
   height: 100%;
   width: 0;
   border-radius: 2px;
-  background: linear-gradient(90deg, rgba(155, 107, 255, .8), rgba(79, 240, 255, .95));
-  box-shadow: 0 0 8px rgba(79, 240, 255, .4);
+  background: linear-gradient(90deg, rgba(212, 165, 116, .8), rgba(143, 184, 168, .95));
+  box-shadow: 0 0 8px rgba(143, 184, 168, .4);
   transition: width var(--dur-med) var(--ease-out);
 }
 
@@ -2319,7 +2357,7 @@ body.hc .hud-value.warn, body.hc .hud-value.crit { color: #ffd24a; }
   font-weight: var(--w-label);
   letter-spacing: var(--ls-label);
   text-transform: uppercase;
-  color: rgba(170, 205, 235, .72);
+  color: rgba(224, 208, 174, .72);
 }
 @media (max-width: 340px) {
   .menu-meta-row .meta-btn .meta-lab { display: none; }
