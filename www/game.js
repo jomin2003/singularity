@@ -79,7 +79,7 @@ const RADIATIVE_EFFICIENCY = 0.057;
 const DEATH_AREA = P0 * P0 * 0.30;   // collapse below this
 const ENT_TARGET = 110;              // entities kept alive
 const COMBO_WINDOW = 1.35;           // seconds to keep a chain alive
-const CONSUME_YIELD = 0.34;          // how much of a body becomes your mass
+const CONSUME_YIELD = 0.08;          // how much of a body becomes your mass
 const STAR_BONUS = 3;                // score multiplier for eating a star
 
 /* ---------- real-unit scale ----------
@@ -113,7 +113,7 @@ const CAM_LEAD = 0.18;
 // Bumped on each change and shown on the menu. Stale caches have already cost
 // a whole round of "your changes didn't work", so make the running build
 // visible rather than guessable.
-const BUILD_ID = 'b25';
+const BUILD_ID = 'b26';
 
 // Hawking evaporation tunables. Fractional mass loss scales as 1/M^3, so a
 // hole shrinks faster the smaller it gets -- correct, but it also means the
@@ -156,13 +156,12 @@ let state = 'menu';
 let runUpgrades = { gravity: 0, accretion: 0, horizon: 0, singularity: 0 };
 let runDustScore = 0, runEaten = 0, lastMealT = 0;
 let rareWindowActive = false, rareWindowT = 0, rareSpawnT = 0;
-let civT = 0, nextCivIn = 7;   // time-based civ deployment (see updateEnts)
 const cosmeticRand = (a, b) => a + cosmeticRandom() * (b - a);
-let p, ents, parts, waves, shots, slugs, floats, cam;
+let p, ents, parts, waves, shots, floats, cam;
 let score = 0, shownScore = 0, best = 0, newBest = false;
 let combo = 0, comboT = 0, elapsed = 0, era = 0;
 let shakeMag = 0, hitstopT = 0, invuln = 0, flashT = 0;
-let pendingWave = 0, shotT = 0;   // AGN feedback wind-up timer (0 = none)
+let shotT = 0;
 let panel = null;   // null | 'pause' | 'settings' | 'observe' | 'dailyreward' | 'leaderboard' | 'observatory'
 let camRoll = 0;    // proximity tilt wobble near big bodies
 let shield = 0;     // one-hit protection from eating a pulsar
@@ -187,8 +186,6 @@ let sparseOn = false;   // low-mass music strip-back currently engaged
 let greedT = 0;         // greed-gate window remaining
 let greedE = null;      // the body the greed gate applies to
 let newBestShown = false; // live "NEW PERSONAL BEST" callout, once per run
-let pickT = 0;          // AGN feedback steering-pick window remaining
-let pickHold = null;    // accumulated steering dwell per lane
 let spinA = 0;          // Kerr spin parameter a/M, 0 (Schwarzschild) .. 0.998
 let kilonovaWarned = false;  // kilonova telegraph already fired this cycle
 let menuDriftT = 0;     // elapsed time driving the menu camera drift
@@ -218,7 +215,7 @@ function loadGhost() {
 // mission objectives. Both reset in reset().
 let runMission = null;
 function resetMissionCounters() {
-  runMission = { wd: 0, ark: 0, pulsar: 0, graze: 0, waveBest: 0 };
+  runMission = { wd: 0, pulsar: 0, graze: 0, waveBest: 0 };
 }
 
 // Last input device. The floating joystick's home ring is a touch affordance;
@@ -790,35 +787,7 @@ const EDIBLE = ['rocky', 'ice', 'ocean', 'desert', 'barren', 'asteroid',
 // outgrow is really just... a bigger star.
 const LETHAL = ['star', 'giant', 'lava', 'rogue', 'rival'];
 // Rare astronomical anomalies, each with its own behaviour.
-const RARE = ['pulsar', 'wormhole'];
-// What an advanced civilisation builds once it realises the hole is coming.
-// Grounded in real proposed megastructures plus the classic sci-fi answers:
-//   shield     - planetary deflector dome (Star Wars / Dune house shields)
-//   repulsor   - gravity-well projector, run in reverse to shove you away
-//                (the Interdictor's gravity well generator, inverted)
-//   driver     - mass driver / railgun battery firing matter at you
-//   ark        - evacuation ship running for the edge of the map
-//   extractor  - a Penrose-process station siphoning your rotational energy
-const CIV = ['shield', 'repulsor', 'driver', 'ark', 'extractor'];
-const CIV_ALERT = 900;        // score at which they notice you exist
-const CIV_MAX = 5;            // never more than this many installations
-
-// The civilisation reacts to your escalation. Early on they panic and flee
-// (arks). Once you have proven you are a threat they start building shields
-// and projecting their own gravity wells (repulsors). At supermassive scale
-// they go on the offensive: extractors skim your energy, mass drivers shoot.
-// Weighted pools make the curve gradual instead of all at once.
-const CIV_POOL_EARLY = ['ark', 'ark', 'ark', 'shield'];
-const CIV_POOL_MID   = ['ark', 'shield', 'shield', 'repulsor', 'repulsor'];
-const CIV_POOL_LATE  = ['shield', 'repulsor', 'repulsor', 'extractor', 'driver'];
-function pickCivType() {
-  let pool;
-  if (era < 2) pool = CIV_POOL_EARLY;
-  else if (era < 4) pool = CIV_POOL_MID;
-  else pool = CIV_POOL_LATE;
-  return pool[(rng() * pool.length) | 0];
-}
-
+const RARE = ['pulsar'];
 const PLANET_PAL = {
   rocky:   { hi: '#8a7659', mid: '#6b5b4a', lo: '#3a3128', spot: '#4a4034' },
   // Europa-style: the "lineae" cracks are brown/red from salt and sulphur,
@@ -1511,178 +1480,6 @@ function drawPulsar(g, rnd) {
   });
 }
 
-// A wormhole — a violet ink ring, hand-drawn twice, with a dark throat.
-function drawWormhole(g, rnd) {
-  const R = SPR_R * 0.62;
-  // Outer wash aura.
-  g.save();
-  wobPath(g, rnd, SPR_R, SPR_R, SPR_R * 0.96, 0.05, 30);
-  g.clip();
-  washBlobs(g, rnd, SPR_R, SPR_R, SPR_R, ['rgba(150,110,200,0.5)'], 8, 0.4);
-  g.restore();
-  // Ink ring, sketched twice.
-  g.strokeStyle = '#c9a4e8';
-  g.lineCap = 'round';
-  g.lineWidth = Math.max(2.4, R * 0.12);
-  wobPath(g, rnd, SPR_R, SPR_R, R, 0.05, 30);
-  g.stroke();
-  g.globalAlpha = 0.5;
-  g.lineWidth = Math.max(1.2, R * 0.06);
-  wobPath(g, rnd, SPR_R, SPR_R, R * 0.94, 0.07, 30);
-  g.stroke();
-  g.globalAlpha = 1;
-  // Dark throat.
-  g.fillStyle = '#050406';
-  wobPath(g, rnd, SPR_R, SPR_R, R * 0.62, 0.08, 24);
-  g.fill();
-  g.strokeStyle = 'rgba(201,164,232,0.7)';
-  g.lineWidth = 1.2;
-  wobPath(g, rnd, SPR_R, SPR_R, R * 0.62, 0.08, 24);
-  g.stroke();
-  // Chalk sparkles caught in the throat.
-  stipple(g, rnd, SPR_R, SPR_R, R * 0.5, '#efe2ff', 8, 0.6, 1.6, 0.8);
-}
-
-// ---- Civilisation installations ---------------------------------------
-// Angular ink schematics on transparent paper: bone line-work with thin
-// wash fills, so they read as artificial against every natural body.
-
-function drawShield(g, rnd) {
-  const c = SPR_R;
-  g.strokeStyle = BONE;
-  g.lineCap = 'round';
-  g.lineWidth = 2.2;
-  wobPath(g, rnd, c, c * 1.05, SPR_R * 0.66, 0.03, 20);
-  g.stroke();
-  g.globalAlpha = 0.45;
-  g.lineWidth = 1.2;
-  wobPath(g, rnd, c, c * 1.05, SPR_R * 0.44, 0.04, 20);
-  g.stroke();
-  g.globalAlpha = 1;
-  // Dome base: a small ink plate with bone windows.
-  g.fillStyle = 'rgba(20,18,16,0.9)';
-  g.strokeStyle = BONE;
-  g.lineWidth = 1.4;
-  g.beginPath();
-  g.rect(c - SPR_R * 0.72, c * 1.02, SPR_R * 1.44, SPR_R * 0.26);
-  g.fill(); g.stroke();
-  g.fillStyle = BONE;
-  g.fillRect(c - SPR_R * 0.28, c * 1.08, SPR_R * 0.56, SPR_R * 0.10);
-  washBlobs(g, rnd, c, c, SPR_R * 0.6, ['rgba(150,200,230,0.35)'], 5, 0.4);
-}
-
-function drawRepulsor(g, rnd) {
-  const c = SPR_R;
-  // Projector pylon.
-  g.fillStyle = 'rgba(24,20,17,0.95)';
-  g.strokeStyle = BONE;
-  g.lineWidth = 1.6;
-  g.beginPath();
-  g.moveTo(c - SPR_R * 0.40, SPR);
-  g.lineTo(c - SPR_R * 0.15, SPR_R * 0.32);
-  g.lineTo(c + SPR_R * 0.15, SPR_R * 0.32);
-  g.lineTo(c + SPR_R * 0.40, SPR);
-  g.closePath(); g.fill(); g.stroke();
-  // Hand-drawn repulsion arcs.
-  g.strokeStyle = '#e8b06a';
-  g.lineCap = 'round';
-  for (let k = 0; k < 3; k++) {
-    g.lineWidth = 2.4 - k * 0.5;
-    g.globalAlpha = 0.85 - k * 0.2;
-    g.beginPath();
-    const ry = SPR_R * (0.30 + k * 0.17), rx = SPR_R * (0.50 - k * 0.09);
-    for (let i = 0; i <= 16; i++) {
-      const a = Math.PI + (i / 16) * Math.PI;
-      const w = 1 + (rnd() - 0.5) * 0.06;
-      const x = c + Math.cos(a) * rx * w, y = ry + Math.sin(a) * SPR_R * 0.10 * w;
-      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-    }
-    g.stroke();
-  }
-  g.globalAlpha = 1;
-  washBlobs(g, rnd, c, SPR_R * 0.35, SPR_R * 0.5, ['rgba(232,176,106,0.4)'], 5, 0.4);
-}
-
-function drawDriver(g, rnd) {
-  const c = SPR_R;
-  // Railgun battery: ink housing, bone rails, hot muzzle wash.
-  g.fillStyle = 'rgba(22,19,16,0.95)';
-  g.strokeStyle = BONE;
-  g.lineWidth = 1.6;
-  g.beginPath();
-  g.rect(c - SPR_R * 0.60, SPR_R * 0.72, SPR_R * 1.20, SPR_R * 0.32);
-  g.fill(); g.stroke();
-  g.save();
-  g.translate(c, SPR_R * 0.70);
-  g.rotate(-0.5);
-  g.fillStyle = 'rgba(30,26,22,0.95)';
-  g.strokeStyle = BONE;
-  g.lineWidth = 1.2;
-  g.beginPath();
-  g.rect(-SPR_R * 0.10, -SPR_R * 0.70, SPR_R * 0.20, SPR_R * 0.88);
-  g.fill(); g.stroke();
-  g.fillStyle = '#e8a45c';
-  g.fillRect(-SPR_R * 0.05, -SPR_R * 0.70, SPR_R * 0.10, SPR_R * 0.22);
-  g.restore();
-  g.fillStyle = BONE;
-  g.beginPath(); g.arc(c, SPR_R * 0.86, SPR_R * 0.09, 0, TAU); g.fill();
-}
-
-function drawArk(g, rnd) {
-  const c = SPR_R;
-  // Evacuation ship: ink hull, bone window slits, wash engine glow.
-  g.fillStyle = 'rgba(26,23,20,0.95)';
-  g.strokeStyle = BONE;
-  g.lineWidth = 1.8;
-  g.lineJoin = 'round';
-  g.beginPath();
-  g.moveTo(c + SPR_R * 0.84, c);
-  g.lineTo(c - SPR_R * 0.20, c - SPR_R * 0.30);
-  g.lineTo(c - SPR_R * 0.70, c - SPR_R * 0.22);
-  g.lineTo(c - SPR_R * 0.70, c + SPR_R * 0.22);
-  g.lineTo(c - SPR_R * 0.20, c + SPR_R * 0.30);
-  g.closePath(); g.fill(); g.stroke();
-  g.fillStyle = 'rgba(190,220,235,0.9)';
-  for (let k = 0; k < 4; k++) {
-    g.fillRect(c - SPR_R * 0.48 + k * SPR_R * 0.23, c - SPR_R * 0.07,
-               SPR_R * 0.11, SPR_R * 0.14);
-  }
-  g.fillStyle = 'rgba(150,200,230,0.35)';
-  g.beginPath();
-  g.moveTo(c - SPR_R * 0.70, c - SPR_R * 0.13);
-  g.lineTo(c - SPR_R * 1.00, c);
-  g.lineTo(c - SPR_R * 0.70, c + SPR_R * 0.13);
-  g.closePath(); g.fill();
-  g.strokeStyle = 'rgba(190,220,235,0.6)';
-  g.lineWidth = 1.2;
-  wobLine(g, rnd, c - SPR_R * 0.70, c - SPR_R * 0.13, c - SPR_R * 1.00, c, 1.5, 4);
-  wobLine(g, rnd, c - SPR_R * 0.70, c + SPR_R * 0.13, c - SPR_R * 1.00, c, 1.5, 4);
-}
-
-function drawExtractor(g, rnd) {
-  const c = SPR_R;
-  // Penrose-process station: a violet ink ring with struts.
-  g.strokeStyle = '#b48ae0';
-  g.lineCap = 'round';
-  g.lineWidth = Math.max(2.4, SPR_R * 0.09);
-  wobPath(g, rnd, c, c, SPR_R * 0.60, 0.04, 30);
-  g.stroke();
-  g.globalAlpha = 0.6;
-  g.strokeStyle = '#e4d2f7';
-  g.lineWidth = 1.2;
-  wobPath(g, rnd, c, c, SPR_R * 0.60, 0.06, 30);
-  g.stroke();
-  g.globalAlpha = 1;
-  g.strokeStyle = '#b48ae0';
-  g.lineWidth = 2;
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * TAU + rnd() * 0.1;
-    wobLine(g, rnd, c + Math.cos(a) * SPR_R * 0.60, c + Math.sin(a) * SPR_R * 0.60,
-            c + Math.cos(a) * SPR_R * 0.90, c + Math.sin(a) * SPR_R * 0.90, 1.5, 3);
-  }
-  washBlobs(g, rnd, c, c, SPR_R * 0.8, ['rgba(150,110,200,0.4)'], 6, 0.4);
-}
-
 // A rival singularity — an ink-wash black hole: wobbly black shadow,
 // chalk ring, rust watercolor disk band, chalk crescents. Same visual
 // language as the player, in a hostile red-ink hand.
@@ -1744,16 +1541,10 @@ function makeBodySprite(type, variant, sub) {
   else if (type === 'star') drawStar(g, rnd, sub);
   else if (type === 'rival') drawRival(g, rnd);
   else if (type === 'pulsar') drawPulsar(g, rnd);
-  else if (type === 'wormhole') drawWormhole(g, rnd);
   else if (type === 'brownDwarf') drawBrownDwarf(g, rnd);
   else if (type === 'whiteDwarf') drawWhiteDwarf(g, rnd);
   else if (type === 'magnetar') drawMagnetar(g, rnd);
   else if (type === 'quasar') drawQuasar(g, rnd);
-  else if (type === 'shield') drawShield(g, rnd);
-  else if (type === 'repulsor') drawRepulsor(g, rnd);
-  else if (type === 'driver') drawDriver(g, rnd);
-  else if (type === 'ark') drawArk(g, rnd);
-  else if (type === 'extractor') drawExtractor(g, rnd);
   else drawPlanet(g, rnd, type);
   return c;
 }
@@ -2138,10 +1929,6 @@ function initRare(e) {
   if (e.body.type === 'pulsar') {
     e.pulseT = rand(0.4, 1.6);
     e.beatMax = rand(1.6, 2.2);
-  } else if (e.body.type === 'wormhole') {
-    // Paired exit: a random offset the player teleports along on impact.
-    e.pairAng = rand(0, TAU);
-    e.pairDist = rand(140, 220);
   } else if (e.body.type === 'quasar') {
     // Jets slowly sweep; touching one is catastrophic.
     e.jetA = rand(0, TAU);
@@ -2257,34 +2044,6 @@ function spawnStarSystem() {
   }
 }
 
-function spawnCiv() {
-  let live = 0;
-  for (const e of ents) if (e.civ) live++;
-  if (live >= CIV_MAX) return;
-
-  const type = pickCivType();
-  const v = viewWorldRadius();
-  const a = rng() * TAU;
-  const dist = rand(v * 0.55, v * 1.0);
-  const e = {
-    x: p.x + Math.cos(a) * dist,
-    y: p.y + Math.sin(a) * dist,
-    vx: 0, vy: 0,
-    r: p.r * (type === 'ark' ? rand(0.16, 0.26) : rand(0.30, 0.52)),
-    spin: 0, phase: 0,
-    civ: type,
-    body: { type, variant: 0, spin: 0, sub: null },
-    cool: rand(1.2, 3.0)
-  };
-  if (type === 'ark') {
-    // Arks burn directly away from the hole at whatever they can manage.
-    const sp = rand(2.2, 3.6) * p.r;
-    e.vx = Math.cos(a) * sp;
-    e.vy = Math.sin(a) * sp;
-  }
-  ents.push(e);
-}
-
 function reset() {
   // Seed first: every spawn below draws from this stream, so the field is a
   // pure function of the seed from here on.
@@ -2294,12 +2053,10 @@ function reset() {
   const startMass = M0 * VARMODS[variant].startMul * (1 + 0.02 * runUpgrades.gravity);
   runDustScore = 0; runEaten = 0; lastMealT = 0;
   rareWindowActive = false; rareWindowT = 0; rareSpawnT = 0;
-  civT = 0; nextCivIn = 7;   // fixed first interval; no rng() here so the
-                             // reset() seed stream stays identical
-  pendingWave = 0; greedE = null; nextSystemId = 1;
+  greedE = null; nextSystemId = 1;
   clearInput();
   p = { x: 0, y: 0, vx: 0, vy: 0, r: startMass * RS_PER_MASS, mass: startMass };
-  ents = []; parts = []; waves = []; shots = []; slugs = []; floats = [];
+  ents = []; parts = []; waves = []; shots = []; floats = [];
   cam = { x: 0, y: 0, zoom: 1 };
   score = 0; shownScore = 0; combo = 0; comboT = 0;
   elapsed = 0; era = 0; shakeMag = 0; hitstopT = 0; invuln = 0;
@@ -2307,7 +2064,7 @@ function reset() {
   camRoll = 0; shield = 0; kilonovaT = rand(35, 70);
   eraFx = 0; hitFx = 0; nearDeath = 0; lastHurtT = -99; comboPopT = 0;
   satiatedT = 0; drainRate = 0; spinA = 0;
-  greedT = 0; pickT = 0; pickHold = null;
+  greedT = 0;
   newBestShown = false;
   kilonovaWarned = false; lastBeatT = -99;
   if (sparseOn) Snd.setSparse(false);
@@ -2439,8 +2196,8 @@ const BODY_NAME = {
   rocky: 'world', ice: 'ice world', ocean: 'ocean world', desert: 'desert world',
   barren: 'dead world', asteroid: 'rubble', uranus: 'Uranus', neptune: 'Neptune',
   giant: 'gas giant', lava: 'lava world', rogue: 'rogue planet', brownDwarf: 'brown dwarf',
-  whiteDwarf: 'white dwarf', pulsar: 'pulsar', wormhole: 'wormhole',
-  magnetar: 'magnetar', ark: 'ark ship', darkMatter: 'dark matter',
+  whiteDwarf: 'white dwarf', pulsar: 'pulsar',
+  magnetar: 'magnetar', darkMatter: 'dark matter',
   star: 'star', rival: 'rival singularity', quasar: 'quasar'
 };
 
@@ -2561,14 +2318,12 @@ function bodyMass(e) {
 
 function consume(e, idx, opts) {
   // opts.quiet: full ingestion accounting (mass, score, combo, stardust,
-  // field guide, achievements, counters, skins) but no per-body fanfare and
-  // no special gameplay effects -- used by the ABSORB pick, whose subtitle
-  // promises "no special effects".
+  // achievements, counters, skins) but no per-body fanfare and no special
+  // gameplay effects.
   const quiet = !!(opts && opts.quiet);
   const type = e.body && e.body.type;
   const wasStar = type === 'star';
   const wasPulsar = type === 'pulsar';
-  const wasWormhole = type === 'wormhole';
 
   p.mass += bodyMass(e) * CONSUME_YIELD;
   if (!Number.isFinite(p.mass) || p.mass <= 0) p.mass = M0;
@@ -2583,7 +2338,6 @@ function consume(e, idx, opts) {
   // Mission counters.
   if (runMission) {
     if (type === 'whiteDwarf') runMission.wd++;
-    if (type === 'ark') runMission.ark++;
     if (type === 'pulsar') runMission.pulsar++;
   }
   checkMissions();
@@ -2595,7 +2349,6 @@ function consume(e, idx, opts) {
   // Earth-sized volume, so it pays far better than its radius suggests.
   if (type === 'whiteDwarf') gained *= 4;
   if (type === 'brownDwarf') gained *= 2;
-  if (type === 'ark') gained *= 3;          // a whole ship full of people
   score += gained;
 
   // Run report card bookkeeping.
@@ -2637,17 +2390,7 @@ function consume(e, idx, opts) {
       shield = 3;   // seconds of one-hit protection; impact consumes it
       toast('PULSAR ABSORBED — your next impact is shielded', 2.2);
       burstFx(e.x, e.y, 24, e.r, 1.4, 205);
-    } else if (wasWormhole) {
-    // Teleport along the stored pair vector. Move the player AND the camera
-    // so the world scrolls instead of jumping under the finger.
-    const tx = Math.cos(e.pairAng) * e.pairDist;
-    const ty = Math.sin(e.pairAng) * e.pairDist;
-    p.x += tx; p.y += ty;
-    cam.x += tx; cam.y += ty;
-    burstFx(e.x, e.y, 30, e.r, 1, 286);
-    burstFx(p.x, p.y, 18, p.r * 0.6, 0.8, 286);
-    toast('WORMHOLE');
-  } else if (type === 'magnetar') {
+    } else if (type === 'magnetar') {
     // A starquake: the crust cracks and releases a burst that clears the
     // field of anything dangerous nearby.
     const R = p.r * 11;
@@ -2663,15 +2406,11 @@ function consume(e, idx, opts) {
     flashT = Math.max(flashT, 0.22);
     toast('MAGNETAR STARQUAKE');
     Snd.boom();
-  } else if (type === 'ark') {
-      toast('ARK CONSUMED +' + fmt(gained), 1.8);
-      burstFx(e.x, e.y, 26, e.r, 1.2, entHue(e.r / p.r));
-    }
-  }
-  // The AGN feedback cadence is the no-pause choice moment, and it belongs to
-  // the COMBO, not to the body: a star or pulsar landing on the 20th used to
-  // swallow the milestone entirely. Never re-trigger from inside a pick.
-  if (!quiet && combo > 0 && combo % WAVE_EVERY() === 0) startPick();
+  }       // end magnetar branch
+  }       // end if (!quiet)
+  // The AGN feedback belongs to the COMBO, not to the body: a star or
+  // pulsar landing on the milestone combo fires it directly.
+  if (!quiet && combo > 0 && combo % WAVE_EVERY() === 0) pulse();
   // Big things break apart visibly instead of just vanishing.
   if (!quiet && e.r > p.r * 0.55) burstFx(e.x, e.y, 14, e.r, 0.8, entHue(e.r / p.r));
 }
@@ -2957,7 +2696,7 @@ function update(dt) {
     if (coachStep === 0 && elapsed > 1.2) { toast(COACH[0], 2.4); coachStep = 1; }
     else if (coachStep === 1 && combo >= 1) { toast(COACH[1], 2.4); coachStep = 2; }
     else if (coachStep === 2 && combo >= 5) {
-      toast('Every ' + WAVE_EVERY() + ' chained eats offers a power choice', 2.6);
+      toast('Every ' + WAVE_EVERY() + ' chained eats fires an AGN feedback burst', 2.6);
       coachStep = 3;
       coachDone = true;
       saveSet('coach', '1');
@@ -2969,29 +2708,13 @@ function update(dt) {
     ? clamp(1 - (p.mass - (DEATH_AREA / (P0*P0)) * M0) / ((DEATH_AREA / (P0*P0)) * M0 * 2.4), 0, 1)
     : 0;
 
-  // Shockwave steering pick: dwell steers the choice, timeout takes SHOCK.
-  if (state === 'play' && pickT > 0 && pickHold) {
-    pickT -= dt;
-    const pv = thrustVector();
-    if (pv.x < -0.45) pickHold.l += dt;
-    else if (pv.x > 0.45) pickHold.r += dt;
-    else pickHold.c += dt;
-    if (pickHold.l > 0.35) resolvePick(0);
-    else if (pickHold.r > 0.35) resolvePick(2);
-    else if (pickHold.c > 0.6) resolvePick(1);
-    else if (pickT <= 0) {
-      const h = pickHold;
-      resolvePick(h.l >= h.r && h.l >= h.c ? 0 : h.r >= h.c ? 2 : 1);
-    }
-  }
-
   // Greed gate: while a streak runs hot, one bigger body becomes edible for
   // a few seconds. Risk and reward decided entirely by movement.
   if (state === 'play' && combo >= 10 && comboT > 0 && greedT <= 0) {
     const Rv = viewWorldRadius() * 0.9;
     let gate = null, gd = Infinity;
     for (const o of ents) {
-      if (o.darkMatter || o.civ || o.comet || o.greedT > 0) continue;
+      if (o.darkMatter || o.comet || o.greedT > 0) continue;
       if (o.r <= p.r * VARMODS[variant].thresh || o.r > p.r * 1.6) continue;
       const ddx = o.x - p.x, ddy = o.y - p.y;
       const d2 = ddx * ddx + ddy * ddy;
@@ -3191,8 +2914,7 @@ function update(dt) {
     p.r = p.mass * RS_PER_MASS;
 
     // Combo fizzle: a hot streak dying quietly still drops the mix.
-    // Frozen while steering a AGN feedback pick -- choosing must not cost you.
-    if (comboT > 0 && pickT <= 0) {
+    if (comboT > 0) {
       comboT -= dt;
       if (comboT <= 0) {
         if (combo >= 10) Snd.setDrone(true, 0);
@@ -3220,25 +2942,11 @@ function update(dt) {
         // Dark matter has no surface and no collision -- you pass straight
         // through it, but its gravity bends your trajectory.
         if (e.darkMatter) continue;
-        // Civilisation hardware is neither food nor a body to collide with.
-        // A deflector dome simply throws you back off it.
-        if (e.civ === 'shield') {
-          const dd = Math.hypot(ddx, ddy) || 1;
-          p.vx = -ddx / dd * 7 * p.r;
-          p.vy = -ddy / dd * 7 * p.r;
-          combo = 0; comboT = 0;
-          shakeMag = Math.max(shakeMag, 10);
-          toast('DEFLECTOR SHIELD', 1.2);
-          if (Snd.ac) Snd.tone(300, 'sine', 0.16, 0.005, 0.18);
-          continue;
-        }
-        if (e.civ && e.civ !== 'ark') continue;   // arks can be caught
         if (edibleAt(e)) {
           // Tidal disruption: a big meal shreds into fragments outside the
           // horizon instead of vanishing whole. Fragments (flagged) never
           // shred again, or one planet would chain into confetti forever.
-          if (!e.frag && !e.civ && !e.comet && !e.darkMatter &&
-              e.body && e.body.type !== 'wormhole' &&
+          if (!e.frag && !e.comet && !e.darkMatter &&
               e.r > p.r * 0.45 && e.r > 6) {
             disrupt(e, i);
             continue;
@@ -3246,7 +2954,7 @@ function update(dt) {
           consume(e, i);
         }
         else if (invuln <= 0) hurt(e);
-      } else if (!e.grazed && !e.civ && !e.darkMatter && !edibleAt(e)) {
+      } else if (!e.grazed && !e.darkMatter && !edibleAt(e)) {
         // Graze: skirting something that could hurt you pays a sliver.
         // Danger-adjacent by construction -- only lethal bodies qualify.
         const gr = reach * 1.45;
@@ -3265,17 +2973,6 @@ function update(dt) {
         }
       }
     }
-    // Shockwave wind-up: a beat of inward rush before the release, so the
-    // biggest moment in the loop lands with anticipation, not just aftermath.
-    if (pendingWave > 0) {
-      pendingWave -= dt;
-      if (cosmeticRandom() < 10 * dt) {
-        const a = cosmeticRandom() * TAU;
-        addPart({ x: p.x + Math.cos(a) * p.r * 6, y: p.y + Math.sin(a) * p.r * 6,
-                  vx: 0, vy: 0, life: 0, max: 0.3, r: 2, hue: 190, mode: 0 });
-      }
-      if (pendingWave <= 0) { pendingWave = 0; pulse(); }
-    }
     if (p.mass < (DEATH_AREA / (P0*P0)) * M0) die();
   }
 
@@ -3283,7 +2980,6 @@ function update(dt) {
   updateParts(dt);
   updateWaves(dt);
   updateShots(dt);
-  updateSlugs(dt);
   updateFloats(dt);
 
   if (shakeMag > 0) shakeMag = Math.max(0, shakeMag - shakeMag * 7 * dt - 0.5 * dt);
@@ -3300,25 +2996,6 @@ function updateEnts(dt) {
       else if (q < 0.175) spawnStarSystem();
       else spawn();
     }
-  }
-
-  // The civilisation starts deploying countermeasures once you are big
-  // enough for someone to have noticed.
-  // Time-based, not per-frame: a fixed per-frame probability would deploy
-  // faster on 120 Hz screens than on 30 Hz ones and consume a frame-rate
-  // dependent number of seeded rng() draws, so seeded runs would diverge
-  // across devices. The interval jitters 5-9 s (mean ~7 s) and the jitter
-  // draw happens once per deployment, on sim time, keeping the seeded
-  // stream reproducible at fixed dt.
-  if (state === 'play' && score > CIV_ALERT) {
-    civT += dt;
-    if (civT >= nextCivIn) {
-      civT = 0;
-      nextCivIn = 5 + rng() * 4;
-      spawnCiv();
-    }
-  } else {
-    civT = 0;
   }
 
   const v = viewWorldRadius();
@@ -3352,60 +3029,12 @@ function updateEnts(dt) {
     const dx = p.x - e.x, dy = p.y - e.y;
     const d2 = dx * dx + dy * dy;
     if (d2 > despawnR * despawnR) {
-      if (e.civ === 'ark') toast('ARK ESCAPED', 1.4);
       ents.splice(i, 1); continue;
     }
 
     // Greed-gate expiry lives on the body so it survives anything except
     // being eaten or despawned.
     if (e.greedT > 0) e.greedT -= dt;
-
-    // ---- Civilisation countermeasures --------------------------------
-    if (e.civ && state === 'play') {
-      const d = Math.sqrt(d2) || 1;
-      if (e.civ === 'ark') {
-        // Arks keep their burn; only mild drag.
-        const kd = Math.pow(0.85, dt);
-        e.vx *= kd; e.vy *= kd;
-      } else if (e.civ === 'repulsor') {
-        // Gravity-well projector run in reverse: it shoves you away.
-        const reach = p.r * 7;
-        if (d < reach) {
-          const s = (1 - d / reach) * 7.5 * p.r * dt;
-          p.vx += (dx / d) * s;              // dx points structure -> hole
-          p.vy += (dy / d) * s;
-        }
-      } else if (e.civ === 'extractor') {
-        // Penrose process: they skim your rotational energy. This is a
-        // real proposed way to extract energy from a Kerr black hole.
-        const reach = p.r * 5.5;
-        if (d < reach) {
-          // ~3.5%/s at point blank -- meaningful pressure, not instant death.
-          p.mass = Math.max(1, p.mass * (1 - (1 - d / reach) * 0.035 * dt));
-          p.r = p.mass * RS_PER_MASS;
-          if (cosmeticRandom() < 0.25) {
-            addPart({
-              x: e.x, y: e.y,
-              vx: -dx / d * p.r * 2, vy: -dy / d * p.r * 2,
-              life: 0, max: 0.5,
-              r: cosmeticRand(0.05, 0.12) * p.r + 0.8, hue: 275, mode: 1
-            });
-          }
-        }
-      } else if (e.civ === 'driver') {
-        e.cool -= dt;
-        if (e.cool <= 0 && d < p.r * 12) {
-          e.cool = rand(1.6, 3.2);
-          const sp = rand(3.5, 6.0) * p.r;
-          slugs.push({
-            x: e.x, y: e.y,
-            vx: dx / d * sp, vy: dy / d * sp,
-            r: p.r * 0.07, life: 0, max: 4
-          });
-          if (Snd.ac) Snd.tone(180, 'square', 0.10, 0.004, 0.10);
-        }
-      }
-    }
 
     // Rival singularities drag YOU in as well. That is what separates them
     // from every other big body: you cannot just drift past one.
@@ -3564,47 +3193,6 @@ function updateShots(dt) {
   }
 }
 
-// Mass-driver rounds fired by the civilisation's railgun batteries.
-function updateSlugs(dt) {
-  for (let i = slugs.length - 1; i >= 0; i--) {
-    const s = slugs[i];
-    s.life += dt;
-    s.x += s.vx * dt;
-    s.y += s.vy * dt;
-    if (s.life >= s.max) { slugs.splice(i, 1); continue; }
-    if (state === 'play') {
-      const dx = s.x - p.x, dy = s.y - p.y;
-      const rr = p.r + s.r;
-      if (dx * dx + dy * dy < rr * rr) {
-        // Small chip of mass and a shove -- they are trying to deflect
-        // you, not kill you outright. The shove follows the round's travel
-        // direction: the old player->slug vector knocked you TOWARD the
-        // battery that fired it.
-        // Slugs respect the same defences as any other impact: the
-        // post-hurt grace window and the pulsar shield.
-        if (invuln > 0) { slugs.splice(i, 1); continue; }
-        if (shield > 0) {
-          shield = 0;
-          invuln = Math.max(invuln, 0.3);
-          toast('SHIELD — slug blocked', 1.2);
-          burstFx(s.x, s.y, 12, s.r * 4, 0.8, 196);
-          slugs.splice(i, 1);
-          continue;
-        }
-        p.mass = Math.max(1, p.mass * 0.97);
-        p.r = p.mass * RS_PER_MASS;
-        const sv = Math.hypot(s.vx, s.vy) || 1;
-        p.vx += s.vx / sv * 3 * p.r;
-        p.vy += s.vy / sv * 3 * p.r;
-        burstFx(s.x, s.y, 8, s.r * 4, 0.7, 196);
-        shakeMag = Math.max(shakeMag, 6);
-        slugs.splice(i, 1);
-        if (Snd.ac) Snd.tone(120, 'square', 0.14, 0.004, 0.12);
-      }
-    }
-  }
-}
-
 function updateFloats(dt) {
   for (let i = floats.length - 1; i >= 0; i--) {
     const f = floats[i];
@@ -3651,7 +3239,6 @@ function render() {
 
   drawEnts();
   drawWaves();
-  drawSlugs();
   drawParts();
   // Squash and stretch along the direction of travel. A perfectly rigid disc
   // reads as a sprite no matter how good the shading is; anything under
@@ -3686,7 +3273,6 @@ function render() {
 
   drawDangerArrows();                     // screen space
   drawFloats();                           // screen space
-  drawPick();                             // AGN feedback choice lanes
   drawJoystick();                         // joystick is screen-space, not world
 
   ctx.fillStyle = vignette;
@@ -3874,42 +3460,6 @@ function drawFloats() {
   }
   ctx.restore();
 }
-function drawPick() {
-  // Shockwave steering choice: three hand-inked cards (hold left / shockwave /
-  // hold right) with dwell-progress fill. Same data contract as the original:
-  // pickT, pickHold.{l,c,r}, PICK_OPTS[i].{name,sub}.
-  if (pickT <= 0 || !pickHold || state !== 'play') return;
-  const holds = [pickHold.l, pickHold.c, pickHold.r];
-  const bw = Math.min(150, W * 0.28), bh = 54;
-  const cy = H * 0.60;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const cardRnd = mulberry32(0xC0FFEE);   // stable hand-inked wobble, frame to frame
-  for (let i = 0; i < 3; i++) {
-    const cx = W / 2 + (i - 1) * W * 0.30;
-    const frac = clamp(holds[i] / (i === 1 ? 0.6 : 0.35), 0, 1);
-    // Paper card with a wobbled ink border.
-    ctx.fillStyle = 'rgba(24,20,15,0.72)';
-    ctx.strokeStyle = i === 1 ? 'rgba(233,223,201,0.9)' : 'rgba(150,135,115,0.55)';
-    ctx.lineWidth = i === 1 ? 2.5 : 1.5;
-    wobRectPath(ctx, cardRnd, cx - bw / 2, cy - bh / 2, bw, bh, 10, 0.05);
-    ctx.fill(); ctx.stroke();
-    // Dwell progress: sepia wash rising from the bottom.
-    if (frac > 0) {
-      ctx.fillStyle = 'rgba(150,110,70,0.35)';
-      const fh = (bh - 8) * frac;
-      ctx.fillRect(cx - bw / 2 + 4, cy + bh / 2 - 4 - fh, bw - 8, fh);
-    }
-    ctx.fillStyle = '#ece2cc';
-    ctx.font = '700 13px "Shantell Sans", system-ui, sans-serif';
-    ctx.fillText(PICK_OPTS[i].name, cx, cy - 8);
-    ctx.fillStyle = 'rgba(190,175,150,0.85)';
-    ctx.font = '400 10px "Shantell Sans", system-ui, sans-serif';
-    ctx.fillText(PICK_OPTS[i].sub, cx, cy + 12);
-  }
-  ctx.textAlign = 'start';
-  ctx.textBaseline = 'alphabetic';
-}
 function drawGhost() {
   // Best-run ghost: a chalked dashed ring where your best self was, with a
   // faint paper-wash disc. Same data contract as the original (ghostData.x/y
@@ -4006,10 +3556,8 @@ function drawEnts() {
     const ratio = e.r / p.r;
     const lethalAt = VARMODS[variant].thresh;
     const isGreed = e.greedT > 0;
-    // Civilisation hardware is artificial, so it gets a cold tech tint
-    // instead of the edible/lethal colour language of natural bodies.
     // A greed-gated body borrows the edible hue: it IS food right now.
-    const hue = e.civ ? 200 : (isGreed ? entHue(0.7) : entHue(ratio));
+    const hue = isGreed ? entHue(0.7) : entHue(ratio);
     const scr = e.r * cam.zoom;          // on-screen radius, CSS px
     const b = e.body;
 
@@ -4036,28 +3584,10 @@ function drawEnts() {
 
     if (e.comet) drawCometTail(e, hue);
 
-    // Tidal stretching. The near side of an infalling body is pulled harder
-// than the far side, so it elongates toward the hole before being torn
-// apart. This is real spaghettification, not a squash-and-stretch cartoon.
-    let sx = 1, sAng = 0;
-    if (state !== 'dead') {
-      const td = Math.hypot(e.x - p.x, e.y - p.y);
-      const tide = p.r * 2.8;
-      if (td < tide) {
-        const t = 1 - td / tide;
-        sx = 1 + t * t * 2.4;
-        sAng = Math.atan2(p.y - e.y, p.x - e.x);
-      }
-    }
-
-    // Surface: pre-rendered once, blitted with rotation.
+    // Surface: pre-rendered once, blitted with rotation. Bodies are drawn
+    // as plain discs -- no squash or stretch -- regardless of velocity.
     ctx.save();
     ctx.translate(e.x, e.y);
-    if (sx > 1.02) {
-      ctx.rotate(sAng);
-      ctx.scale(sx, 1 / Math.sqrt(sx));        // roughly preserves volume
-      ctx.rotate(-sAng);
-    }
     ctx.rotate(e.phase);
     ctx.globalAlpha = depthA;
     ctx.drawImage(bodySprite(b.type, b.variant, b.sub), -e.r, -e.r, e.r * 2, e.r * 2);
@@ -4148,7 +3678,7 @@ function drawEnts() {
       ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 1.18, 0, TAU); ctx.stroke();
       ctx.setLineDash([]);
     }
-    if (ratio > lethalAt && !e.civ && !isGreed) {
+    if (ratio > lethalAt && !isGreed) {
       const pulse = 0.35 + 0.35 * Math.sin(elapsed * 5 + e.phase);
       const teeth = 12;
       const rIn = e.r * 1.10;
@@ -4229,22 +3759,6 @@ function drawCometTail(e, hue) {
   // Coma: a pale wash around the dark nucleus.
   ctx.fillStyle = 'rgba(220,235,248,0.22)';
   ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 2.1, 0, TAU); ctx.fill();
-}
-function drawSlugs() {
-  // High-speed motion slugs: short chalk streaks along the velocity.
-  ctx.save();
-  ctx.strokeStyle = 'rgba(233,223,201,0.55)';
-  ctx.lineCap = 'round';
-  for (const s of slugs) {
-    const t = s.life / s.max;
-    ctx.globalAlpha = t * 0.6;
-    ctx.lineWidth = s.r * 1.4;
-    ctx.beginPath();
-    ctx.moveTo(s.x, s.y);
-    ctx.lineTo(s.x - s.vx * 0.09, s.y - s.vy * 0.09);
-    ctx.stroke();
-  }
-  ctx.restore();
 }
 function beamSide() {
   return Math.cos(Math.atan2(LIGHT.y, LIGHT.x)) >= 0 ? 1 : -1;
@@ -4664,8 +4178,7 @@ function updateHUD() {
     const WE = WAVE_EVERY();
     const intoWave = combo % WE;
     el.comboValue.textContent =
-      'COMBO ' + combo + '  ×' + comboMult().toFixed(1) +
-      '  ·  CHOICE IN ' + (WE - intoWave);
+      'COMBO ' + combo + '  ×' + comboMult().toFixed(1);
     // Combo heat: the text grows and runs hotter toward the AGN feedback, then
     // pops when it fires.
     const heat = clamp(intoWave / WE, 0, 1);
@@ -4683,8 +4196,7 @@ function updateHUD() {
       const lit = Math.round((intoWave / WE) * kids.length);
       for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('on', i < lit);
     }
-    // Three pips from the pick: the bar switches to its ready pulse (the CSS
-    // shipped this state; nothing had ever set the class).
+    // Near the next AGN feedback the bar switches to its ready pulse.
     el.comboBar.classList.toggle('ready', (WE - intoWave) <= 3);
   } else {
     hudCache.pips = -1;
@@ -4701,8 +4213,6 @@ function frame(now) {
     last = now;
     let dt = real;
     if (hitstopT > 0) { hitstopT -= real; dt = real * 0.18; }
-    // Shockwave pick: the world drops into slow motion while you steer.
-    if (pickT > 0) dt *= 0.3;
     update(dt);
     render();
     updateHUD();
@@ -4798,12 +4308,10 @@ function computeObserveStats() {
   el.obsFov.textContent = fovDeg.toFixed(fovDeg < 10 ? 2 : 1) + '°';
 
   // Nearest body in the field. Dark matter is included because the whole
-  // point is that you can detect it; civ hardware is excluded because it is
-  // a structure, not a celestial object. Distance converted to AU via the
+  // point is that you can detect it. Distance converted to AU via the
   // same scale constant the size readout uses.
   let best = null, bd = Infinity;
   for (const e of ents) {
-    if (e.civ) continue;
     const d2 = (e.x - p.x) * (e.x - p.x) + (e.y - p.y) * (e.y - p.y);
     if (d2 < bd) { bd = d2; best = e; }
   }
@@ -4997,7 +4505,6 @@ const MISSION_POOL = [
   { id: 'dwarf3',    need: 3,    text: 'Eat 3 white dwarfs in one run', prog: () => runMission.wd },
   { id: 'survive180', need: 180, text: 'Survive 3:00',                 prog: () => Math.floor(elapsed) },
   { id: 'wave8',     need: 8,    text: 'One AGN feedback kills 8',        prog: () => runMission.waveBest },
-  { id: 'ark2',      need: 2,    text: 'Eat 2 ark ships in one run',   prog: () => runMission.ark },
   { id: 'pulsar2',   need: 2,    text: 'Eat 2 pulsars in one run',     prog: () => runMission.pulsar },
   { id: 'score5k',   need: 5000, text: 'Score 5,000 in one run',       prog: () => Math.floor(score) },
   { id: 'graze20',   need: 20,   text: 'Graze danger 20 times in one run', prog: () => runMission.graze }
@@ -5097,69 +4604,6 @@ function startDaily() {
   start();
   dailyRun = true;
   toast('DAILY RUN — one attempt', 2.2);
-}
-
-/* ---------- AGN feedback steering pick ------------------------------------ */
-// The every-20th-combo AGN feedback is the perfect no-pause choice moment: the
-// game drops into slow motion, three lanes appear, and you select by
-// steering -- the input you are already holding. Timeout resolves to the
-// middle lane (the classic AGN feedback), so indecision costs nothing.
-const PICK_OPTS = [
-  { name: 'ABSORB', sub: 'up to 15 nearby edibles; no special effects' },
-  { name: 'FEEDBACK', sub: 'classic AGN feedback' },
-  { name: 'AEGIS', sub: 'block one impact within 6s' }
-];
-function startPick() {
-  if (state !== 'play') return;
-  if (pickT > 0) { pendingWave = 0.28; return; }  // already choosing: queue it
-  pickT = 2.4;
-  pickHold = { l: 0, c: 0, r: 0 };
-  buzz(20);
-}
-function resolvePick(i) {
-  if (pickT <= 0 && !pickHold) return;
-  pickT = 0;
-  pickHold = null;
-  if (i === 0) pickAbsorb();
-  else if (i === 2) {
-    shield = 3.6;   // ~6 s at the 0.6/s shield decay
-    toast('AEGIS — deflect one impact within 6s', 2.0);
-    waves.push({ x: p.x, y: p.y, r: p.r, max: p.r * 6, t: 0, hue: 45 });
-    if (Snd.ac) Snd.tone(520, 'sine', 0.16, 0.01, 0.4, 5);
-  } else {
-    pendingWave = 0.28;   // AGN feedback with a wind-up
-  }
-}
-function pickAbsorb() {
-  const R = viewWorldRadius();
-  const R2 = R * R;
-  let n = 0, total = 0;
-  for (let i = ents.length - 1; i >= 0 && n < 15; i--) {
-    const o = ents[i];
-    const dx = o.x - p.x, dy = o.y - p.y;
-    if (dx * dx + dy * dy > R2) continue;
-    if (o.darkMatter || (o.civ && o.civ !== 'ark') || !edibleAt(o)) continue;
-    // Full ingestion accounting (mass, score, combo, stardust, field guide,
-    // achievements, counters, skins, lastMealT) via consume(); quiet mode
-    // suppresses the per-body fanfare and special effects, per the pick's
-    // "no special effects" promise. One combined toast + blip below covers
-    // the feedback for the whole absorption.
-    const before = score;
-    consume(o, i, { quiet: true });
-    total += score - before;
-    n++;
-  }
-  if (!Number.isFinite(p.mass) || p.mass <= 0) p.mass = M0;
-  p.r = p.mass * RS_PER_MASS;
-  if (!Number.isFinite(p.r) || p.r <= 0) p.r = P0;
-  satiatedT = Math.max(satiatedT, 1.0);
-  if (n) {
-    toast('ABSORBED +' + fmt(total), 1.8);
-    Snd.blip(combo);
-  } else {
-    toast('NOTHING TO ABSORB', 1.4);
-  }
-  checkMissions();
 }
 
 // Screen-space anchor used by the two drag schemes.
@@ -5922,7 +5366,6 @@ const ACH_DEFS = {
   combo20: { name: 'Combo Master', desc: 'Reach combo 20' },
   eat1000: { name: 'Glutton', desc: 'Eat 1,000 bodies total' },
   eat_pulsar: { name: 'Pulsar Hunter', desc: 'Eat a pulsar' },
-  eat_wormhole: { name: 'Wormhole Rider', desc: 'Eat a wormhole' },
   eat_magnetar: { name: 'Magnetar Breaker', desc: 'Eat a magnetar' },
   eat_quasar: { name: 'Quasar Devourer', desc: 'Eat a quasar' },
   survive180: { name: 'Survivor', desc: 'Survive 3 minutes' },
@@ -6173,7 +5616,7 @@ function renderObservatory() {
   rules.className = 'obs-upgrade-rules';
   rules.textContent = 'Upgrades apply to ordinary runs only, not daily or seeded challenges. ' +
     'Earn 1 stardust per 100 score, plus special consumption bonuses: stars +2, ' +
-    'wormholes and magnetars +3, pulsars and quasars +5.';
+    'magnetars +3, pulsars and quasars +5.';
   el2.obsUpgrades.appendChild(rules);
   for (const def of UPGRADE_DEFS) {
     const lvl = upgrades[def.key] || 0;
@@ -6303,14 +5746,12 @@ consume = function(e, idx) {
   settleScoreDust();
   let earned = 0;
   if (type === 'pulsar') earned += 5;
-  else if (type === 'wormhole') earned += 3;
   else if (type === 'magnetar') earned += 3;
   else if (type === 'quasar') earned += 5;
   else if (type === 'star') earned += 2;
   if (earned > 0) earnStardust(earned);
   // Achievements
   if (type === 'pulsar') unlockAchievement('eat_pulsar');
-  if (type === 'wormhole') unlockAchievement('eat_wormhole');
   if (type === 'magnetar') unlockAchievement('eat_magnetar');
   if (type === 'quasar') unlockAchievement('eat_quasar');
   totalEaten++; runEaten++; lastMealT = elapsed;

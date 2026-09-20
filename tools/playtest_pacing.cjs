@@ -220,7 +220,7 @@ const POLICIES = {
     const thresh = VARMODS[variant].thresh;
     let food = null, fd = Infinity, danger = null, dd = Infinity;
     for (const e of ents) {
-      if (e.darkMatter || e.civ || e.comet) continue;
+      if (e.darkMatter || e.comet) continue;
       const d = Math.hypot(e.x - p.x, e.y - p.y);
       if (e.r > p.r * thresh) { if (d < dd) { dd = d; danger = e; } }
       else if (d < fd) { fd = d; food = e; }
@@ -246,7 +246,7 @@ const POLICIES = {
     const thresh = VARMODS[variant].thresh;
     let food = null, fd = Infinity;
     for (const e of ents) {
-      if (e.darkMatter || e.civ || e.comet) continue;
+      if (e.darkMatter || e.comet) continue;
       if (e.r > p.r * thresh * 0.9) continue;
       const d = Math.hypot(e.x - p.x, e.y - p.y);
       if (d < fd) { fd = d; food = e; }
@@ -289,12 +289,6 @@ function runPlaytest(seed, scenarioName, policyName, capSec) {
   const capFrames = Math.round(capSec * 60);
 
   for (let f = 0; f < capFrames; f++) {
-    // Shockwave pick on screen -> hold centre to take the AGN wave.
-    if (w.__pt.q('pickHold')) {
-      w.__pt.push(0, 0);
-      step(1);
-      continue;
-    }
     policy(w);
     step(1);
 

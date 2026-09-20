@@ -66,16 +66,21 @@ test('one incomplete run mission shows chain progress and era stays synchronized
   assert.equal(q('runStats.era'),4);
   assert.equal(q('eraLabel(20)'), 'SINGULARITY');
 });
-test('choice and coach cadence is variant-driven and descriptions are truthful', ({q,w}) => {
+test('choice pick is fully removed; combo milestone fires AGN feedback directly', ({q,w}) => {
   q("start(); variant='monk'; combo=5; comboT=1; coachDone=false; coachStep=2; update(0); updateHUD()");
-  assert.match(w.document.getElementById('comboValue').textContent,/CHOICE IN 19/);
+  const comboText = w.document.getElementById('comboValue').textContent;
+  assert.match(comboText,/COMBO 5/);
+  assert.ok(!/CHOICE IN/.test(comboText), 'no CHOICE IN countdown');
   assert.ok(q("toasts.some(t => t.node.textContent.includes('Every 24 chained eats'))"));
-  assert.match(q('PICK_OPTS[0].sub'),/15.*no special effects/);
-  assert.match(q('PICK_OPTS[2].sub'),/one impact within 6s/);
-  q('startPick(); resolvePick(2)');
-  const area=q('p.area');
-  q("hurt({x:100,y:0,vx:0,vy:0,body:{type:'rocky'}})");
-  assert.equal(q('shield'),0); assert.equal(q('p.area'),area);
+  for (const name of ['PICK_OPTS','startPick','resolvePick','pickAbsorb','drawPick',
+                      'pickT','pickHold','pendingWave'])
+    assert.equal(q('typeof '+name), 'undefined', name + ' removed');
+  // A body landing on the milestone combo fires the classic feedback directly.
+  q(`combo = WAVE_EVERY() - 1;
+     window.meal = { x: p.x, y: p.y, r: Math.max(6, p.r * 0.3), vx: 0, vy: 0,
+       spin: 0, phase: 0, body: { type: 'rocky', variant: 0, spin: 0 } };
+     ents = [meal]; waves = []; consume(meal, 0);`);
+  assert.ok(q('waves.length') > 0, 'AGN feedback wave fired directly, no pick');
 });
 test('near miss uses exact next-era points and no currency pressure or wrap', ({q}) => {
   q('score=1199; era=0'); assert.equal(q('computeNearMiss()'),'1 points to STELLAR');

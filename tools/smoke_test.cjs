@@ -413,15 +413,16 @@ if (!died) {
   step(60);
   check('resume: frames run again without throwing', errors.length === 0);
 
-  // Civilisation defences normally need mass 900 to trigger, which a 20s
-  // test never reaches. Force them so the shield / repulsor / driver /
-  // ark / extractor paths and the mass-driver slugs actually execute.
-  if (typeof window.spawnCiv === 'function') {
-    for (let k = 0; k < 5; k++) window.spawnCiv();
-    step(300);
-    check('civ: installations and slugs run without throwing',
-      errors.length === 0);
-  }
+  // Civilisation system, wormholes and the steering pick were removed: none of
+  // their entry points may exist, and the sim must run cleanly without them.
+  check('removed: no civ / wormhole / pick entry points',
+    typeof window.spawnCiv === 'undefined' &&
+    typeof window.drawWormhole === 'undefined' &&
+    typeof window.startPick === 'undefined' &&
+    typeof window.updateSlugs === 'undefined',
+    'spawnCiv=' + typeof window.spawnCiv);
+  step(300);
+  check('post-removal: frames run without throwing', errors.length === 0);
 
   // First-encounter explainers were removed: the sim must never pause for one.
   check('event: no first-encounter panel can open', !$('eventPanel'));
@@ -462,7 +463,7 @@ check('death: near-miss line present',
 // The game-over screen holds input for ~0.8s so one stray tap cannot wipe the
 // score you are still reading. The guard is *time based*, so it can only be
 // asserted while its window is still open. The collapse above may have
-// happened several hundred frames ago (the civ / settings / event phases run
+// happened several hundred frames ago (the settings / event phases run
 // after the death frame), which left the window long expired and made this
 // assertion pass or fail depending on phase ordering. Arm a fresh death here
 // instead of restating the run -- re-running would also push a 0 score into
@@ -665,8 +666,8 @@ const audioRng = run(`(() => {
 check('audio: first ensure builds noise without consuming simulation RNG', audioRng[0] && audioRng[3]);
 check('audio: audible and muted blips leave the same next simulation draw', audioRng[1] && audioRng[2]);
 
-run(`start(); startPick(); resolvePick(1); start();`);
-check('reset: queued shockwave wind-up is cleared', run('pendingWave === 0'));
+run(`start(); pulse(); start();`);
+check('reset: previous-run shockwave waves are cleared', run('waves.length === 0'));
 run('ents = []; update(0.3)');
 check('reset: no previous-run shockwave fires in the new run', run('waves.length === 0'));
 run(`drag.active = true; drag.wx = 1000; drag.wy = 1000;

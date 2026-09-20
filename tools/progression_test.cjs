@@ -78,9 +78,9 @@ test('death is idempotent and menu/paused time cannot earn achievements', ({q}) 
   q("state='paused'; update(200); die()");
   assert.equal(q('totalRuns'), 1);
 });
-test('reset and pause discard pending waves, drag, joystick and keys', ({q,w}) => {
-  q('start(); pendingWave=0.2; drag.active=true; joy.active=true; joy.dx=1; keys.right=true; reset()');
-  assert.equal(q('pendingWave'), 0);
+test('reset and pause discard waves, drag, joystick and keys', ({q,w}) => {
+  q('start(); waves.push({x:0,y:0,r:1,max:10,t:0,hue:0}); drag.active=true; joy.active=true; joy.dx=1; keys.right=true; reset()');
+  assert.equal(q('waves.length'), 0);
   assert.equal(q('drag.active || joy.active || keys.right'), false);
   q('joy.active=true; joy.dx=1; drag.active=true; keys.right=true; pauseGame(); resumeGame()');
   assert.equal(q('drag.active || joy.active || keys.right'), false);

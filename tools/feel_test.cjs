@@ -104,16 +104,24 @@ test('Space in settings does nothing destructive; Enter respects the death guard
   assert.equal(q('totalRuns'), 1, 'no hidden restart happened');
 });
 
-test('wormholes are never tidally disrupted', ({ q }) => {
-  q(`start(); state='play';
-     window.wh = { x: p.x + 2, y: p.y, vx: 0, vy: 0,
-       r: p.r * 0.8, spin: 0, phase: 0,
-       body: { type: 'wormhole', variant: 0, spin: 0 },
-       pairAng: 0.7, pairDist: 900, frag: false };
-     ents = [wh]; consume(wh, 0);`);
-  // A wormhole is consumed whole (teleport), never shredded into fragments.
-  assert.ok(!q('ents.some(e => e.frag && e.body.type === "wormhole")'), 'no wormhole fragments');
-  assert.equal(q('ents.filter(e => e.frag).length'), 0, 'disruption never ran');
+test('wormholes and civilisation bodies are fully removed', ({ q }) => {
+  for (const name of ['drawWormhole','spawnCiv','pickCivType','updateSlugs','drawSlugs',
+                      'drawShield','drawRepulsor','drawDriver','drawArk','drawExtractor',
+                      'civT','nextCivIn'])
+    assert.equal(q('typeof '+name), 'undefined', name + ' removed');
+  assert.equal(q("RARE.join(',')"), 'pulsar', 'RARE pool is pulsar-only');
+  assert.equal(q("RARE.length"), 1);
+});
+
+test('spawning never produces wormhole or civilisation bodies', ({ q }) => {
+  q(`start(); state='play'; window.bad = 0;
+     for (let i = 0; i < 300; i++) {
+       window.e = { x: 0, y: 0, vx: 0, vy: 0, r: p.r * 0.3, spin: 0, phase: 0 };
+       assignBody(e);
+       if (['wormhole','shield','repulsor','driver','ark','extractor'].includes(e.body.type)) bad++;
+       if (e.civ) bad++;
+     }`);
+  assert.equal(q('bad'), 0, 'no wormhole/civ bodies in 300 spawns');
 });
 
 test('fragments of disrupted bodies carry the pair teleport fields', ({ q }) => {
@@ -157,22 +165,40 @@ test('pulsar shield lifetime, impact absorption and pause behaviour', ({ q }) =>
   assert.ok(q('p.mass') < m2, 'hit after shield expiry causes mass loss');
 });
 
-test('a star landing on the combo milestone still triggers the shockwave pick', ({ q }) => {
-  q(`start(); state='play'; combo = ${'WAVE_EVERY()'} - 1;
+test('a star landing on the combo milestone fires the AGN feedback directly', ({ q }) => {
+  q(`start(); state='play'; combo = WAVE_EVERY() - 1;
      window.meal = { x: p.x, y: p.y, r: Math.max(6, p.r * 0.3), vx: 0, vy: 0,
        spin: 0, phase: 0, body: { type: 'star', variant: 0, spin: 0 } };
-     ents = [meal]; consume(meal, 0);`);
-  assert.ok(q('pickT') > 0, 'steering pick opened');
-  assert.ok(q('pickHold') !== null, 'pick is steering-active');
+     ents = [meal]; comboPopT = 0; waves = []; consume(meal, 0);`);
+  assert.ok(q('waves.length') > 0, 'pulse() fired directly, no pick');
+  assert.equal(q("typeof pickT"), 'undefined', 'no pick state');
+  assert.ok(q('comboPopT') > 0, 'combo pop visual still fires');
 });
 
-test('mass-driver slugs fire toward the player, not away', ({ q }) => {
+test('mass-driver slug subsystem is fully removed', ({ q }) => {
+  q(`start(); state='play'; update(1/60);`);
+  assert.equal(q("typeof updateSlugs"), 'undefined');
+  assert.equal(q("typeof drawSlugs"), 'undefined');
+});
+
+test('black hole grows very slowly per eat', ({ q }) => {
+  assert.ok(q('CONSUME_YIELD') <= 0.1, 'CONSUME_YIELD <= 0.1, got ' + q('CONSUME_YIELD'));
   q(`start(); state='play';
-     ents = [{ x: p.x + 100, y: p.y, vx: 0, vy: 0, r: p.r * 2, spin: 0, phase: 0,
-       body: { type: 'rocky', variant: 0, spin: 0 }, civ: 'driver', cool: 0 }];
-     slugs = []; update(1/60);`);
-  const slugOk = q('slugs.length > 0 && (slugs[0].vx < 0)');
-  assert.ok(slugOk, 'slug velocity points from the driver toward the player');
+     window.meal = { x: p.x, y: p.y, r: P0 / 2, vx: 0, vy: 0, spin: 0, phase: 0,
+       body: { type: 'rocky', variant: 0, spin: 0 }, mass: 2.5 };
+     window.m0 = p.mass; ents = [meal]; consume(meal, 0);`);
+  const growth = q('p.mass - m0');
+  assert.ok(growth > 0 && growth <= 2.5 * 0.1 + 1e-9, 'per-eat growth is tiny, got ' + growth);
+});
+
+test('entities are drawn as plain discs with no squash or stretch', ({ q }) => {
+  q(`start(); state='play';
+     window.e = { x: p.x + p.r * 2, y: p.y, vx: 0, vy: 0, r: p.r * 0.5,
+       spin: 0, phase: 0.7, body: { type: 'rocky', variant: 0, spin: 0 } };
+     ents = [e];`);
+  // drawEnts must not apply any non-uniform scale to the entity sprite.
+  const src = q('drawEnts.toString()');
+  assert.ok(!/ctx\.scale\(sx/.test(src), 'no tidal scale transform in drawEnts');
 });
 
 test('malformed weeklyScores cannot break the death path', ({ q, w }) => {
